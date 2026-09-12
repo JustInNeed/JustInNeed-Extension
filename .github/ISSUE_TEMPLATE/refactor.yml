@@ -1,0 +1,32 @@
+name: "♻️ Refactor"
+description: "리팩터링 작업"
+title: "♻️ "
+labels: ["♻️ Refactor"]
+body:
+  - type: textarea
+    attributes:
+      label: 리팩터링 대상 설명
+      description: 어떤 코드나 구조를 개선할 계획인지 설명해 주세요.
+      placeholder: 중복 로직 제거, 가독성 향상, 모듈화 등
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: 작업할 내용
+      description: 할 일을 체크박스 형태로 작성해 주세요.
+      placeholder: |
+        - [ ] 함수 분리
+        - [ ] 네이밍 정리
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: 참고 자료
+      description: 참고 자료가 있다면 직접 작성 또는 링크로 첨부해 주세요.
+
+  - type: textarea
+    attributes:
+      label: 비고
+      description: 기타 특이사항이나 공유할 내용이 있다면 작성해 주세요.
