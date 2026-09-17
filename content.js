@@ -43,55 +43,16 @@
  *   · 페이지를 넘어 이어지는 세션 / 방문 순서
  *   · 이탈·새로고침 시 데이터 보존  (지금은 페이지 메모리에만 있음)
  * ========================================================================== */
+
 (() => {
   'use strict';
-  if (window.__RBC2_LOADED__) return;
-  window.__RBC2_LOADED__ = true;
+  const RBC = window.RBC;
+  if (!RBC || RBC.dup) return;
+  const { CFG, bus, IS_TOP, TAG } = RBC;
+  const { isWs, clean, esc, hash, uuid, searchQueryFromReferrer } = RBC.util;
 
-  // ==========================================================================
-  // CONFIG
-  // ==========================================================================
-  const CFG = {
-    SCHEMA_VERSION: 2,        // [C9]
-    TICK_MS: 150,             // 마스터 클럭
-    CENTER_RATIO: 0.49,       // GVAM 중앙선 (뷰포트 세로 비율)
+  
 
-    // --- 청킹 ---
-    TARGET_CHARS: 200,
-    MIN_CHARS: 110,
-    MAX_CHARS: 340,
-    MIN_UNIT_CHARS: 15,
-
-    // --- 히트 테스트 ---
-    CENTER_Y_TOL: 44,         // 중앙선이 여백에 걸렸을 때 허용할 세로 거리(px)
-    EDGE_Y_TOL: 8,            // [C1] 뷰포트 가장자리 탐색은 엄격하게
-    EDGE_STEPS: 8,            // [C1] 가장자리에서 안쪽으로 몇 번 찔러볼지
-    CURSOR_TOL: 3,
-
-    MIN_ROOT_TEXT: 200,
-    STAT_EVERY: 4,
-
-    // --- 스캔 / DOM 감시 ---
-    FIRST_SCAN_DELAY: 600,
-    SCAN_COLLECT_MS: 400,
-    SCAN_RETRY_MAX: 5,
-    SCAN_RETRY_MS: 1500,
-    MUTATION_DEBOUNCE: 800,
-    MUTATION_DEBOUNCE_REC: 5000,
-    RESCAN_MIN_GAP_REC: 15000,
-
-    // --- 세션 ---
-    IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
-    ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기
-
-    PANEL_ID: 'rbc-panel',
-  };
-
-  // ==========================================================================
-  // 프레임 식별
-  // ==========================================================================
-  const IS_TOP = (() => { try { return window.top === window; } catch (e) { return false; } })();
-  const TAG = Math.random().toString(36).slice(2, 7);
 
   // ==========================================================================
   // STATE
@@ -106,6 +67,9 @@
   let rootBox = null;
 
   let recording = false;
+  // 8-overlay.js 가 소유하는 overlayOn 의 읽기 전용 미러.
+  // overlay:changed 이벤트로만 갱신한다. 여기서 직접 대입하지 말 것.
+  // 8-overlay.js 가 없으면 영원히 false 로 남고, 그게 맞는 동작이다.
   let overlayOn = false;
   let uiRecording = false;      // 최상위 프레임 버튼 표시용
   let uiOverlay = false;
@@ -143,50 +107,9 @@
   // ==========================================================================
   // 유틸
   // ==========================================================================
-  const WS = /[\s ​]/;
-  const WS_RUN = /[\s ​]+/g;
   const SENT_END = new Set(['.', '!', '?', '…', '。', '！', '？']);
-
-  function isWs(ch) { return ch !== undefined && WS.test(ch); }
-  function clean(s) { return s.replace(WS_RUN, ' ').trim(); }
-
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  function hash(str) {                       // FNV-1a → base36
-    let h = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-    }
-    return h.toString(36);
-  }
-
-  function uuid() {
-    try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* noop */ }
-    return 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
-  }
-
   function tNow() { return Date.now() - sessionEpoch; }
 
-  // [C8] referrer가 검색 결과 페이지면 쿼리를 뽑는다.
-  //      단, Referrer-Policy 때문에 origin만 오는 사이트가 많다 → 실패 시 패널 입력으로 보완.
-  const SEARCH_HOSTS = /(^|\.)(google|bing|duckduckgo|daum|naver|yahoo|search\.brave)\./i;
-  const SEARCH_KEYS = ['q', 'query', 'p', 'wd', 'text', 'keyword'];
-  function searchQueryFromReferrer() {
-    try {
-      if (!document.referrer) return null;
-      const u = new URL(document.referrer);
-      if (!SEARCH_HOSTS.test(u.hostname)) return null;
-      for (const k of SEARCH_KEYS) {
-        const v = u.searchParams.get(k);
-        if (v && v.trim()) return v.trim();
-      }
-    } catch (e) { /* noop */ }
-    return null;
-  }
 
   // ==========================================================================
   // 1) 본문 루트 찾기
@@ -411,7 +334,7 @@
 
     rootBox = null;
     retargetObserver();
-    if (overlayOn) paintOverlay(true);
+    bus.emit('units:changed', { count: units.length });
     return units.length;
   }
 
@@ -584,7 +507,7 @@
   }
   function onScroll() { scrollEventsSinceTick++; rootBox = null; bump(); }
   function onKey() { bump(); }
-  function onResize() { rootBox = null; if (overlayOn) paintOverlay(true); }
+  function onResize() { rootBox = null; bus.emit('viewport:resized'); }
 
   function onCopy() {
     if (!recording) return;
@@ -699,7 +622,7 @@
     mouseEventsSinceTick = 0;
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
-    if (overlayOn) markCurrent(centerU, cursorPid);
+    bus.emit('tick:done', { centerU, cursorPid });
     if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
   }
 
@@ -814,104 +737,7 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  // ==========================================================================
-  // 8) 오버레이 — 유닛 경계를 눈으로 확인
-  //    유닛이 DOM 요소가 아니라 글자 범위라서 outline을 못 쓴다.
-  //    CSS Custom Highlight API로 글자 범위에 직접 색을 칠한다.
-  // ==========================================================================
-  const HL_OK = typeof CSS !== 'undefined' && CSS.highlights &&
-    typeof Highlight !== 'undefined';
-  let hlA = null, hlB = null, hlC = null, hlU = null;
-  let fallbackLayer = null, centerLineEl = null;
-
-  function rangeForUnit(u) {
-    const a = locate(u.start);
-    const b = locate(u.end);
-    if (!a || !b) return null;
-    const r = document.createRange();
-    try {
-      r.setStart(a.node, Math.min(a.offset, a.node.data.length));
-      r.setEnd(b.node, Math.min(b.offset, b.node.data.length));
-      if (r.collapsed) return null;
-    } catch (e) { return null; }
-    return r;
-  }
-
-  function paintOverlay(on) {
-    if (HL_OK) {
-      if (!hlA) {
-        hlA = new Highlight(); hlB = new Highlight();
-        hlC = new Highlight(); hlU = new Highlight();
-        hlA.priority = 1; hlB.priority = 1; hlC.priority = 5; hlU.priority = 9;
-        CSS.highlights.set('rbc-unit-a', hlA);
-        CSS.highlights.set('rbc-unit-b', hlB);
-        CSS.highlights.set('rbc-center', hlC);
-        CSS.highlights.set('rbc-cursor', hlU);
-      }
-      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear();
-      if (on) {
-        units.forEach((u, i) => {
-          const r = rangeForUnit(u);
-          if (r) (i % 2 ? hlB : hlA).add(r);
-        });
-      }
-    } else {
-      paintFallback(on);
-    }
-
-    if (on && !centerLineEl) {
-      centerLineEl = document.createElement('div');
-      centerLineEl.id = 'rbc-centerline';
-      document.documentElement.appendChild(centerLineEl);
-    }
-    if (centerLineEl) {
-      centerLineEl.style.display = on ? 'block' : 'none';
-      centerLineEl.style.top = (CFG.CENTER_RATIO * 100) + 'vh';
-    }
-  }
-
-  function markCurrent(centerU, cursorPid) {
-    if (!HL_OK || !hlC) return;
-    hlC.clear(); hlU.clear();
-    if (centerU) { const r = rangeForUnit(centerU); if (r) hlC.add(r); }
-    if (cursorPid) {
-      const u = units.find(x => x.pid === cursorPid);
-      if (u) { const r = rangeForUnit(u); if (r) hlU.add(r); }
-    }
-  }
-
-  let fbRaf = 0;
-  function paintFallback(on) {
-    if (!fallbackLayer) {
-      fallbackLayer = document.createElement('div');
-      fallbackLayer.id = 'rbc-fb';
-      document.documentElement.appendChild(fallbackLayer);
-    }
-    fallbackLayer.style.display = on ? 'block' : 'none';
-    if (!on) { fallbackLayer.innerHTML = ''; return; }
-    if (fbRaf) return;
-    fbRaf = requestAnimationFrame(() => {
-      fbRaf = 0;
-      const H = window.innerHeight;
-      const frag = document.createDocumentFragment();
-      units.forEach((u, i) => {
-        const r = rangeForUnit(u);
-        if (!r) return;
-        const rects = r.getClientRects();
-        if (!rects.length) return;
-        if (rects[rects.length - 1].bottom < -H || rects[0].top > 2 * H) return;
-        for (const rc of rects) {
-          const d = document.createElement('div');
-          d.className = 'rbc-fb-box ' + (i % 2 ? 'b' : 'a');
-          d.style.cssText = `left:${rc.left + scrollX}px;top:${rc.top + scrollY}px;` +
-            `width:${rc.width}px;height:${rc.height}px;`;
-          frag.appendChild(d);
-        }
-      });
-      fallbackLayer.innerHTML = '';
-      fallbackLayer.appendChild(frag);
-    });
-  }
+  
 
   // ==========================================================================
   // 9) 프레임 간 통신
@@ -957,8 +783,9 @@
         isPrimary = (m.tag === TAG);
         if (!isPrimary) {
           if (recording) timeline.push({ type: 'demoted', t: tNow() }); 
-          recording = false; overlayOn = false;
-          ensureTicking(); paintOverlay(false);
+          recording = false;
+          bus.emit('cmd:overlay', { on: false });
+          ensureTicking();
         }
         break;
       case 'focus': setFocus(!!m.on); break;              // [C2]
@@ -970,7 +797,7 @@
       case 'start': if (isPrimary) startRecording(m); break;
       case 'stop': if (isPrimary) stopRecording(); break;
       case 'overlay':
-        if (isPrimary) { overlayOn = m.on; paintOverlay(overlayOn); ensureTicking(); }
+        if (isPrimary) bus.emit('cmd:overlay', m);
         break;
       case 'chunk':
         if (recording) break; // BUG-1: pid 전면 재배정 방지
@@ -1078,18 +905,6 @@
   function injectStyle() {
     const s = document.createElement('style');
     s.textContent = `
-      ::highlight(rbc-unit-a){ background-color: rgba(59,130,246,.13); }
-      ::highlight(rbc-unit-b){ background-color: rgba(245,158,11,.17); }
-      ::highlight(rbc-center){ background-color: rgba(34,197,94,.38); }
-      ::highlight(rbc-cursor){ text-decoration: underline 2px solid rgba(37,99,235,.95); }
-      #rbc-centerline{ position:fixed; left:0; right:0; height:0;
-        border-top:1px dashed rgba(34,197,94,.85);
-        z-index:2147483646; pointer-events:none; }
-      #rbc-fb{ position:absolute; left:0; top:0; width:0; height:0;
-        z-index:2147483645; pointer-events:none; }
-      .rbc-fb-box{ position:absolute; pointer-events:none; }
-      .rbc-fb-box.a{ background:rgba(59,130,246,.13); }
-      .rbc-fb-box.b{ background:rgba(245,158,11,.17); }
       #${CFG.PANEL_ID}{
         position:fixed; right:12px; bottom:12px; z-index:2147483647;
         width:272px; font:12px/1.45 system-ui,-apple-system,sans-serif; color:#111;
@@ -1252,6 +1067,13 @@
   // ==========================================================================
   // init
   // ==========================================================================
+  // 8-overlay.js 가 overlayOn 을 바꾸면 미러를 맞추고 틱 필요 여부를 재평가한다.
+  bus.on('overlay:changed', (d) => {
+    overlayOn = !!(d && d.on);
+    ensureTicking();
+  });
+
+
   function init() {
     injectStyle();
     searchQuery = searchQueryFromReferrer();      // [C8]
@@ -1278,4 +1100,13 @@
   } else {
     init();
   }
+    // Step 2~3 에서 2-units.js / 3-hittest.js 로 옮겨갈 임시 통로.
+  // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
+  RBC.units = {
+    all: () => units,
+    count: () => units.length,
+    byPid: (pid) => units.find(u => u.pid === pid),
+  };
+  RBC.hittest = { locate };
+
 })();

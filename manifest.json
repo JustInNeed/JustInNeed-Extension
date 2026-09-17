@@ -9,7 +9,7 @@
       "all_frames": true,
       "match_about_blank": false,
       "js": [
-        "content.js"
+        "content/0-core.js", "content.js", "content/8-overlay.js"
       ],
       "run_at": "document_idle"
     }
