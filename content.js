@@ -57,13 +57,16 @@
   // ==========================================================================
   // STATE
   // ==========================================================================
-  let raw = '';
-  let sig = new Int32Array(1);
-  let segs = [];
-  let nodeIndex = new Map();
-  let breaks = new Set();
+  // 1-stream.js 소유 상태의 지역 거울. syncStream() 으로만 갱신한다.
+  // 2-units.js 를 만들 때 이 셋은 그쪽으로 옮겨간다.
+  let raw = '', sig = new Int32Array(1), breaks = new Set();
+  function syncStream() {
+    raw = RBC.stream.raw();
+    sig = RBC.stream.sig();
+    breaks = RBC.stream.breaks();
+  }
+
   let units = [];
-  let contentRoot = null;
   let rootBox = null;
 
   let recording = false;
@@ -109,131 +112,6 @@
   function tNow() { return Date.now() - sessionEpoch; }
 
 
-  // ==========================================================================
-  // 1) 본문 루트 찾기
-  // ==========================================================================
-  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG',
-    'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'SELECT', 'TEXTAREA', 'BUTTON',
-    'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
-
-  const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD',
-    'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV',
-    'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH',
-    'THEAD', 'TR', 'UL']);
-
-  function textLen(el) {
-    let n = (el.textContent || '').length;
-    el.querySelectorAll('script,style,noscript').forEach(s => {
-      n -= (s.textContent || '').length;
-    });
-    return Math.max(n, 0);
-  }
-
-  function findContentRoot() {
-    for (const sel of ['article', 'main', '[role="main"]']) {
-      const el = document.querySelector(sel);
-      if (el && textLen(el) > CFG.MIN_ROOT_TEXT) return el;
-    }
-    let best = document.body || document.documentElement, bestScore = -1;
-    const pool = (document.body || document.documentElement)
-      .querySelectorAll('div, section, article, main, td');
-    pool.forEach((el) => {
-      if (el.id === CFG.PANEL_ID || el.closest('#' + CFG.PANEL_ID)) return;
-      const len = textLen(el);
-      if (len < CFG.MIN_ROOT_TEXT) return;
-      let linkLen = 0;
-      el.querySelectorAll('a').forEach(a => { linkLen += (a.textContent || '').length; });
-      const score = len * (1 - Math.min(linkLen / (len + 1), 1));
-      if (score > bestScore) { bestScore = score; best = el; }
-    });
-    return best;
-  }
-
-  // ==========================================================================
-  // 2) 텍스트 스트림 구축
-  // ==========================================================================
-  function nearestBlock(node) {
-    let el = node.parentElement;
-    while (el && el !== document.documentElement) {
-      if (BLOCK_TAGS.has(el.tagName)) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function buildStream() {
-    contentRoot = findContentRoot();
-    const root = contentRoot;
-
-    const walker = document.createTreeWalker(
-      root,
-      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-      {
-        acceptNode(node) {
-          if (node.nodeType === 1) {
-            const el = node;
-            if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
-            if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
-            if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
-              return NodeFilter.FILTER_REJECT;
-            if (el.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
-            return NodeFilter.FILTER_SKIP;
-          }
-          if (!node.data || !node.data.trim()) return NodeFilter.FILTER_REJECT;
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      }
-    );
-
-    const newSegs = [];
-    const newBreaks = new Set();
-    const parts = [];
-    let len = 0;
-    let pendingBreak = true;
-    let lastBlock = null;
-    let n;
-
-    while ((n = walker.nextNode())) {
-      if (n.nodeType === 1) { pendingBreak = true; continue; }  // <br>
-      const blk = nearestBlock(n);
-      if (blk !== lastBlock) pendingBreak = true;
-      lastBlock = blk;
-
-      const r = document.createRange();
-      r.selectNodeContents(n);
-      const rect = r.getBoundingClientRect();
-      if (!rect.width && !rect.height) continue;   // display:none / 0px
-
-      if (pendingBreak) newBreaks.add(len);
-      newSegs.push({ node: n, start: len, len: n.data.length });
-      parts.push(n.data);
-      len += n.data.length;
-      pendingBreak = false;
-    }
-
-    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks };
-  }
-
-  function buildSig(s) {
-    const a = new Int32Array(s.length + 1);
-    let c = 0, prevWs = true;
-    for (let i = 0; i < s.length; i++) {
-      if (isWs(s[i])) { if (!prevWs) c++; prevWs = true; }
-      else { c++; prevWs = false; }
-      a[i + 1] = c;
-    }
-    return a;
-  }
-
-  function commitStream(built) {
-    raw = built.raw;
-    segs = built.segs;
-    breaks = built.breaks;
-    sig = buildSig(raw);
-    nodeIndex = new Map();
-    for (const s of segs) nodeIndex.set(s.node, s);
-  }
 
   // ==========================================================================
   // 3) 청킹 — 글자 수 기준으로 자르되 경계에 스냅
@@ -308,25 +186,27 @@
     return list;
   }
 
+
   function rescan(opts) {
     const preserve = opts && opts.preserve;
-    const built = buildStream();
+    const built = RBC.stream.build();
 
     if (preserve && recording && units.length) {
-      if (built.raw.startsWith(raw)) {
-        const tailFrom = raw.length;             // 순수 append → 꼬리만 청킹(pid 보존)
-        commitStream(built);
+      if (built.raw.startsWith(RBC.stream.raw())) {
+        const tailFrom = RBC.stream.len();       // 순수 append → 꼬리만 청킹(pid 보존)
+        RBC.stream.commit(built);
+        syncStream();
         const kept = units.map(u => ({ ...u }));
         units = assignIds(chunkFrom(tailFrom, kept));
         timeline.push({ type: 'rescan', t: tNow(), mode: 'append', units: units.length });
       } else {
         // 본문 교체. 기록 중에는 재청킹하지 않는다(기존 pid 오염 방지).
-        // 사라진 노드는 nodeIndex 미스 → 해당 틱은 null. 틀린 데이터보다 결측이 낫다.
         timeline.push({ type: 'rescan', t: tNow(), mode: 'disruptive-skipped' });
         return units.length;
       }
     } else {
-      commitStream(built);
+      RBC.stream.commit(built);
+      syncStream();
       units = assignIds(chunkFrom(0, null));
     }
 
@@ -355,6 +235,7 @@
   }
 
   function locate(streamPos) {          // raw 오프셋 → {node, offset}
+    const segs = RBC.stream.segs(); 
     if (!segs.length) return null;
     let lo = 0, hi = segs.length - 1, ans = 0;
     while (lo <= hi) {
@@ -380,7 +261,7 @@
 
   function streamPosOf(node, offset) {
     if (!node || node.nodeType !== 3) return -1;
-    const seg = nodeIndex.get(node);
+    const seg = RBC.stream.segFor(node);
     if (!seg) return -1;
     return seg.start + Math.max(0, Math.min(offset, seg.len));
   }
@@ -401,8 +282,9 @@
   }
 
   function ensureRootBox() {
-    if (!rootBox && contentRoot) {
-      const b = contentRoot.getBoundingClientRect();
+    const root = RBC.stream.root();
+    if (!rootBox && root) {
+      const b = root.getBoundingClientRect();
       rootBox = { left: b.left, width: b.width || window.innerWidth };
     }
   }
@@ -420,7 +302,7 @@
       if (!r) continue;
       const n = r.startContainer;
       if (n.nodeType !== 3 || inPanel(n)) continue;
-      const seg = nodeIndex.get(n);
+      const seg = RBC.stream.segFor(n);
       if (!seg) continue;
       const rect = charRectAt(n, r.startOffset);
       if (!rect) continue;
@@ -458,7 +340,7 @@
     if (!r) return null;
     const n = r.startContainer;
     if (n.nodeType !== 3 || inPanel(n)) return null;
-    const seg = nodeIndex.get(n);
+    const seg = RBC.stream.segFor(n);
     if (!seg) return null;
     const rect = charRectAt(n, r.startOffset);
     if (!rect) return null;
@@ -770,7 +652,7 @@
     switch (m.cmd) {
       case 'scan': {
         const n = rescan({});
-        const info = { tag: TAG, units: n, href: location.href, chars: raw.length };
+        const info = { tag: TAG, units: n, href: location.href, chars: RBC.stream.len() };
         if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
         break;
       }
@@ -905,7 +787,8 @@
 
   function retargetObserver() {
     if (!mo) return;
-    const target = (units.length && contentRoot) ? contentRoot : document.documentElement;
+    const root = RBC.stream.root();
+    const target = (units.length && root) ? root : document.documentElement;
     if (moTarget === target) return;
     mo.disconnect();
     moTarget = target;
