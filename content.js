@@ -71,8 +71,6 @@
   // overlay:changed 이벤트로만 갱신한다. 여기서 직접 대입하지 말 것.
   // 8-overlay.js 가 없으면 영원히 false 로 남고, 그게 맞는 동작이다.
   let overlayOn = false;
-  let uiRecording = false;      // 최상위 프레임 버튼 표시용
-  let uiOverlay = false;
   let isPrimary = IS_TOP;
   let primaryTag = null;
 
@@ -569,9 +567,8 @@
     // [C5] 30분 무동작 → 자동 종료
     if (recording && Date.now() - lastActivityAt > CFG.IDLE_TIMEOUT_MS) {
       timeline.push({ type: 'autostop', t: tNow(), reason: 'idle' });
-      stopRecording();
-      if (IS_TOP) { uiRecording = false; renderPanel(); } else toTop({ res: 'autostop' });
-      return;
+      stopRecording('idle');
+      if (!IS_TOP) toTop({ res: 'autostop' });
     }
 
     const now = performance.now();
@@ -651,18 +648,16 @@
     if (!searchQuery) searchQuery = searchQueryFromReferrer();
     lastActivityAt = Date.now();
     recording = true;
-    if (IS_TOP) uiRecording = true;
     ensureTicking();
-    renderPanel();
+    bus.emit('record:started', { sessionId });
     emitStat();
   }
 
-  function stopRecording() {
+  function stopRecording(reason) {
     if (recording) sessionEndISO = new Date().toISOString();   // [C6]
     recording = false;
-    if (IS_TOP) uiRecording = false;
     ensureTicking();
-    renderPanel();
+    bus.emit('record:stopped', { reason: reason || 'user' });
     emitStat();
   }
 
@@ -768,7 +763,7 @@
       focusSec: Math.round(recordedTicks * CFG.TICK_MS / 1000),
       href: location.href,
     };
-    if (IS_TOP) applyStat(s); else toTop(s);
+    if (IS_TOP) bus.emit('stat', s); else toTop(s);
   }
 
   function handleCmd(m) {
@@ -820,7 +815,7 @@
           const list = units.map(u => ({
             order: u.order, pid: u.pid, charLen: u.charLen, text: u.text.slice(0, 44),
           }));
-          if (IS_TOP) showList(list); else toTop({ res: 'list', list });
+          if (IS_TOP) bus.emit('units:list', list); else toTop({ res: 'list', list });
         }
         break;
     }
@@ -838,10 +833,10 @@
     }
     if (!IS_TOP) return;
     if (m.res === 'scan') collectScan(m);
-    else if (m.res === 'stat') applyStat(m);
+    else if (m.res === 'stat') bus.emit('stat', m);
     else if (m.res === 'export') download(m.payload);
-    else if (m.res === 'list') showList(m.list);
-    else if (m.res === 'autostop') { uiRecording = false; renderPanel(); }
+    else if (m.res === 'list') bus.emit('units:list', m.list);
+    else if (m.res === 'autostop') bus.emit('record:stopped', { reason: 'idle' });
   });
 
   function send(cmd, extra) {
@@ -858,10 +853,7 @@
   let scanTries = 0;
 
   function doScan(auto) {
-    if (uiRecording) {  // 기록 중 재스캔 = pid 재배정
-      setStat('기록 중에는 스캔할 수 없습니다. 정지 후 다시 시도하세요.');
-      return;
-    }
+    if (recording) return;
     if (!auto) scanTries = 0;
     scanBucket = [];
     clearTimeout(scanTimer);
@@ -870,10 +862,10 @@
       if (!scanBucket.length) {
         if (scanTries < CFG.SCAN_RETRY_MAX) {
           scanTries++;
-          setStat(`본문 탐색 중… (${scanTries}/${CFG.SCAN_RETRY_MAX})`);
+          bus.emit('scan:progress', { tries: scanTries, max: CFG.SCAN_RETRY_MAX });
           setTimeout(() => doScan(true), CFG.SCAN_RETRY_MS);
         } else {
-          setStat('본문을 못 찾음. 페이지가 다 뜬 뒤 <b>스캔</b>을 다시 눌러주세요.');
+          bus.emit('scan:failed');
         }
         return;
       }
@@ -884,12 +876,13 @@
       send('primary', { tag: primaryTag });
       send('focus', { on: !document.hidden && document.hasFocus() });   // [C2] 초기 동기화
       if (searchQuery) send('query', { q: searchQuery });               // [C8]
-      setStat(
-        `프레임 ${scanBucket.length}개 · primary=${esc(win.tag)}` +
-        (win.tag === TAG ? ' (본 페이지)' : ' (iframe)') +
-        `<br>유닛 <b>${win.units}</b>개 · 본문 ${win.chars.toLocaleString()}자`
-      );
-      renderPanel();
+      bus.emit('scan:done', {
+        frames: scanBucket.length,
+        tag: win.tag,
+        isSelf: win.tag === TAG,
+        units: win.units,
+        chars: win.chars,
+      });
     }, CFG.SCAN_COLLECT_MS);
   }
 
@@ -897,132 +890,6 @@
     if (m.units > 0) scanBucket.push(m);
   }
 
-  // ==========================================================================
-  // 10) 패널 (최상위 프레임에만)
-  // ==========================================================================
-  let panelEl = null, listEl = null;
-
-  function injectStyle() {
-    const s = document.createElement('style');
-    s.textContent = `
-      #${CFG.PANEL_ID}{
-        position:fixed; right:12px; bottom:12px; z-index:2147483647;
-        width:272px; font:12px/1.45 system-ui,-apple-system,sans-serif; color:#111;
-        background:#fff; border:1px solid #ddd; border-radius:10px;
-        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px; }
-      #${CFG.PANEL_ID} h4{ margin:0 0 6px; font-size:12px; }
-      #${CFG.PANEL_ID} button{
-        font:11px system-ui; padding:5px 7px; margin:2px 2px 0 0;
-        border:1px solid #ccc; border-radius:6px; background:#f7f7f7; cursor:pointer; }
-      #${CFG.PANEL_ID} button.on{ background:#16a34a; color:#fff; border-color:#16a34a; }
-      #${CFG.PANEL_ID} .rbc-row{ margin-top:6px; font-size:11px; color:#555;
-        display:flex; align-items:center; gap:6px; }
-      #${CFG.PANEL_ID} input[type=range]{ flex:1; }
-      #${CFG.PANEL_ID} input[type=text]{ flex:1; min-width:0; font:11px system-ui;
-        padding:3px 5px; border:1px solid #ccc; border-radius:5px; }
-      #${CFG.PANEL_ID} .rbc-stat{ margin-top:8px; font-size:11px; color:#333;
-        border-top:1px solid #eee; padding-top:6px; word-break:break-all; }
-      #${CFG.PANEL_ID} .rbc-list{ margin-top:6px; max-height:190px; overflow:auto;
-        border-top:1px solid #eee; padding-top:6px; font-size:11px; display:none; }
-      #${CFG.PANEL_ID} .rbc-list div{ padding:2px 0; border-bottom:1px dotted #eee;
-        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      #${CFG.PANEL_ID} .rbc-list b{ color:#2563eb; }
-      #${CFG.PANEL_ID} .dot{ display:inline-block; width:8px; height:8px;
-        border-radius:50%; margin-right:4px; vertical-align:middle; }
-    `;
-    document.documentElement.appendChild(s);
-  }
-
-  function renderPanel() {
-    if (!IS_TOP) return;
-    if (!panelEl) {
-      panelEl = document.createElement('div');
-      panelEl.id = CFG.PANEL_ID;
-      document.documentElement.appendChild(panelEl);
-    }
-    const prevStat = panelEl.querySelector('#rbc-stat');
-    const keep = prevStat ? prevStat.innerHTML : '스캔 준비 중…';
-    panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.2</span></h4>
-      <div>
-        <button data-act="scan" ${uiRecording ? 'disabled' : ''}>스캔</button>
-        <button data-act="rec" class="${uiRecording ? 'on' : ''}">${uiRecording ? '■ 정지' : '● 기록'}</button>
-        <button data-act="ov" class="${uiOverlay ? 'on' : ''}">오버레이</button>
-        <button data-act="list">유닛 목록</button>
-        <button data-act="exp">JSON</button>
-      </div>
-      <div class="rbc-row">
-        <span>검색어</span>
-        <input type="text" data-act="query" placeholder="referrer에서 못 얻으면 직접"
-               value="${esc(searchQuery || '')}">
-      </div>
-      <div class="rbc-row">
-        <span>청크</span>
-        <input type="range" min="80" max="400" step="20" value="${CFG.TARGET_CHARS}" data-act="chunk" ${uiRecording ? 'disabled' : ''}>
-        <span id="rbc-chunkval">${CFG.TARGET_CHARS}자</span>
-      </div>
-      <div class="rbc-stat" id="rbc-stat">${keep}</div>
-      <div class="rbc-list" id="rbc-list"></div>
-    `;
-    listEl = panelEl.querySelector('#rbc-list');
-
-    // 주의: onclick에 doScan을 직접 넣으면 이벤트 객체가 auto 인자로 들어가
-    //       재시도 카운터가 리셋되지 않는다.
-    panelEl.querySelector('[data-act="scan"]').onclick = () => doScan();
-    panelEl.querySelector('[data-act="rec"]').onclick = () => {
-      if (uiRecording) { uiRecording = false; send('stop'); }
-      else {
-        uiRecording = true;
-        send('start', { epoch: Date.now(), sessionId: uuid(), query: searchQuery });
-      }
-      renderPanel();
-    };
-    panelEl.querySelector('[data-act="ov"]').onclick = () => {
-      uiOverlay = !uiOverlay; send('overlay', { on: uiOverlay }); renderPanel();
-    };
-    panelEl.querySelector('[data-act="list"]').onclick = () => {
-      if (listEl.style.display === 'block') { listEl.style.display = 'none'; return; }
-      send('list');
-    };
-    panelEl.querySelector('[data-act="exp"]').onclick = () => send('export');
-
-    const q = panelEl.querySelector('[data-act="query"]');
-    q.onchange = (e) => { searchQuery = e.target.value.trim() || null; send('query', { q: searchQuery }); };
-
-    const slider = panelEl.querySelector('[data-act="chunk"]');
-    slider.oninput = (e) => {
-      panelEl.querySelector('#rbc-chunkval').textContent = e.target.value + '자';
-    };
-    slider.onchange = (e) => send('chunk', { target: +e.target.value });
-  }
-
-  function setStat(html) {
-    const el = panelEl && panelEl.querySelector('#rbc-stat');
-    if (el) el.innerHTML = html;
-  }
-
-  function applyStat(s) {
-    if (!IS_TOP || !panelEl) return;
-    setStat(`
-      <span class="dot" style="background:${s.recording ? '#16a34a' : '#bbb'}"></span>
-      ${s.recording ? '기록 중' : '대기'} · 샘플 ${s.samples}개 · 유닛 ${s.units}개
-      ${s.recording ? `· focus ${s.focusSec}s` : ''}<br>
-      <b style="color:#16a34a">중앙선(B)</b>: ${esc(s.centerPid) || '—'} <i>${esc(s.centerText)}</i><br>
-      <b style="color:#2563eb">커서(A)</b>: ${esc(s.cursorPid) || '여백/없음'}<br>
-      scrollSpeed: ${s.scrollSpeed} px/s
-      ${s.query ? `· 검색어 "${esc(s.query)}"` : '· <span style="color:#c00">검색어 없음</span>'}
-      ${s.tag !== TAG ? `<br><span style="color:#999">frame ${esc(s.tag)}</span>` : ''}
-    `);
-  }
-
-  function showList(list) {
-    if (!listEl) return;
-    listEl.style.display = 'block';
-    listEl.innerHTML = list.map(u =>
-      `<div><b>#${u.order}</b> <span style="color:#999">${esc(u.pid)}</span> ` +
-      `(${u.charLen}자) ${esc(u.text)}</div>`
-    ).join('') || '<div>유닛 없음</div>';
-  }
 
   // ==========================================================================
   // 11) DOM 변경 감시
@@ -1075,11 +942,9 @@
 
 
   function init() {
-    injectStyle();
     searchQuery = searchQueryFromReferrer();      // [C8]
     if (IS_TOP) {
       winFocused = !document.hidden && document.hasFocus();
-      renderPanel();
     }
     document.addEventListener('mousemove', onMouseMove, { passive: true });
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -1108,5 +973,7 @@
     byPid: (pid) => units.find(u => u.pid === pid),
   };
   RBC.hittest = { locate };
+  RBC.frames = { send, doScan, isPrimary: () => isPrimary };
+  RBC.recorder = { query: () => searchQuery };
 
 })();
