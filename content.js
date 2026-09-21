@@ -49,7 +49,7 @@
   const RBC = window.RBC;
   if (!RBC || RBC.dup) return;
   const { CFG, bus, IS_TOP, TAG } = RBC;
-  const { isWs, clean, esc, hash, uuid, searchQueryFromReferrer } = RBC.util;
+  const { isWs, clean, hash, uuid, searchQueryFromReferrer } = RBC.util;
 
   
 
@@ -71,17 +71,9 @@
   let tickCount = 0;
   let recordedTicks = 0;        // [C6] focusMs 계산용
 
-  let latestCursor = null;
   let prevTickCursor = null;
   let prevScrollY = window.scrollY;
   let prevTickTime = null;
-  let scrollEventsSinceTick = 0;
-  let mouseEventsSinceTick = 0; // [C3]
-  let lastSelText = '';
-
-  let winFocused = true;        // [C2] 최상위 프레임이 소유, 하위로 브로드캐스트
-  let lastActivityAt = Date.now();
-  let lastActivityPing = 0;
 
   const pageEnteredAt = Date.now();   // [C7]
   let pageLeftAt = null;
@@ -101,112 +93,37 @@
 
 
 
-
-  // ==========================================================================
-  // 5) 이벤트 리스너
-  // ==========================================================================
-  function bump() {                       // [C5] 사용자 활동 기록
-    lastActivityAt = Date.now();
-    if (IS_TOP && Date.now() - lastActivityPing > CFG.ACTIVITY_PING_MS) {
-      lastActivityPing = Date.now();
-      send('activity');
-    }
-  }
-
-  function onMouseMove(e) {
-    latestCursor = { x: e.clientX, y: e.clientY };
-    mouseEventsSinceTick++;               // [C3]
-    bump();
-  }
-  function onScroll() { scrollEventsSinceTick++; RBC.hittest.invalidate(); bump(); }
-  function onKey() { bump(); }
-  function onResize() { RBC.hittest.invalidate(); bus.emit('viewport:resized'); }
-
-  // 패널 위 선택·복사는 수집 대상이 아니다. (3-hittest 안에도 같은 판정이 있는데,
-  // 그쪽은 좌표 탐침 필터용이고 이쪽은 이벤트 필터용이라 쓰임이 다르다)
-  function inPanel(node) {
-    const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest('#' + CFG.PANEL_ID));
-  }
-
-  function onCopy() {
-    if (!recording) return;
-    const sel = window.getSelection();
-    if (!sel || inPanel(sel.anchorNode)) return;
-    const pids = RBC.hittest.unitsFromSelection(sel)
-    timeline.push({
-      type: 'copy', t: tNow(), pids, pid: pids[0] || null, text: sel.toString(),
-    });
-    bump();
-  }
-
-  function onSelectionChange() {
-    if (!recording) return;
-    const sel = window.getSelection();
-    if (!sel || inPanel(sel.anchorNode)) return;
-    const text = sel.toString().trim();
-    if (text && text !== lastSelText) {
-      lastSelText = text;
-      const pids = RBC.hittest.unitsFromSelection(sel)
-      timeline.push({ type: 'highlight', t: tNow(), pids, pid: pids[0] || null, text });
-      bump();
-    } else if (!text) {
-      lastSelText = '';
-    }
-  }
-
-  function onVisibility() {
-    if (recording) {
-      timeline.push({ type: 'visibility', t: tNow(), hidden: document.hidden });
-    }
-    if (!document.hidden) { prevTickTime = null; bump(); }
-  }
-
-  // [C2] 포커스는 최상위 프레임이 소유하고 하위 프레임에 알린다.
-  function onWinFocus() { if (IS_TOP) { bump(); send('focus', { on: true }); } }
-  function onWinBlur() { if (IS_TOP) send('focus', { on: false }); }
-
-  function setFocus(on) {
-    if (winFocused === on) return;
-    winFocused = on;
-    if (recording) timeline.push({ type: 'focus', t: tNow(), focused: on });
-    if (on) prevTickTime = null;          // 복귀 직후 dt 튐 방지
-  }
-
-  function onPageHide() {                 // [C7]
-    pageLeftAt = Date.now();
-    if (recording) timeline.push({ type: 'pagehide', t: tNow() });
-  }
-
   // ==========================================================================
   // 6) 마스터 틱
   // ==========================================================================
   function tick() {
     // [C2] 탭이 숨겨졌거나 브라우저 창이 포커스를 잃은 동안은 기록하지 않는다.
     //      (명세 0-3: focus 시간 = 탭이 active일 때만 카운트)
-    if (recording && (document.hidden || !winFocused)) { prevTickTime = null; return; }
+    if (recording && (document.hidden || !RBC.input.focused())) { prevTickTime = null; return; }
 
-    // [C5] 30분 무동작 → 자동 종료
-    if (recording && Date.now() - lastActivityAt > CFG.IDLE_TIMEOUT_MS) {
+     // [C5] 30분 무동작 → 자동 종료
+    if (recording && RBC.input.idleMs() > CFG.IDLE_TIMEOUT_MS) {
       timeline.push({ type: 'autostop', t: tNow(), reason: 'idle' });
       stopRecording('idle');
       if (!IS_TOP) toTop({ res: 'autostop' });
-      return;  
+      return;
     }
 
     const now = performance.now();
     const scrollY = window.scrollY;
     const dt = prevTickTime != null ? (now - prevTickTime) / 1000 : 0;
+    const cursor = RBC.input.cursor();
+    const ev = RBC.input.drain();              // 틱당 한 번. 읽으면서 리셋.
 
-    const s = RBC.hittest.sample(latestCursor);
+    const s = RBC.hittest.sample(cursor);
     const centerU = s.centerU;
     const centerPid = centerU ? centerU.pid : null;
     const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;
     const visTop = s.visTop, visBot = s.visBot; 
 
     let cursorPid = null, cx = null, cy = null, cursorDist = 0, cursorMoved = false;
-    if (latestCursor) {
-      cx = latestCursor.x; cy = latestCursor.y;
+    if (cursor) {
+      cx = cursor.x; cy = cursor.y;
       cursorPid = s.cursorU ? s.cursorU.pid : null;
       if (prevTickCursor) {
         cursorDist = Math.round(Math.hypot(cx - prevTickCursor.x, cy - prevTickCursor.y));
@@ -220,8 +137,8 @@
         t: tNow(),
         scrollY,
         scrollSpeed: Math.round(scrollSpeed),   // 부호 = 방향. 감속은 오프라인에서 미분
-        scrollEvents: scrollEventsSinceTick,
-        mouseEvents: mouseEventsSinceTick,      // [C3]
+        scrollEvents: ev.scrollEvents,
+        mouseEvents: ev.mouseEvents,            // [C3]
         centerPid,                              // B채널 귀속
         visTop, visBot,                         // [C1] 이 사이 유닛은 화면에 노출됨
         cursorPid,                              // A채널 귀속 (여백이면 null)
@@ -237,9 +154,7 @@
 
     prevTickTime = now;
     prevScrollY = scrollY;
-    if (latestCursor) prevTickCursor = { x: latestCursor.x, y: latestCursor.y };
-    scrollEventsSinceTick = 0;
-    mouseEventsSinceTick = 0;
+    if (cursor) prevTickCursor = { x: cursor.x, y: cursor.y };
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
     bus.emit('tick:done', { centerU, cursorPid });
@@ -269,7 +184,7 @@
     sessionEndISO = null;
     if (m && m.query) searchQuery = m.query;           // [C8]
     if (!searchQuery) searchQuery = searchQueryFromReferrer();
-    lastActivityAt = Date.now();
+    RBC.input.bump();
     recording = true;
     ensureTicking();
     bus.emit('record:started', { sessionId });
@@ -408,8 +323,8 @@
       case 'list':
         if (isPrimary) bus.emit('cmd:list');
         break;
-      case 'focus': setFocus(!!m.on); break;              // [C2]
-      case 'activity': lastActivityAt = Date.now(); break; // [C5]
+      case 'focus': bus.emit('cmd:focus', m); break;       // [C2]
+      case 'activity': bus.emit('cmd:activity'); break;    // [C5]
       case 'query':                                        // [C8]
         searchQuery = (m.q || '').trim() || null;
         if (isPrimary) emitStat();
@@ -571,35 +486,53 @@
     if (!IS_TOP) toTop({ res: 'list', list });
   });
 
+    // 4-input 이 "무슨 일이 있었다"만 알려주고, 기록 여부는 여기서 판단한다.
+  bus.on('sel:highlight', (d) => {
+    if (!recording) return;
+    timeline.push({ type: 'highlight', t: tNow(), pids: d.pids, pid: d.pids[0] || null, text: d.text });
+  });
+
+  bus.on('sel:copy', (d) => {
+    if (!recording) return;
+    timeline.push({ type: 'copy', t: tNow(), pids: d.pids, pid: d.pids[0] || null, text: d.text });
+  });
+
+  bus.on('visibility', (d) => {
+    if (recording) timeline.push({ type: 'visibility', t: tNow(), hidden: d.hidden });
+    if (!d.hidden) prevTickTime = null;
+  });
+
+  bus.on('focus', (d) => {
+    if (recording) timeline.push({ type: 'focus', t: tNow(), focused: d.focused });
+    if (d.focused) prevTickTime = null;        // 복귀 직후 dt 튐 방지
+  });
+
+  bus.on('pagehide', () => {                    // [C7]
+    pageLeftAt = Date.now();
+    if (recording) timeline.push({ type: 'pagehide', t: tNow() });
+  });
+
+  bus.on('activity', () => send('activity'));
+
+  // 4-input 이 최상위 프레임의 포커스 변화를 알리면 하위 프레임으로 브로드캐스트한다.
+  bus.on('focus:broadcast', (d) => send('focus', { on: d.on }));
+
 
   function init() {
     searchQuery = searchQueryFromReferrer();      // [C8]
-    if (IS_TOP) {
-      winFocused = !document.hidden && document.hasFocus();
-    }
-    document.addEventListener('mousemove', onMouseMove, { passive: true });
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize, { passive: true });
-    document.addEventListener('keydown', onKey, { passive: true });
-    document.addEventListener('copy', onCopy, true);
-    document.addEventListener('selectionchange', onSelectionChange);
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onWinFocus);
-    window.addEventListener('blur', onWinBlur);
-    window.addEventListener('pagehide', onPageHide);
     watchMutations();
     if (IS_TOP) setTimeout(() => doScan(), CFG.FIRST_SCAN_DELAY);
   }
+
+
+  // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
+  RBC.frames = { send, doScan, isPrimary: () => isPrimary };
+  RBC.recorder = { query: () => searchQuery };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {
     init();
   }
-
-  // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
-
-  RBC.frames = { send, doScan, isPrimary: () => isPrimary };
-  RBC.recorder = { query: () => searchQuery };
 
 })();

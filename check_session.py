@@ -71,6 +71,25 @@ def all_pids_used(timeline):
 
 
 # --- 개별 검사 -------------------------------------------------------------
+def check_schema(rep, meta):
+    """[0] 현재 수집기(v2.2+)가 만든 파일인가.
+
+    이게 아니면 나머지 검사가 전부 무의미하다. 가장 흔한 사고는
+    `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을 집는 것 —
+    새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
+    """
+    v = meta.get("schemaVersion")
+    if v is None:
+        rep.add(FAIL, "스키마 버전",
+                "schemaVersion 없음 — v2.2 이전 파일이다. 현재 수집기가 만든 게 아니므로 "
+                "나머지 결과를 믿지 말 것. 패널에서 JSON 을 다시 내보낼 것")
+    elif v != 2:
+        rep.add(FAIL, "스키마 버전", f"v{v} — 이 검사기는 v2 용이다")
+    else:
+        started = meta.get("startedAt", "?")
+        rep.add(OK, "스키마 버전", f"v2 · 기록 시작 {started}")
+
+
 def check_pid_integrity(rep, meta, timeline):
     """[1] timeline이 쓰는 pid가 전부 meta.paragraphs에 있는가. 가장 중요."""
     declared = {p["pid"] for p in meta.get("paragraphs", [])}
@@ -275,6 +294,7 @@ def run(path, baseline=None):
     ticks = ticks_of(timeline)
 
     rep = Report(path)
+    check_schema(rep, meta)
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
