@@ -58,8 +58,6 @@
   // STATE
   // ==========================================================================
 
-  let rootBox = null;
-
   let recording = false;
   // 8-overlay.js 가 소유하는 overlayOn 의 읽기 전용 미러.
   // overlay:changed 이벤트로만 갱신한다. 여기서 직접 대입하지 말 것.
@@ -103,147 +101,6 @@
 
 
 
-  // ==========================================================================
-  // 4) 히트 테스트 — 픽셀 → 유닛
-  // ==========================================================================
-  function caretAt(x, y) {
-    try {
-      if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
-      if (document.caretPositionFromPoint) {
-        const p = document.caretPositionFromPoint(x, y);
-        if (!p) return null;
-        const r = document.createRange();
-        r.setStart(p.offsetNode, p.offset);
-        r.collapse(true);
-        return r;
-      }
-    } catch (e) { /* noop */ }
-    return null;
-  }
-
-  function locate(streamPos) {          // raw 오프셋 → {node, offset}
-    const segs = RBC.stream.segs(); 
-    if (!segs.length) return null;
-    let lo = 0, hi = segs.length - 1, ans = 0;
-    while (lo <= hi) {
-      const m = (lo + hi) >> 1;
-      if (segs[m].start <= streamPos) { ans = m; lo = m + 1; } else hi = m - 1;
-    }
-    const s = segs[ans];
-    if (!s) return null;
-    return { node: s.node, offset: Math.max(0, Math.min(streamPos - s.start, s.len)) };
-  }
-
-
-  function streamPosOf(node, offset) {
-    if (!node || node.nodeType !== 3) return -1;
-    const seg = RBC.stream.segFor(node);
-    if (!seg) return -1;
-    return seg.start + Math.max(0, Math.min(offset, seg.len));
-  }
-
-  function inPanel(node) {
-    const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest('#' + CFG.PANEL_ID));
-  }
-
-  function charRectAt(node, offset) {
-    const L = node.data.length;
-    if (!L) return null;
-    let a = Math.min(offset, L - 1); if (a < 0) a = 0;
-    const r = document.createRange();
-    try { r.setStart(node, a); r.setEnd(node, Math.min(a + 1, L)); } catch (e) { return null; }
-    const rect = r.getBoundingClientRect();
-    return (rect.width || rect.height) ? rect : null;
-  }
-
-  function ensureRootBox() {
-    const root = RBC.stream.root();
-    if (!rootBox && root) {
-      const b = root.getBoundingClientRect();
-      rootBox = { left: b.left, width: b.width || window.innerWidth };
-    }
-  }
-
-  // 뷰포트 세로 y를 지나는 유닛. nx = 가로로 찔러볼 지점 수.
-  function unitAtViewportY(y, tol, nx) {
-    ensureRootBox();
-    const left = rootBox ? rootBox.left : 0;
-    const width = rootBox ? rootBox.width : window.innerWidth;
-    const fr = [0.5, 0.3, 0.7, 0.15, 0.85].slice(0, nx || 5);
-    for (const f of fr) {
-      const x = left + width * f;
-      if (x < 0 || x > window.innerWidth) continue;
-      const r = caretAt(x, y);
-      if (!r) continue;
-      const n = r.startContainer;
-      if (n.nodeType !== 3 || inPanel(n)) continue;
-      const seg = RBC.stream.segFor(n);
-      if (!seg) continue;
-      const rect = charRectAt(n, r.startOffset);
-      if (!rect) continue;
-      const dy = y < rect.top ? rect.top - y : (y > rect.bottom ? y - rect.bottom : 0);
-      if (dy > tol) continue;
-      const u = RBC.units.at(seg.start + r.startOffset)
-      if (u) return u;
-    }
-    return null;
-  }
-
-  // B채널: GVAM 중앙선
-  function unitAtCenterLine() {
-    return unitAtViewportY(window.innerHeight * CFG.CENTER_RATIO, CFG.CENTER_Y_TOL, 5);
-  }
-
-  // [C1] 뷰포트에 실제로 보이는 유닛 범위 [최상단 order, 최하단 order].
-  //      가장자리가 이미지·여백이면 안쪽으로 조금씩 들어가며 첫 텍스트를 찾는다.
-  function visibleRange() {
-    const H = window.innerHeight;
-    const step = H / CFG.EDGE_STEPS;
-    let top = null, bot = null;
-    for (let i = 0; i < CFG.EDGE_STEPS && !top; i++) {
-      top = unitAtViewportY(4 + i * step, CFG.EDGE_Y_TOL, 2);
-    }
-    for (let i = 0; i < CFG.EDGE_STEPS && !bot; i++) {
-      bot = unitAtViewportY(H - 4 - i * step, CFG.EDGE_Y_TOL, 2);
-    }
-    return [top ? top.order : null, bot ? bot.order : null];
-  }
-
-  // A채널: 커서. 실제로 글자 위에 있을 때만 귀속. 여백/이미지/sticky 위면 null.
-  function unitAtCursor(x, y) {
-    const r = caretAt(x, y);
-    if (!r) return null;
-    const n = r.startContainer;
-    if (n.nodeType !== 3 || inPanel(n)) return null;
-    const seg = RBC.stream.segFor(n);
-    if (!seg) return null;
-    const rect = charRectAt(n, r.startOffset);
-    if (!rect) return null;
-    const T = CFG.CURSOR_TOL;
-    if (x < rect.left - T || x > rect.right + T || y < rect.top - T || y > rect.bottom + T)
-      return null;
-    return RBC.units.at(seg.start + r.startOffset)
-  }
-
-  // [C4] 선택 범위가 걸친 유닛 전부. 명세: "여러 문단 걸치면 모두 1".
-  function unitsFromSelection(sel) {
-    if (!sel || sel.rangeCount === 0) return [];
-    let r;
-    try { r = sel.getRangeAt(0); } catch (e) { return []; }
-    let a = streamPosOf(r.startContainer, r.startOffset);
-    let b = streamPosOf(r.endContainer, r.endOffset);
-    if (a < 0 && b < 0) return [];
-    if (a < 0) a = b;
-    if (b < 0) b = a;
-    const lo = Math.min(a, b), hi = Math.max(a, b);
-    const out = [];
-    for (const u of RBC.units.all()) {
-      if (u.start < hi && u.end > lo) out.push(u.pid);
-      else if (lo === hi && u.start <= lo && lo < u.end) out.push(u.pid);
-    }
-    return out;
-  }
 
   // ==========================================================================
   // 5) 이벤트 리스너
@@ -261,15 +118,22 @@
     mouseEventsSinceTick++;               // [C3]
     bump();
   }
-  function onScroll() { scrollEventsSinceTick++; rootBox = null; bump(); }
+  function onScroll() { scrollEventsSinceTick++; RBC.hittest.invalidate(); bump(); }
   function onKey() { bump(); }
-  function onResize() { rootBox = null; bus.emit('viewport:resized'); }
+  function onResize() { RBC.hittest.invalidate(); bus.emit('viewport:resized'); }
+
+  // 패널 위 선택·복사는 수집 대상이 아니다. (3-hittest 안에도 같은 판정이 있는데,
+  // 그쪽은 좌표 탐침 필터용이고 이쪽은 이벤트 필터용이라 쓰임이 다르다)
+  function inPanel(node) {
+    const el = node && (node.nodeType === 1 ? node : node.parentElement);
+    return !!(el && el.closest && el.closest('#' + CFG.PANEL_ID));
+  }
 
   function onCopy() {
     if (!recording) return;
     const sel = window.getSelection();
     if (!sel || inPanel(sel.anchorNode)) return;
-    const pids = unitsFromSelection(sel);
+    const pids = RBC.hittest.unitsFromSelection(sel)
     timeline.push({
       type: 'copy', t: tNow(), pids, pid: pids[0] || null, text: sel.toString(),
     });
@@ -283,7 +147,7 @@
     const text = sel.toString().trim();
     if (text && text !== lastSelText) {
       lastSelText = text;
-      const pids = unitsFromSelection(sel);
+      const pids = RBC.hittest.unitsFromSelection(sel)
       timeline.push({ type: 'highlight', t: tNow(), pids, pid: pids[0] || null, text });
       bump();
     } else if (!text) {
@@ -327,22 +191,23 @@
       timeline.push({ type: 'autostop', t: tNow(), reason: 'idle' });
       stopRecording('idle');
       if (!IS_TOP) toTop({ res: 'autostop' });
+      return;  
     }
 
     const now = performance.now();
     const scrollY = window.scrollY;
     const dt = prevTickTime != null ? (now - prevTickTime) / 1000 : 0;
 
-    const centerU = unitAtCenterLine();
+    const s = RBC.hittest.sample(latestCursor);
+    const centerU = s.centerU;
     const centerPid = centerU ? centerU.pid : null;
     const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;
-    const [visTop, visBot] = visibleRange();          // [C1]
+    const visTop = s.visTop, visBot = s.visBot; 
 
     let cursorPid = null, cx = null, cy = null, cursorDist = 0, cursorMoved = false;
     if (latestCursor) {
       cx = latestCursor.x; cy = latestCursor.y;
-      const cu = unitAtCursor(cx, cy);
-      cursorPid = cu ? cu.pid : null;
+      cursorPid = s.cursorU ? s.cursorU.pid : null;
       if (prevTickCursor) {
         cursorDist = Math.round(Math.hypot(cx - prevTickCursor.x, cy - prevTickCursor.y));
         cursorMoved = cursorDist > 0;
@@ -683,9 +548,7 @@
     ensureTicking();
   });
   // [R1] 전: rescan() 이 retargetObserver() 를 직접 호출
-  // [rootBox] 전: rescan() 이 rootBox = null 을 직접 대입
   bus.on('units:changed', () => {
-    rootBox = null;
     retargetObserver();
   });
 
@@ -733,10 +596,9 @@
   } else {
     init();
   }
-    // Step 2~3 에서 2-units.js / 3-hittest.js 로 옮겨갈 임시 통로.
+
   // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
 
-  RBC.hittest = { locate };
   RBC.frames = { send, doScan, isPrimary: () => isPrimary };
   RBC.recorder = { query: () => searchQuery };
 
