@@ -85,23 +85,60 @@
   function onCopy() {
     const sel = window.getSelection();
     if (!sel || inPanel(sel.anchorNode)) return;
-    bus.emit('sel:copy', {
-      pids: RBC.hittest.unitsFromSelection(sel),
-      text: sel.toString(),
-    });
+    const pids = RBC.hittest.unitsFromSelection(sel);
+    // [0-5] 본문 스트림 밖의 선택 — 댓글 작성창, 검색창, 로그인 폼 등.
+    //   어느 유닛에도 귀속되지 않으니 feature 로는 못 쓰는데, 예전에는 원문 text 만
+    //   timeline 에 남았다. 수집 목적에 전혀 기여하지 않으면서 사용자가 입력한
+    //   내용만 저장되는, 가장 나쁜 형태였다. 활동으로는 치되 기록하지 않는다.
+    if (!pids.length) { bump(); return; }
+    // trim: highlight 쪽과 맞춘다. 안 맞추면 같은 선택인데도 두 텍스트가
+    //   끝 공백 하나 때문에 달라져서, 오프라인에서 비교가 안 된다.
+    bus.emit('sel:copy', { pids, text: sel.toString().trim() });
     bump();
   }
 
+  // [BUG-3] selectionchange 는 드래그 중 글자 수만큼 발화한다.
+  //   전에는 그때마다 이벤트를 쌓아서, 한 문장 선택이 수십 개의 highlight 로
+  //   남았다. has_highlight 는 존재 여부라 모델 결과는 같지만, timeline 이
+  //   부풀고 highlight_text 가 "한" || "한 문" || "한 문장" 꼴이 된다.
+  //
+  //   단순 디바운스만으로는 부족했다. 드래그 도중 타이머보다 오래 멈추면
+  //   그 시점의 부분 선택이 먼저 기록되고, 드래그를 마저 끝내면 전체 선택이
+  //   또 기록된다. 실측에서 31자/32자 두 건으로 확인됐다.
+  //   그래서 마우스 버튼이 눌려 있는 동안에는 아예 보지 않고, mouseup 에서만 본다.
+  //   예비 타이머를 두었다가 실패한 적이 있다. 드래그 도중 그 시간보다 오래 멈추면
+  //   타이머가 먼저 터져 부분 선택이 샜다(실측 31자/32자). 드래그 중에는 시간이
+  //   얼마가 지나든 "아직 안 끝난 것"이 맞으므로, 타이머를 걸지 않는 게 정답이다.
+  //   mouseup 을 놓치는 경우(창 밖에서 버튼을 뗌)는 다음 클릭에서 복구된다.
+  //   키보드 선택(shift+화살표)은 mouseup 이 없으므로 디바운스가 담당한다.
+  const SELECTION_SETTLE_MS = 200;     // 키보드 선택이 멎었다고 볼 시간
+  let selTimer = null;
+  let dragging = false;
+
+  function onMouseDown() { dragging = true; }
+
+  function onMouseUp() {
+    if (!dragging) return;
+    dragging = false;
+    clearTimeout(selTimer);
+    flushSelection();                  // 드래그가 끝난 이 시점이 진짜 선택이다
+  }
+
   function onSelectionChange() {
+    clearTimeout(selTimer);
+    if (dragging) return;              // 드래그가 끝날 때(mouseup)만 본다
+    selTimer = setTimeout(flushSelection, SELECTION_SETTLE_MS);
+  }
+
+  function flushSelection() {
     const sel = window.getSelection();
     if (!sel || inPanel(sel.anchorNode)) return;
     const text = sel.toString().trim();
     if (text && text !== lastSelText) {
       lastSelText = text;
-      bus.emit('sel:highlight', {
-        pids: RBC.hittest.unitsFromSelection(sel),
-        text,
-      });
+      const pids = RBC.hittest.unitsFromSelection(sel);
+      if (!pids.length) { bump(); return; }          // [0-5] 위와 동일
+      bus.emit('sel:highlight', { pids, text });
       bump();
     } else if (!text) {
       lastSelText = '';
@@ -141,6 +178,8 @@
   if (IS_TOP) winFocused = !document.hidden && document.hasFocus();
 
   document.addEventListener('mousemove', onMouseMove, { passive: true });
+  document.addEventListener('mousedown', onMouseDown, true);
+  document.addEventListener('mouseup', onMouseUp, true);
   window.addEventListener('scroll', onScroll, { passive: true });
   window.addEventListener('resize', onResize, { passive: true });
   document.addEventListener('keydown', onKey, { passive: true });
