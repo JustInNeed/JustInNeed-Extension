@@ -57,16 +57,7 @@
   // ==========================================================================
   // STATE
   // ==========================================================================
-  // 1-stream.js 소유 상태의 지역 거울. syncStream() 으로만 갱신한다.
-  // 2-units.js 를 만들 때 이 셋은 그쪽으로 옮겨간다.
-  let raw = '', sig = new Int32Array(1), breaks = new Set();
-  function syncStream() {
-    raw = RBC.stream.raw();
-    sig = RBC.stream.sig();
-    breaks = RBC.stream.breaks();
-  }
 
-  let units = [];
   let rootBox = null;
 
   let recording = false;
@@ -108,113 +99,9 @@
   // ==========================================================================
   // 유틸
   // ==========================================================================
-  const SENT_END = new Set(['.', '!', '?', '…', '。', '！', '？']);
   function tNow() { return Date.now() - sessionEpoch; }
 
 
-
-  // ==========================================================================
-  // 3) 청킹 — 글자 수 기준으로 자르되 경계에 스냅
-  //    우선순위: 블록/<br> 경계 > 문장 끝 > 공백 > 강제
-  // ==========================================================================
-  function isSentenceBoundary(i) {
-    if (i <= 0 || i > raw.length) return false;
-    if (!SENT_END.has(raw[i - 1])) return false;
-    return i === raw.length || isWs(raw[i]) || raw[i] === '"' || raw[i] === '”';
-  }
-
-  function chunkFrom(fromRaw, existing) {
-    const out = existing ? existing.slice() : [];
-    const N = raw.length;
-    let pos = fromRaw;
-    while (pos < N && isWs(raw[pos])) pos++;
-
-    const push = (a, b) => {
-      const t = clean(raw.slice(a, b));
-      if (!t) return;
-      if (t.length < CFG.MIN_UNIT_CHARS && out.length) {
-        const prev = out[out.length - 1];        // 잔여물은 앞 유닛에 흡수
-        prev.end = b;
-        prev.text = clean(raw.slice(prev.start, prev.end));
-        prev.charLen = prev.text.length;
-        return;
-      }
-      if (t.length < CFG.MIN_UNIT_CHARS) return;
-      out.push({ start: a, end: b, text: t, charLen: t.length });
-    };
-
-    while (pos < N) {
-      const base = sig[pos];
-      if (sig[N] - base <= CFG.MIN_CHARS) { push(pos, N); break; }
-
-      let cutHard = -1, cutSent = -1, cutWs = -1, forced = -1;
-      const target = base + CFG.TARGET_CHARS;
-      const better = (cur, cand) =>
-        cur === -1 || Math.abs(sig[cand] - target) < Math.abs(sig[cur] - target) ? cand : cur;
-
-      for (let i = pos + 1; i <= N; i++) {
-        const s = sig[i] - base;
-        if (s < CFG.MIN_CHARS) continue;
-        if (s > CFG.MAX_CHARS) { forced = i - 1; break; }
-        if (breaks.has(i)) cutHard = better(cutHard, i);
-        if (isSentenceBoundary(i)) cutSent = better(cutSent, i);
-        if (isWs(raw[i - 1]) && !isWs(raw[i])) cutWs = better(cutWs, i);
-      }
-
-      let cut = cutHard !== -1 ? cutHard
-        : cutSent !== -1 ? cutSent
-          : cutWs !== -1 ? cutWs
-            : forced !== -1 ? forced : N;
-      if (cut <= pos) cut = Math.min(pos + 1, N);
-
-      push(pos, cut);
-      pos = cut;
-      while (pos < N && isWs(raw[pos])) pos++;
-    }
-    return out;
-  }
-
-  function assignIds(list) {
-    const seen = new Map();
-    list.forEach((u, i) => {
-      const base = 'u' + hash(u.text.slice(0, 160));
-      const c = (seen.get(base) || 0) + 1;
-      seen.set(base, c);
-      u.pid = c === 1 ? base : base + '_' + c;
-      u.order = i;
-    });
-    return list;
-  }
-
-
-  function rescan(opts) {
-    const preserve = opts && opts.preserve;
-    const built = RBC.stream.build();
-
-    if (preserve && recording && units.length) {
-      if (built.raw.startsWith(RBC.stream.raw())) {
-        const tailFrom = RBC.stream.len();       // 순수 append → 꼬리만 청킹(pid 보존)
-        RBC.stream.commit(built);
-        syncStream();
-        const kept = units.map(u => ({ ...u }));
-        units = assignIds(chunkFrom(tailFrom, kept));
-        timeline.push({ type: 'rescan', t: tNow(), mode: 'append', units: units.length });
-      } else {
-        // 본문 교체. 기록 중에는 재청킹하지 않는다(기존 pid 오염 방지).
-        timeline.push({ type: 'rescan', t: tNow(), mode: 'disruptive-skipped' });
-        return units.length;
-      }
-    } else {
-      RBC.stream.commit(built);
-      syncStream();
-      units = assignIds(chunkFrom(0, null));
-    }
-
-    rootBox = null;
-    retargetObserver();
-    bus.emit('units:changed', { count: units.length });
-    return units.length;
-  }
 
   // ==========================================================================
   // 4) 히트 테스트 — 픽셀 → 유닛
@@ -247,17 +134,6 @@
     return { node: s.node, offset: Math.max(0, Math.min(streamPos - s.start, s.len)) };
   }
 
-  function unitAtStreamPos(p) {
-    if (p < 0 || !units.length) return null;
-    let lo = 0, hi = units.length - 1, ans = -1;
-    while (lo <= hi) {
-      const m = (lo + hi) >> 1;
-      if (units[m].start <= p) { ans = m; lo = m + 1; } else hi = m - 1;
-    }
-    if (ans < 0) return null;
-    const u = units[ans];
-    return p < u.end ? u : null;
-  }
 
   function streamPosOf(node, offset) {
     if (!node || node.nodeType !== 3) return -1;
@@ -308,7 +184,7 @@
       if (!rect) continue;
       const dy = y < rect.top ? rect.top - y : (y > rect.bottom ? y - rect.bottom : 0);
       if (dy > tol) continue;
-      const u = unitAtStreamPos(seg.start + r.startOffset);
+      const u = RBC.units.at(seg.start + r.startOffset)
       if (u) return u;
     }
     return null;
@@ -347,7 +223,7 @@
     const T = CFG.CURSOR_TOL;
     if (x < rect.left - T || x > rect.right + T || y < rect.top - T || y > rect.bottom + T)
       return null;
-    return unitAtStreamPos(seg.start + r.startOffset);
+    return RBC.units.at(seg.start + r.startOffset)
   }
 
   // [C4] 선택 범위가 걸친 유닛 전부. 명세: "여러 문단 걸치면 모두 1".
@@ -362,7 +238,7 @@
     if (b < 0) b = a;
     const lo = Math.min(a, b), hi = Math.max(a, b);
     const out = [];
-    for (const u of units) {
+    for (const u of RBC.units.all()) {
       if (u.start < hi && u.end > lo) out.push(u.pid);
       else if (lo === hi && u.start <= lo && lo < u.end) out.push(u.pid);
     }
@@ -519,7 +395,7 @@
   // 7) 녹화 제어 / export
   // ==========================================================================
   function startRecording(m) {
-    if (!units.length) rescan({});
+    if (!RBC.units.count()) RBC.units.rescan({});
     timeline = [];
     recordedTicks = 0;
     sessionId = (m && m.sessionId) || uuid();          // [C6]
@@ -574,10 +450,7 @@
         centerRatio: CFG.CENTER_RATIO,
         frameTag: TAG,
         isTopFrame: IS_TOP,
-        chunking: {
-          target: CFG.TARGET_CHARS, min: CFG.MIN_CHARS,
-          max: CFG.MAX_CHARS, minUnit: CFG.MIN_UNIT_CHARS,
-        },
+        chunking: RBC.units.opts(),
         idleTimeoutMs: CFG.IDLE_TIMEOUT_MS,
 
         notes: [
@@ -596,7 +469,7 @@
           'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션.',
         ],
 
-        paragraphs: units.map(u => ({
+        paragraphs: RBC.units.all().map(u => ({
           pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
         })),
       },
@@ -634,10 +507,10 @@
   }
 
   function emitStat() {
-    const u = units.find(x => x.pid === lastCenterPid);
+    const u = RBC.units.byPid(lastCenterPid);
     const s = {
       res: 'stat', tag: TAG, recording, overlayOn, isPrimary,
-      units: units.length, samples: timeline.length,
+      units: RBC.units.count(), samples: timeline.length,
       centerPid: lastCenterPid, cursorPid: lastCursorPid,
       scrollSpeed: Math.round(lastScrollSpeed),
       centerText: u ? (u.order + ' · ' + u.text.slice(0, 26)) : '',
@@ -650,20 +523,25 @@
 
   function handleCmd(m) {
     switch (m.cmd) {
-      case 'scan': {
-        const n = rescan({});
-        const info = { tag: TAG, units: n, href: location.href, chars: RBC.stream.len() };
-        if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
+      case 'scan':
+        bus.emit('cmd:scan');          // primary 아닌 프레임도 돈다 (선출 근거)
         break;
-      }
       case 'primary':
         isPrimary = (m.tag === TAG);
         if (!isPrimary) {
-          if (recording) timeline.push({ type: 'demoted', t: tNow() }); 
+          if (recording) timeline.push({ type: 'demoted', t: tNow() });
           recording = false;
+          bus.emit('record:stopped', { reason: 'demoted' });   // 미러 동기화
           bus.emit('cmd:overlay', { on: false });
           ensureTicking();
         }
+        break;
+      case 'chunk':
+        if (recording) break;          // BUG-1
+        if (isPrimary) { bus.emit('cmd:chunk', m); emitStat(); }
+        break;
+      case 'list':
+        if (isPrimary) bus.emit('cmd:list');
         break;
       case 'focus': setFocus(!!m.on); break;              // [C2]
       case 'activity': lastActivityAt = Date.now(); break; // [C5]
@@ -676,28 +554,10 @@
       case 'overlay':
         if (isPrimary) bus.emit('cmd:overlay', m);
         break;
-      case 'chunk':
-        if (recording) break; // BUG-1: pid 전면 재배정 방지
-        if (isPrimary) {
-          CFG.TARGET_CHARS = m.target;
-          CFG.MIN_CHARS = Math.round(m.target * 0.55);
-          CFG.MAX_CHARS = Math.round(m.target * 1.7);
-          rescan({});
-          emitStat();
-        }
-        break;
       case 'export':
         if (isPrimary) {
           if (IS_TOP) download(buildPayload());
           else toTop({ res: 'export', payload: buildPayload() });
-        }
-        break;
-      case 'list':
-        if (isPrimary) {
-          const list = units.map(u => ({
-            order: u.order, pid: u.pid, charLen: u.charLen, text: u.text.slice(0, 44),
-          }));
-          if (IS_TOP) bus.emit('units:list', list); else toTop({ res: 'list', list });
         }
         break;
     }
@@ -788,7 +648,7 @@
   function retargetObserver() {
     if (!mo) return;
     const root = RBC.stream.root();
-    const target = (units.length && root) ? root : document.documentElement;
+    const target = (RBC.units.count() && root) ? root : document.documentElement;
     if (moTarget === target) return;
     mo.disconnect();
     moTarget = target;
@@ -800,14 +660,14 @@
       clearTimeout(mutTimer);
       const wait = recording ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE;
       mutTimer = setTimeout(() => {
-        if (!units.length) {
+        if (!RBC.units.count()) {
           // 아직 본문을 못 잡음. auto=true 로 호출해야 재시도 카운터가 유지된다.
           if (IS_TOP && scanTries < CFG.SCAN_RETRY_MAX) doScan(true);
           return;
         }
         if (recording && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
         lastRescanAt = Date.now();
-        rescan({ preserve: true });
+        RBC.units.rescan({ preserve: true });
         emitStat();
       }, wait);
     });
@@ -821,6 +681,31 @@
   bus.on('overlay:changed', (d) => {
     overlayOn = !!(d && d.on);
     ensureTicking();
+  });
+  // [R1] 전: rescan() 이 retargetObserver() 를 직접 호출
+  // [rootBox] 전: rescan() 이 rootBox = null 을 직접 대입
+  bus.on('units:changed', () => {
+    rootBox = null;
+    retargetObserver();
+  });
+
+  // [R3] 전: rescan() 이 timeline.push 를 직접 호출.
+  //   기록 중이 아니면 안 남긴다 (원래 동작과 동일).
+  bus.on('units:rescanned', (d) => {
+    if (recording) {
+      timeline.push({ type: 'rescan', t: tNow(), mode: d.mode, units: d.count });
+    }
+  });
+
+  // 스캔 결과를 최상위 프레임으로. primary 선출의 입력이 된다.
+  bus.on('units:scanned', (d) => {
+    const info = { tag: TAG, units: d.count, href: location.href, chars: d.chars };
+    if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
+  });
+
+  // 유닛 목록을 최상위로 중계 (최상위면 패널이 직접 받는다)
+  bus.on('units:list', (list) => {
+    if (!IS_TOP) toTop({ res: 'list', list });
   });
 
 
@@ -850,11 +735,7 @@
   }
     // Step 2~3 에서 2-units.js / 3-hittest.js 로 옮겨갈 임시 통로.
   // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
-  RBC.units = {
-    all: () => units,
-    count: () => units.length,
-    byPid: (pid) => units.find(u => u.pid === pid),
-  };
+
   RBC.hittest = { locate };
   RBC.frames = { send, doScan, isPrimary: () => isPrimary };
   RBC.recorder = { query: () => searchQuery };

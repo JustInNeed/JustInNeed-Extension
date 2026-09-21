@@ -104,9 +104,9 @@
       </div>
       <div class="rbc-row">
         <span>청크</span>
-        <input type="range" min="80" max="400" step="20" value="${CFG.TARGET_CHARS}"
+        <input type="range" min="80" max="400" step="20" value="${RBC.units.opts().target}"
                data-act="chunk" ${lock}>
-        <span id="rbc-chunkval">${CFG.TARGET_CHARS}자</span>
+        <span id="rbc-chunkval">${RBC.units.opts().target}자</span>
       </div>
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-list" id="rbc-list"></div>
