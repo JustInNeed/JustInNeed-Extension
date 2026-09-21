@@ -49,7 +49,7 @@
   const RBC = window.RBC;
   if (!RBC || RBC.dup) return;
   const { CFG, bus, IS_TOP, TAG } = RBC;
-  const { isWs, clean, hash, uuid, searchQueryFromReferrer } = RBC.util;
+  const { isWs, clean, hash } = RBC.util;
 
   
 
@@ -58,204 +58,17 @@
   // STATE
   // ==========================================================================
 
-  let recording = false;
   // 8-overlay.js 가 소유하는 overlayOn 의 읽기 전용 미러.
   // overlay:changed 이벤트로만 갱신한다. 여기서 직접 대입하지 말 것.
   // 8-overlay.js 가 없으면 영원히 false 로 남고, 그게 맞는 동작이다.
-  let overlayOn = false;
   let isPrimary = IS_TOP;
   let primaryTag = null;
 
-  let timeline = [];
-  let tickTimer = null;
-  let tickCount = 0;
-  let recordedTicks = 0;        // [C6] focusMs 계산용
 
-  let prevTickCursor = null;
-  let prevScrollY = window.scrollY;
-  let prevTickTime = null;
-
-  const pageEnteredAt = Date.now();   // [C7]
-  let pageLeftAt = null;
-
-  let sessionId = null;         // [C6]
-  let sessionEpoch = 0;
-  let sessionStartISO = null;
-  let sessionEndISO = null;
-  let searchQuery = null;       // [C8]
-
-  let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;
-
-  // ==========================================================================
-  // 유틸
-  // ==========================================================================
-  function tNow() { return Date.now() - sessionEpoch; }
-
-
-
-  // ==========================================================================
-  // 6) 마스터 틱
-  // ==========================================================================
-  function tick() {
-    // [C2] 탭이 숨겨졌거나 브라우저 창이 포커스를 잃은 동안은 기록하지 않는다.
-    //      (명세 0-3: focus 시간 = 탭이 active일 때만 카운트)
-    if (recording && (document.hidden || !RBC.input.focused())) { prevTickTime = null; return; }
-
-     // [C5] 30분 무동작 → 자동 종료
-    if (recording && RBC.input.idleMs() > CFG.IDLE_TIMEOUT_MS) {
-      timeline.push({ type: 'autostop', t: tNow(), reason: 'idle' });
-      stopRecording('idle');
-      if (!IS_TOP) toTop({ res: 'autostop' });
-      return;
-    }
-
-    const now = performance.now();
-    const scrollY = window.scrollY;
-    const dt = prevTickTime != null ? (now - prevTickTime) / 1000 : 0;
-    const cursor = RBC.input.cursor();
-    const ev = RBC.input.drain();              // 틱당 한 번. 읽으면서 리셋.
-
-    const s = RBC.hittest.sample(cursor);
-    const centerU = s.centerU;
-    const centerPid = centerU ? centerU.pid : null;
-    const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;
-    const visTop = s.visTop, visBot = s.visBot; 
-
-    let cursorPid = null, cx = null, cy = null, cursorDist = 0, cursorMoved = false;
-    if (cursor) {
-      cx = cursor.x; cy = cursor.y;
-      cursorPid = s.cursorU ? s.cursorU.pid : null;
-      if (prevTickCursor) {
-        cursorDist = Math.round(Math.hypot(cx - prevTickCursor.x, cy - prevTickCursor.y));
-        cursorMoved = cursorDist > 0;
-      }
-    }
-
-    if (recording) {
-      timeline.push({
-        type: 'tick',
-        t: tNow(),
-        scrollY,
-        scrollSpeed: Math.round(scrollSpeed),   // 부호 = 방향. 감속은 오프라인에서 미분
-        scrollEvents: ev.scrollEvents,
-        mouseEvents: ev.mouseEvents,            // [C3]
-        centerPid,                              // B채널 귀속
-        visTop, visBot,                         // [C1] 이 사이 유닛은 화면에 노출됨
-        cursorPid,                              // A채널 귀속 (여백이면 null)
-        cx, cy,
-        cursorDist,
-        cursorMoved,
-        vw: window.innerWidth,
-        vh: window.innerHeight,
-        docH: document.documentElement.scrollHeight,
-      });
-      recordedTicks++;
-    }
-
-    prevTickTime = now;
-    prevScrollY = scrollY;
-    if (cursor) prevTickCursor = { x: cursor.x, y: cursor.y };
-
-    lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
-    bus.emit('tick:done', { centerU, cursorPid });
-    if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
-  }
-
-  function ensureTicking() {
-    const want = recording || overlayOn;
-    if (want && !tickTimer) {
-      prevTickTime = null; prevScrollY = window.scrollY; prevTickCursor = null;
-      tickTimer = setInterval(tick, CFG.TICK_MS);
-    } else if (!want && tickTimer) {
-      clearInterval(tickTimer); tickTimer = null;
-    }
-  }
 
   // ==========================================================================
   // 7) 녹화 제어 / export
   // ==========================================================================
-  function startRecording(m) {
-    if (!RBC.units.count()) RBC.units.rescan({});
-    timeline = [];
-    recordedTicks = 0;
-    sessionId = (m && m.sessionId) || uuid();          // [C6]
-    sessionEpoch = (m && m.epoch) || Date.now();
-    sessionStartISO = new Date(sessionEpoch).toISOString();
-    sessionEndISO = null;
-    if (m && m.query) searchQuery = m.query;           // [C8]
-    if (!searchQuery) searchQuery = searchQueryFromReferrer();
-    RBC.input.bump();
-    recording = true;
-    ensureTicking();
-    bus.emit('record:started', { sessionId });
-    emitStat();
-  }
-
-  function stopRecording(reason) {
-    if (recording) sessionEndISO = new Date().toISOString();   // [C6]
-    recording = false;
-    ensureTicking();
-    bus.emit('record:stopped', { reason: reason || 'user' });
-    emitStat();
-  }
-
-  function buildPayload() {
-    return {
-      meta: {
-        schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
-        collector: 'rbc-v2.2-charstream',
-
-        // --- 세션 [C6] ---
-        sessionId,
-        startedAt: sessionStartISO,
-        endedAt: sessionEndISO || new Date().toISOString(),
-        focusMs: recordedTicks * CFG.TICK_MS,           // 기록된 틱 = focus 상태였던 틱
-
-        // --- 페이지 [C7] ---
-        url: location.href,
-        title: document.title,
-        referrer: document.referrer || null,
-        enteredAt: new Date(pageEnteredAt).toISOString(),
-        leftAt: pageLeftAt ? new Date(pageLeftAt).toISOString() : null,
-        devicePixelRatio: window.devicePixelRatio,
-        userAgent: navigator.userAgent,
-
-        // --- 세션 쿼리 [C8] ---
-        searchQuery: searchQuery || null,
-        searchQuerySource: searchQuery
-          ? (searchQueryFromReferrer() === searchQuery ? 'referrer' : 'manual') : null,
-
-        // --- 수집 설정 ---
-        tickMs: CFG.TICK_MS,
-        centerRatio: CFG.CENTER_RATIO,
-        frameTag: TAG,
-        isTopFrame: IS_TOP,
-        chunking: RBC.units.opts(),
-        idleTimeoutMs: CFG.IDLE_TIMEOUT_MS,
-
-        notes: [
-          '원본 값만 수집. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.',
-          '유닛 = 본문 텍스트 스트림의 글자 오프셋 구간. DOM 문단이 아님.',
-          'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid.',
-          'visTop/visBot = 그 틱에 뷰포트에 보이던 유닛 order 범위(양끝 포함). ' +
-          '체류시간(뷰포트 노출 누적)은 이걸로 오프라인 계산.',
-          'centerPid = 뷰포트 49% 중앙선 유닛. GVAM 캐비엣: 중앙선=focus 가정은 ' +
-          'dwell에서만 검증됨. scroll_speed/scrlfreq/entry_scrlspeed는 미검증 가정 위.',
-          'cursorPid=null 은 커서가 여백/이미지/sticky 위 (A채널 결측).',
-          '탭이 숨겨졌거나 창이 포커스를 잃은 동안의 틱은 기록하지 않음. ' +
-          'focusMs = 기록된 틱 수 × tickMs.',
-          'highlight/copy 의 pids = 선택이 걸친 유닛 전부. pid는 첫 유닛(하위호환).',
-          'scrollSpeed 부호 = 스크롤 방향. 감속은 속도 시계열을 미분해서 얻을 것.',
-          'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션.',
-        ],
-
-        paragraphs: RBC.units.all().map(u => ({
-          pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
-        })),
-      },
-      timeline,
-    };
-  }
 
   function download(payload) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -286,62 +99,32 @@
     catch (e) { /* noop */ }
   }
 
-  function emitStat() {
-    const u = RBC.units.byPid(lastCenterPid);
-    const s = {
-      res: 'stat', tag: TAG, recording, overlayOn, isPrimary,
-      units: RBC.units.count(), samples: timeline.length,
-      centerPid: lastCenterPid, cursorPid: lastCursorPid,
-      scrollSpeed: Math.round(lastScrollSpeed),
-      centerText: u ? (u.order + ' · ' + u.text.slice(0, 26)) : '',
-      query: searchQuery || '',
-      focusSec: Math.round(recordedTicks * CFG.TICK_MS / 1000),
-      href: location.href,
-    };
-    if (IS_TOP) bus.emit('stat', s); else toTop(s);
-  }
-
   function handleCmd(m) {
     switch (m.cmd) {
       case 'scan':
-        bus.emit('cmd:scan');          // primary 아닌 프레임도 돈다 (선출 근거)
+        bus.emit('cmd:scan');                 // primary 아닌 프레임도 돈다 (선출 근거)
         break;
       case 'primary':
         isPrimary = (m.tag === TAG);
-        if (!isPrimary) {
-          if (recording) timeline.push({ type: 'demoted', t: tNow() });
-          recording = false;
-          bus.emit('record:stopped', { reason: 'demoted' });   // 미러 동기화
-          bus.emit('cmd:overlay', { on: false });
-          ensureTicking();
-        }
+        bus.emit('primary:changed', { isPrimary });
+        if (!isPrimary) bus.emit('cmd:overlay', { on: false });
         break;
+      case 'focus':    bus.emit('cmd:focus', m); break;      // [C2] 전 프레임
+      case 'activity': bus.emit('cmd:activity'); break;      // [C5] 전 프레임
+      case 'query':    bus.emit('cmd:query', m); break;      // [C8] 전 프레임
       case 'chunk':
-        if (recording) break;          // BUG-1
-        if (isPrimary) { bus.emit('cmd:chunk', m); emitStat(); }
+        if (RBC.recorder.isRecording()) break;               // BUG-1
+        if (isPrimary) bus.emit('cmd:chunk', m);
         break;
-      case 'list':
-        if (isPrimary) bus.emit('cmd:list');
-        break;
-      case 'focus': bus.emit('cmd:focus', m); break;       // [C2]
-      case 'activity': bus.emit('cmd:activity'); break;    // [C5]
-      case 'query':                                        // [C8]
-        searchQuery = (m.q || '').trim() || null;
-        if (isPrimary) emitStat();
-        break;
-      case 'start': if (isPrimary) startRecording(m); break;
-      case 'stop': if (isPrimary) stopRecording(); break;
-      case 'overlay':
-        if (isPrimary) bus.emit('cmd:overlay', m);
-        break;
-      case 'export':
-        if (isPrimary) {
-          if (IS_TOP) download(buildPayload());
-          else toTop({ res: 'export', payload: buildPayload() });
-        }
-        break;
+      // 아래는 primary 만. 각 모듈은 primary 개념을 몰라도 된다.
+      case 'start':   if (isPrimary) bus.emit('cmd:start', m); break;
+      case 'stop':    if (isPrimary) bus.emit('cmd:stop'); break;
+      case 'overlay': if (isPrimary) bus.emit('cmd:overlay', m); break;
+      case 'list':    if (isPrimary) bus.emit('cmd:list'); break;
+      case 'export':  if (isPrimary) bus.emit('cmd:export'); break;
     }
   }
+
 
   window.addEventListener('message', (e) => {
     const m = e.data;
@@ -375,7 +158,7 @@
   let scanTries = 0;
 
   function doScan(auto) {
-    if (recording) return;
+    if (RBC.recorder.isRecording()) return;
     if (!auto) scanTries = 0;
     scanBucket = [];
     clearTimeout(scanTimer);
@@ -397,7 +180,8 @@
       primaryTag = win.tag;
       send('primary', { tag: primaryTag });
       send('focus', { on: !document.hidden && document.hasFocus() });   // [C2] 초기 동기화
-      if (searchQuery) send('query', { q: searchQuery });               // [C8]
+      const q = RBC.recorder.query();
+      if (q) send('query', { q });
       bus.emit('scan:done', {
         frames: scanBucket.length,
         tag: win.tag,
@@ -438,17 +222,16 @@
   function watchMutations() {
     mo = new MutationObserver(() => {
       clearTimeout(mutTimer);
-      const wait = recording ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE;
+      const wait = RBC.recorder.isRecording() ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE;
       mutTimer = setTimeout(() => {
         if (!RBC.units.count()) {
           // 아직 본문을 못 잡음. auto=true 로 호출해야 재시도 카운터가 유지된다.
           if (IS_TOP && scanTries < CFG.SCAN_RETRY_MAX) doScan(true);
           return;
         }
-        if (recording && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
+        if (RBC.recorder.isRecording() && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
         lastRescanAt = Date.now();
         RBC.units.rescan({ preserve: true });
-        emitStat();
       }, wait);
     });
     retargetObserver();
@@ -457,22 +240,10 @@
   // ==========================================================================
   // init
   // ==========================================================================
-  // 8-overlay.js 가 overlayOn 을 바꾸면 미러를 맞추고 틱 필요 여부를 재평가한다.
-  bus.on('overlay:changed', (d) => {
-    overlayOn = !!(d && d.on);
-    ensureTicking();
-  });
+
   // [R1] 전: rescan() 이 retargetObserver() 를 직접 호출
   bus.on('units:changed', () => {
     retargetObserver();
-  });
-
-  // [R3] 전: rescan() 이 timeline.push 를 직접 호출.
-  //   기록 중이 아니면 안 남긴다 (원래 동작과 동일).
-  bus.on('units:rescanned', (d) => {
-    if (recording) {
-      timeline.push({ type: 'rescan', t: tNow(), mode: d.mode, units: d.count });
-    }
   });
 
   // 스캔 결과를 최상위 프레임으로. primary 선출의 입력이 된다.
@@ -486,48 +257,31 @@
     if (!IS_TOP) toTop({ res: 'list', list });
   });
 
-    // 4-input 이 "무슨 일이 있었다"만 알려주고, 기록 여부는 여기서 판단한다.
-  bus.on('sel:highlight', (d) => {
-    if (!recording) return;
-    timeline.push({ type: 'highlight', t: tNow(), pids: d.pids, pid: d.pids[0] || null, text: d.text });
-  });
-
-  bus.on('sel:copy', (d) => {
-    if (!recording) return;
-    timeline.push({ type: 'copy', t: tNow(), pids: d.pids, pid: d.pids[0] || null, text: d.text });
-  });
-
-  bus.on('visibility', (d) => {
-    if (recording) timeline.push({ type: 'visibility', t: tNow(), hidden: d.hidden });
-    if (!d.hidden) prevTickTime = null;
-  });
-
-  bus.on('focus', (d) => {
-    if (recording) timeline.push({ type: 'focus', t: tNow(), focused: d.focused });
-    if (d.focused) prevTickTime = null;        // 복귀 직후 dt 튐 방지
-  });
-
-  bus.on('pagehide', () => {                    // [C7]
-    pageLeftAt = Date.now();
-    if (recording) timeline.push({ type: 'pagehide', t: tNow() });
-  });
-
   bus.on('activity', () => send('activity'));
 
   // 4-input 이 최상위 프레임의 포커스 변화를 알리면 하위 프레임으로 브로드캐스트한다.
   bus.on('focus:broadcast', (d) => send('focus', { on: d.on }));
 
+    // 5-recorder 가 만든 통계를 최상위로. 최상위면 9-panel 이 직접 받는다.
+  bus.on('stat', (s) => { if (!IS_TOP) toTop(s); });
+
+  // export payload. 최상위면 바로 저장, 아니면 최상위로 넘긴다.
+  bus.on('export:ready', (payload) => {
+    if (IS_TOP) download(payload); else toTop({ res: 'export', payload });
+  });
+
+  // 자동 종료는 최상위 패널이 알아야 버튼이 돌아온다.
+  bus.on('record:stopped', (d) => {
+    if (!IS_TOP && d && d.reason === 'idle') toTop({ res: 'autostop' });
+  });
+
 
   function init() {
-    searchQuery = searchQueryFromReferrer();      // [C8]
     watchMutations();
     if (IS_TOP) setTimeout(() => doScan(), CFG.FIRST_SCAN_DELAY);
   }
 
-
-  // 인터페이스를 지금 확정해두면, 실제 구현이 옮겨갈 때 8-overlay.js 는 안 고쳐도 된다.
   RBC.frames = { send, doScan, isPrimary: () => isPrimary };
-  RBC.recorder = { query: () => searchQuery };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
