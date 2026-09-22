@@ -48,16 +48,29 @@
     mo.observe(target, { childList: true, subtree: true, characterData: false });
   }
 
+  // 기록 중이 아닐 때도 재청킹 최소 간격을 둔다. 광고·애니메이션이 많은
+  // 페이지에서는 DOM 변경이 끊이지 않아서, 간격이 없으면 800ms마다 스트림
+  // 전체를 다시 훑게 된다. 대기 상태에서 그만큼 자주 다시 자를 이유가 없다.
+  const RESCAN_MIN_GAP_IDLE = 3000;
+
   mo = new MutationObserver(() => {
     clearTimeout(mutTimer);
     const recording = RBC.recorder.isRecording();
     mutTimer = setTimeout(() => {
       if (!RBC.units.count()) {
-        // 아직 본문을 못 잡음. auto=true 로 불러야 재시도 카운터가 유지된다.
-        RBC.frames.doScan(true);
+        // 이 프레임에 본문이 없다. 여기서 재청킹할 것도 없고, 복구 스캔은
+        // "아직 아무 프레임도 선출되지 않았을 때"만 돈다.
+        //
+        // primaryTag 를 안 보고 units.count() 만 보면, iframe 사이트
+        // (네이버 블로그의 #mainFrame)의 최상위 프레임에서 무한 반복이 된다.
+        // 거기선 본문이 없는 게 정상 상태인데 조건이 계속 참이고, 스캔이
+        // 성공할 때마다 scanTries 가 0 으로 리셋돼 재시도 상한도 안 걸린다.
+        // 증상: 패널이 scan:done 과 stat 사이를 초당 몇 번씩 왕복.
+        if (!RBC.frames.primaryTag()) RBC.frames.doScan(true);
         return;
       }
-      if (recording && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
+      const gap = recording ? CFG.RESCAN_MIN_GAP_REC : RESCAN_MIN_GAP_IDLE;
+      if (Date.now() - lastRescanAt < gap) return;
       lastRescanAt = Date.now();
       RBC.units.rescan({ preserve: true });
     }, recording ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE);

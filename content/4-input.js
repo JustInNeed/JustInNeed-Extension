@@ -148,13 +148,37 @@
   function onVisibility() {
     bus.emit('visibility', { hidden: document.hidden });
     if (!document.hidden) bump();
+    if (IS_TOP) setTimeout(pollFocus, 0);
   }
 
   // [C2] 포커스는 최상위 프레임이 소유하고 하위 프레임에 알린다.
   //   여기서 RBC.frames.send() 를 직접 부르면 4 → 6 역방향이 된다.
   //   사실만 알리고, 프레임 밖으로 내보내는 건 6-frames 가 구독해서 한다.
-  function onWinFocus() { if (IS_TOP) { bump(); bus.emit('focus:broadcast', { on: true }); } }
-  function onWinBlur() { if (IS_TOP) bus.emit('focus:broadcast', { on: false }); }
+  //
+  //   focus/blur 이벤트를 그대로 믿으면 안 된다. 최상위 프레임은 포커스가
+  //   자기 iframe 안으로 들어갈 때도 blur 를 받는데, 그건 창을 떠난 게 아니다.
+  //   그대로 브로드캐스트하면 본문이 iframe 인 사이트(네이버 블로그 #mainFrame)
+  //   에서 사용자가 본문을 클릭하는 순간 기록이 멈춘다.
+  //   실측: focus 시간이 8초에서 정지, 패널(최상위)을 클릭할 때만 재개.
+  //
+  //   document.hasFocus() 는 하위 브라우징 컨텍스트에 포커스가 있어도 true 라서
+  //   "이 탭이 활성인가"와 정확히 일치한다. 그래서 이벤트는 '지금 확인해봐라'
+  //   는 신호로만 쓰고, 판단은 항상 hasFocus() 로 한다.
+  const FOCUS_POLL_MS = 400;
+  let lastFocusSent = null;
+
+  function pollFocus() {
+    if (!IS_TOP) return;
+    const on = !document.hidden && document.hasFocus();
+    if (on === lastFocusSent) return;
+    lastFocusSent = on;
+    if (on) bump();
+    bus.emit('focus:broadcast', { on });
+  }
+
+  // blur 직후에는 hasFocus() 가 아직 갱신 전일 수 있어 한 틱 미룬다.
+  function onWinFocus() { if (IS_TOP) setTimeout(pollFocus, 0); }
+  function onWinBlur() { if (IS_TOP) setTimeout(pollFocus, 0); }
 
   function setFocus(on) {
     if (winFocused === on) return;
@@ -189,6 +213,11 @@
   window.addEventListener('focus', onWinFocus);
   window.addEventListener('blur', onWinBlur);
   window.addEventListener('pagehide', onPageHide);
+
+  // [C2] 이벤트만으로는 못 잡는 전이가 있다 — 다른 창으로 alt-tab, 주소창 클릭,
+  //   iframe 안팎 이동. 판단 자체가 싼 호출이라 주기적으로 확인하고,
+  //   값이 바뀔 때만 브로드캐스트한다(lastFocusSent). 최상위에서만 돈다.
+  if (IS_TOP) setInterval(pollFocus, FOCUS_POLL_MS);
 
   // ==========================================================================
   // 공개
