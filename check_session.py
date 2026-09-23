@@ -13,6 +13,18 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
   실제로 깨지는 종류의 버그(상태 소유권 이관 실패, pid 오염, 틱 지연)는
   전부 여기 걸린다.
 
+세션 bundle (v2.3~, background 가 만든 것):
+  { kind: 'rbc-session', session: {...}, pages: [ v2 payload, ... ] }
+  pages 의 각 원소에 기존 검사를 그대로 돌리고, 세션 단위 검사를 추가로 돌린다.
+    [S1] 조각 유실 (chunkReport.missing)       FAIL
+    [S2] page 기록 없는 조각 (orphan)           FAIL
+    [S3] 조각 중복 (duplicates)                 WARN — 제거는 됐지만 재전송이 있었다는 뜻
+    [S4] 열린 채 끝난 구간 (end=open)           WARN — 녹화 중 export 또는 꼬리 유실
+    [S5] 안전망에 걸린 페이지 (droppedPages)    WARN
+  페이지마다 추가:
+    [10] 이벤트의 segId 가 meta.segments 에 있는가   FAIL
+  --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
+
 사용법:
   python check_session.py session.json
   python check_session.py *.json          # 여러 개 한 번에
@@ -28,6 +40,7 @@ import argparse
 import json
 import statistics
 import sys
+from urllib.parse import urlsplit
 
 TICK_TOLERANCE = 0.20     # 틱 간격 중앙값 허용 오차 (±20%)
 OK, WARN, FAIL = "PASS", "WARN", "FAIL"
@@ -285,15 +298,84 @@ def check_units_baseline(rep, meta, baseline_path):
             f"— 청킹 로직 이관 중 손실")
 
 
-# --- main -----------------------------------------------------------------
-def run(path, baseline=None):
+def check_segments(rep, meta, timeline):
+    """[10] 모든 이벤트가 이 페이지의 구간(meta.segments) 중 하나에 속하는가.
+
+    background 가 같은 글의 구간들을 한 페이지로 합칠 때 다른 글의 조각이
+    섞이면 여기서 걸린다. 차분 리셋 규칙도 segId 에 기대므로 빠지면 안 된다.
+    """
+    segs = meta.get("segments")
+    if segs is None:
+        return                                          # 단일 payload (v2.2) — 해당 없음
+    known = {g.get("segId") for g in segs}
+    missing_seg = sum(1 for e in timeline if not e.get("segId"))
+    foreign = {e.get("segId") for e in timeline if e.get("segId") and e.get("segId") not in known}
+    no_tab = sum(1 for e in timeline if e.get("tabId") is None)
+    if missing_seg or foreign:
+        rep.add(FAIL, "구간 정합성",
+                f"segId 없음 {missing_seg}개 · 선언 안 된 segId {len(foreign)}종 "
+                f"— 다른 글의 조각이 섞였거나 조립 오류")
+    elif no_tab:
+        rep.add(WARN, "구간 정합성", f"tabId 없는 이벤트 {no_tab}개")
+    else:
+        tabs = {g.get("tabId") for g in segs}
+        rep.add(OK, "구간 정합성", f"구간 {len(segs)}개 · 탭 {len(tabs)}개")
+
+
+def check_bundle_session(rep, session):
+    """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
+    report = session.get("chunkReport") or []
+    miss = [r for r in report if r.get("missing")]
+    orphan = [r for r in report if r.get("orphan")]
+    dup = sum(r.get("duplicates", 0) for r in report)
+    opened = [r for r in report if r.get("end") == "open"]
+    dropped = session.get("droppedPages") or []
+
+    if miss:
+        head = ", ".join(f"{r['segId'][:8]}{r['missing'][:5]}" for r in miss[:3])
+        rep.add(FAIL, "조각 유실", f"{len(miss)}개 구간에서 번호 누락 ({head})")
+    else:
+        rep.add(OK, "조각 유실", f"구간 {len(report)}개 전부 연속")
+    if orphan:
+        rep.add(FAIL, "고아 조각", f"page 기록 없는 구간 {len(orphan)}개 — 첫 page 메시지 유실")
+    if dup:
+        rep.add(WARN, "조각 중복", f"{dup}개 (export 에서 제거됨)")
+    if opened:
+        rep.add(WARN, "열린 구간",
+                f"{len(opened)}개 — 녹화 중 export 했거나 마지막 조각 유실")
+    else:
+        ends = {}
+        for r in report:
+            ends[r.get("end")] = ends.get(r.get("end"), 0) + 1
+        rep.add(OK, "구간 종료", " · ".join(f"{k} {v}" for k, v in sorted(ends.items())))
+    if dropped:
+        rep.add(WARN, "제외된 페이지",
+                ", ".join(f"{d.get('reason')}:{str(d.get('pageId'))[:40]}" for d in dropped[:3]))
+
+
+def same_article(url_a, url_b):
+    """기준선 URL 과 페이지 URL 이 같은 글인가 (호스트 + 경로)."""
+    try:
+        a, b = urlsplit(url_a), urlsplit(url_b)
+        return (a.netloc, a.path.rstrip("/")) == (b.netloc, b.path.rstrip("/"))
+    except Exception:
+        return False
+
+
+def baseline_url(path):
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+        first = f.readline().strip()
+    return first[1:].strip() if first.startswith("#") else None
+
+
+# --- main -----------------------------------------------------------------
+def run_payload(label, data, baseline=None):
+    """v2 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
     timeline = data.get("timeline", [])
     ticks = ticks_of(timeline)
 
-    rep = Report(path)
+    rep = Report(label)
     check_schema(rep, meta)
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
@@ -303,6 +385,7 @@ def run(path, baseline=None):
     check_counters(rep, ticks)
     check_rescan(rep, timeline)
     check_order_continuity(rep, meta)
+    check_segments(rep, meta, timeline)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -312,29 +395,67 @@ def run(path, baseline=None):
     return rep
 
 
+def run(path, baseline=None):
+    """파일 하나 → Report 목록. bundle 이면 세션 1개 + 페이지 N개."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    if data.get("kind") != "rbc-session":
+        return [run_payload(path, data, baseline)]
+
+    session = data.get("session", {})
+    reps = []
+
+    srep = Report(f"{path} [세션 {str(session.get('sessionId'))[:8]}]")
+    check_bundle_session(srep, session)
+    srep.show()
+    print(f"  -- 페이지 {len(data.get('pages', []))}개 · 방문 {len(session.get('visits', []))}건 · "
+          f"focusMs {session.get('focusMs')}")
+    reps.append(srep)
+
+    base_url = baseline_url(baseline) if baseline else None
+    used = False
+    for i, page in enumerate(data.get("pages", [])):
+        meta = page.get("meta", {})
+        url = meta.get("url") or meta.get("pageId") or ""
+        use = baseline and (base_url is None or same_article(base_url, url))
+        used = used or bool(use)
+        reps.append(run_payload(f"{path} [p{i}] {url[:70]}", page, baseline if use else None))
+
+    if baseline and not used:
+        srep.add(WARN, "유닛 기준선", f"기준선 글({base_url})이 이 세션에 없음 — 검사 안 함")
+        srep.show()
+    return reps
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="+")
     ap.add_argument("--units-baseline", help="기준선 유닛 목록 파일")
     ap.add_argument("--dump-units", action="store_true",
                     help="유닛 목록을 stdout으로 출력 (기준선 파일 생성용)")
+    ap.add_argument("--page", type=int, default=0,
+                    help="bundle 에서 --dump-units 할 페이지 번호 (기본 0)")
     args = ap.parse_args()
 
     if args.dump_units:
         with open(args.inputs[0], encoding="utf-8") as f:
-            meta = json.load(f).get("meta", {})
+            data = json.load(f)
+        if data.get("kind") == "rbc-session":            # bundle: --page 번째 페이지
+            data = data.get("pages", [])[args.page]
+        meta = data.get("meta", {})
         print(f"# {meta.get('url')}")
         for p in meta.get("paragraphs", []):
             print(f"{p.get('order')}\t{p['pid']}\t{p.get('charLen')}")
         return
 
-    reports = [run(p, args.units_baseline) for p in args.inputs]
+    reports = [r for p in args.inputs for r in run(p, args.units_baseline)]
     bad = [r for r in reports if r.failed]
     print()
     if bad:
-        print(f"FAIL — {len(bad)}/{len(reports)} 파일에서 불변식 위반")
+        print(f"FAIL — 보고서 {len(bad)}/{len(reports)}개에서 불변식 위반")
         sys.exit(1)
-    print(f"통과 — {len(reports)}개 파일 전부 OK")
+    print(f"통과 — 보고서 {len(reports)}개 전부 OK")
 
 
 if __name__ == "__main__":
