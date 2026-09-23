@@ -72,6 +72,15 @@
     //   placeholder 를 자식 텍스트로 흉내내는 구현이 있어 명시해 둔다.
     'INPUT', 'OPTION', 'OPTGROUP']);
 
+  // [0-5] 적용 때 SKIP_TAGS 블록을 고치면서 이 정의가 같이 지워졌었다.
+  // nearestBlock() 이 텍스트 노드마다 부르므로, 없으면 스캔이 매번
+  // ReferenceError 로 죽고 유닛이 0개가 된다. content.js 원본 그대로 복원.
+  const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD',
+    'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
+    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV',
+    'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH',
+    'THEAD', 'TR', 'UL']);
+
   // [0-5] 검색·선택 위젯 role. div 로 만든 검색창이 여기 걸린다.
   //   'textbox' 는 일부러 뺐다 — 문서 편집기가 본문 블록에 쓰는 경우가 있어서,
   //   넣으면 노션류 사이트가 통째로 빠진다.
