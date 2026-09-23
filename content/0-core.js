@@ -61,6 +61,10 @@
     IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
     ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기
 
+    // --- 세션 · 페이지 구간 (background 연동) ---
+    FLUSH_MS: 1000,           // timeline 조각을 background 로 넘기는 주기. 데이터 해상도와 무관
+    URL_POLL_MS: 400,         // SPA 이동 감지 (pushState 는 격리 월드에서 못 잡는다)
+
     PANEL_ID: 'rbc-panel',
   };
 
@@ -149,15 +153,44 @@
   }
 
   // ==========================================================================
+  // 페이지 식별
+  //   "같은 글인가"의 기준. SPA 이동 감지(11-session)와 페이지 구간의
+  //   pageId(5-recorder → background) 가 같은 함수를 써야 둘이 어긋나지 않는다.
+  //
+  //   - 해시는 뺀다: 목차·댓글 앵커 이동은 다른 글이 아니다.
+  //   - 추적 파라미터는 뺀다: 읽는 중에 붙어도 다른 글이 아니다.
+  //     여기 없는 파라미터 때문에 같은 글이 둘로 갈리면 이 목록에 추가한다.
+  //   - 나머지 파라미터는 정렬한다: 순서만 바뀐 URL 은 같은 글이다.
+  //   - iframe 이 primary 인 사이트(네이버 블로그)는 iframe 자기 URL 이 기준이다.
+  //     본문이 사는 문서의 주소이고, 글마다 다르다.
+  // ==========================================================================
+  const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|igshid$|spm$|_ga$|ref_src$)/i;
+
+  function pageKey(href) {
+    let u;
+    try { u = new URL(href); } catch (e) { return String(href || ''); }
+    const keep = [];
+    u.searchParams.forEach((v, k) => {
+      if (!TRACKING_PARAM.test(k)) keep.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+    });
+    keep.sort();
+    return u.pathname + (keep.length ? '?' + keep.join('&') : '');
+  }
+
+  function pageId(href) {
+    try { return new URL(href).origin + pageKey(href); } catch (e) { return String(href || ''); }
+  }
+
+  // ==========================================================================
   // 공개
   // ==========================================================================
   window.RBC = {
-    version: 'v2.2-split-step1',
+    version: 'v2.3-session',
     dup: false,
     CFG,
     IS_TOP,
     TAG,
     bus,
-    util: { isWs, clean, esc, hash, uuid, searchQueryFromReferrer },
+    util: { isWs, clean, esc, hash, uuid, searchQueryFromReferrer, pageKey, pageId },
   };
 })();

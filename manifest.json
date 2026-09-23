@@ -3,6 +3,8 @@
   "name": "Reading Behavior Collector (v2)",
   "version": "0.2.1",
   "description": "본문 텍스트 스트림을 글자 수 기준으로 잘라 유닛을 만들고, 유닛별 읽기 행동 raw 데이터를 수집. feature는 수집 안 함(오프라인 후처리).",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "unlimitedStorage"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -19,7 +21,8 @@
         "content/7-observer.js",
         "content/8-overlay.js",
         "content/9-panel.js",
-        "content/10-boot.js"
+        "content/10-boot.js",
+        "content/11-session.js"
       ],
       "run_at": "document_idle"
     }
