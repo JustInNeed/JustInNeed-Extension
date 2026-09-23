@@ -20,10 +20,30 @@
  *   청킹 루프가 글자 단위로 sig[i] 를 수만 번 읽기 때문에
  *   접근자 함수로 감싸지 않고 배열을 그대로 노출한다.
  *
- * --- 아직 안 한 것 (0-5, 별도 단계) ------------------------------------------
- *   민감 입력 필드 제외(contenteditable 댓글창 등)는 여기 acceptNode 에
- *   들어갈 자리이지만, 넣으면 유닛 목록이 바뀌어 회귀 검사가 무의미해진다.
- *   순수 이동이 기준선을 통과한 뒤에 별도로 적용한다.
+ * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
+ *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
+ *            role="searchbox|combobox|spinbutton" 인 검색·선택 위젯.
+ *   검색어와 로그인 아이디는 여기서 전부 걸린다. TEXTAREA/SELECT 는 원래부터
+ *   있었고, INPUT 은 value 도 placeholder 도 텍스트 노드가 아니라 사실상
+ *   no-op 이지만 자식 텍스트로 흉내내는 구현을 대비해 명시해 둔다.
+ *
+ *   막지 않는 것: contenteditable.
+ *   이유는 실측이다. 노션 문서 한 페이지에 [contenteditable="true"] 가 130개다.
+ *   블록마다 편집 가능이라 "편집 가능 = 입력창"으로 보면 문서 전체가 사라진다.
+ *   위키·사내 문서 도구 상당수가 같은 구조다. "유튜브·인스타 같은 소수를 빼면
+ *   모든 텍스트 사이트에서 수집한다"는 목표와 정면으로 충돌한다.
+ *
+ *   beforeinput 으로 "이번 세션에 실제로 타이핑한 편집 영역"만 빼는 안도
+ *   만들어봤다가 뺐다. 블록마다 contenteditable 인 노션에서는 입력한 블록만
+ *   빠져서 잘 도는데, 문서 전체를 contenteditable 하나로 감싸는 에디터에서는
+ *   한 글자 입력에 문서 전체가 빠진다. 조용히 유닛 0개가 되는 종류의 실패라
+ *   사이트별로 확인하기 전에는 켤 수 없다.
+ *
+ *   그래서 남아 있는 노출은 하나다: 리치텍스트(contenteditable) 댓글창이
+ *   contentRoot 안에 있는 경우. findContentRoot 가 article/main 을 먼저
+ *   고르고 댓글 영역은 보통 그 바깥이라 실제로 걸리는 경우가 드물다.
+ *   확정 정책은 제외 URL 설정 + 원문 저장 범위와 함께 따로 정한다.
+ *   (claude/0-5-입력텍스트-제외-검토.md)
  * ========================================================================== */
 (() => {
   'use strict';
@@ -47,13 +67,24 @@
   // ==========================================================================
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG',
     'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'SELECT', 'TEXTAREA', 'BUTTON',
-    'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
+    'NAV', 'HEADER', 'FOOTER', 'ASIDE',
+    // [0-5] INPUT 의 value 는 텍스트 노드가 아니라 원래도 안 잡히지만,
+    //   placeholder 를 자식 텍스트로 흉내내는 구현이 있어 명시해 둔다.
+    'INPUT', 'OPTION', 'OPTGROUP']);
 
-  const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD',
-    'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV',
-    'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH',
-    'THEAD', 'TR', 'UL']);
+  // [0-5] 검색·선택 위젯 role. div 로 만든 검색창이 여기 걸린다.
+  //   'textbox' 는 일부러 뺐다 — 문서 편집기가 본문 블록에 쓰는 경우가 있어서,
+  //   넣으면 노션류 사이트가 통째로 빠진다.
+  const WIDGET_ROLES = new Set(['searchbox', 'combobox', 'spinbutton']);
+
+  function isExcluded(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.getAttribute) {
+      const role = el.getAttribute('role');
+      if (role && WIDGET_ROLES.has(role.trim().toLowerCase())) return true;
+    }
+    return false;
+  }
 
   // ==========================================================================
   // 본문 루트 찾기
@@ -120,6 +151,7 @@
             if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
             if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
               return NodeFilter.FILTER_REJECT;
+            if (isExcluded(el)) return NodeFilter.FILTER_REJECT;   // [0-5]
             if (el.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
             return NodeFilter.FILTER_SKIP;
           }
