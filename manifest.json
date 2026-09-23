@@ -9,7 +9,17 @@
       "all_frames": true,
       "match_about_blank": false,
       "js": [
-        "content.js"
+        "content/0-core.js",
+        "content/1-stream.js",
+        "content/2-units.js",
+        "content/3-hittest.js",
+        "content/4-input.js",
+        "content/5-recorder.js",
+        "content/6-frames.js",
+        "content/7-observer.js",
+        "content/8-overlay.js",
+        "content/9-panel.js",
+        "content/10-boot.js"
       ],
       "run_at": "document_idle"
     }

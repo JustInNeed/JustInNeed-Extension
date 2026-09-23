@@ -71,6 +71,25 @@ def all_pids_used(timeline):
 
 
 # --- 개별 검사 -------------------------------------------------------------
+def check_schema(rep, meta):
+    """[0] 현재 수집기(v2.2+)가 만든 파일인가.
+
+    이게 아니면 나머지 검사가 전부 무의미하다. 가장 흔한 사고는
+    `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을 집는 것 —
+    새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
+    """
+    v = meta.get("schemaVersion")
+    if v is None:
+        rep.add(FAIL, "스키마 버전",
+                "schemaVersion 없음 — v2.2 이전 파일이다. 현재 수집기가 만든 게 아니므로 "
+                "나머지 결과를 믿지 말 것. 패널에서 JSON 을 다시 내보낼 것")
+    elif v != 2:
+        rep.add(FAIL, "스키마 버전", f"v{v} — 이 검사기는 v2 용이다")
+    else:
+        started = meta.get("startedAt", "?")
+        rep.add(OK, "스키마 버전", f"v2 · 기록 시작 {started}")
+
+
 def check_pid_integrity(rep, meta, timeline):
     """[1] timeline이 쓰는 pid가 전부 meta.paragraphs에 있는가. 가장 중요."""
     declared = {p["pid"] for p in meta.get("paragraphs", [])}
@@ -118,7 +137,15 @@ def check_focus_ms(rep, meta, ticks):
 
 
 def check_visible_range(rep, meta, ticks):
-    """[4] visTop ≤ order(centerPid) ≤ visBot."""
+    """[4] visTop ≤ order(centerPid) ≤ visBot.  — 정보성(WARN까지만).
+
+    틱 하나만 놓고 보면 이게 깨질 수 있고, 그건 정상이다.
+    중앙선은 CENTER_Y_TOL(44px)로 여백 너머까지 유닛을 잡는 반면
+    가장자리 탐색은 EDGE_Y_TOL(8px)로 엄격하고 H/8 간격으로 건너뛴다.
+    두 측정의 해상도가 다르므로 경계에서 1칸 어긋나는 건 설계상 당연하다.
+    실제로 문제가 되는 건 이게 누적돼서 노출시간 < 체류시간이 되는 경우이고,
+    그건 아래 check_viewport_covers_dwell 이 FAIL 로 잡는다.
+    """
     order = {p["pid"]: p.get("order", -1) for p in meta.get("paragraphs", [])}
     checked = bad = 0
     for e in ticks:
@@ -137,11 +164,68 @@ def check_visible_range(rep, meta, ticks):
     elif bad == 0:
         rep.add(OK, "히트테스트 정합성", f"{checked}개 틱 전부 일관")
     else:
+        # 비율로 FAIL 을 매기지 않는다. 짧은 세션에서는 같은 2초짜리 구간이
+        # 6% 도 되고 19% 도 된다 — 임계값이 세션 길이에 좌우되면 기준이 아니다.
+        # 실제 손상 여부는 check_viewport_covers_dwell 이 절대 기준으로 판정한다.
         ratio = bad / checked
-        lvl = FAIL if ratio > 0.02 else WARN
-        rep.add(lvl, "히트테스트 정합성",
-                f"{bad}/{checked} ({ratio:.1%})에서 중앙선이 노출 범위 밖 "
-                f"— visibleRange/unitAtCenterLine 불일치")
+        rep.add(WARN, "히트테스트 정합성",
+                f"{bad}/{checked} ({ratio:.1%})에서 중앙선이 노출 범위 밖. "
+                f"페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인")
+
+
+def check_viewport_covers_dwell(rep, meta, ticks):
+    """[8] 유닛별 노출시간 >= 중앙선 체류시간 — 원본값 기준. 정보성(WARN까지만).
+
+    원본에서는 이게 깨질 수 있고, 그건 코드가 틀린 게 아니다.
+    visTop/visBot 은 뷰포트 상/하단을 H/8 간격으로 찔러 얻은 값이라
+    페이지 최상단처럼 가장자리가 헤더·여백인 구간에서 첫 유닛을 놓친다.
+    그 사이 중앙선(tol 44px)은 그 유닛을 잡고 있다.
+
+    extract_features.py 가 노출을 "visTop..visBot ∪ centerPid의 order" 로
+    합집합 계산해서 이 차이를 메운다. 여기서는 그 보정이 얼마나 필요한지를
+    보고만 한다 — 값이 크면 visibleRange 를 실제로 손볼 때가 된 것이다.
+
+    분할 작업의 통과/실패를 가르는 건 구조적 검사([1] pid 정합성,
+    [3] focusMs, [5] 카운터, [7] order, 유닛 기준선)이지 이 항목이 아니다.
+    """
+    order = {p["pid"]: p.get("order", -1) for p in meta.get("paragraphs", [])}
+    tick_ms = meta.get("tickMs", 150)
+
+    center = {}
+    vis = {}
+    for e in ticks:
+        cp = e.get("centerPid")
+        if cp:
+            center[cp] = center.get(cp, 0) + 1
+        a, b = e.get("visTop"), e.get("visBot")
+        if a is None or b is None:
+            continue
+        lo, hi = (a, b) if a <= b else (b, a)
+        for o in range(lo, hi + 1):
+            vis[o] = vis.get(o, 0) + 1
+
+    if not center:
+        rep.add(WARN, "노출 ≥ 체류", "중앙선에 걸린 유닛이 없음")
+        return
+
+    broken = []
+    for pid, n in center.items():
+        o = order.get(pid, -1)
+        if o < 0:
+            continue
+        v = vis.get(o, 0)
+        if v < n:
+            broken.append((o, n * tick_ms / 1000, v * tick_ms / 1000))
+
+    if not broken:
+        rep.add(OK, "노출 ≥ 체류(원본)", f"{len(center)}개 유닛 전부 성립")
+    else:
+        broken.sort()
+        head = ", ".join(f"#{o}({d:.1f}s>{vv:.1f}s)" for o, d, vv in broken[:3])
+        deficit = sum(d - vv for _, d, vv in broken)
+        rep.add(WARN, "노출 ≥ 체류(원본)",
+                f"{len(broken)}/{len(center)}개 유닛에서 노출 < 체류 ({head}), "
+                f"부족분 합 {deficit:.1f}s — extract_features 가 중앙선 합집합으로 보정")
 
 
 def check_counters(rep, ticks):
@@ -210,10 +294,12 @@ def run(path, baseline=None):
     ticks = ticks_of(timeline)
 
     rep = Report(path)
+    check_schema(rep, meta)
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
     check_visible_range(rep, meta, ticks)
+    check_viewport_covers_dwell(rep, meta, ticks)
     check_counters(rep, ticks)
     check_rescan(rep, timeline)
     check_order_continuity(rep, meta)

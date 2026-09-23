@@ -43,766 +43,32 @@
  *   · 페이지를 넘어 이어지는 세션 / 방문 순서
  *   · 이탈·새로고침 시 데이터 보존  (지금은 페이지 메모리에만 있음)
  * ========================================================================== */
+
 (() => {
   'use strict';
-  if (window.__RBC2_LOADED__) return;
-  window.__RBC2_LOADED__ = true;
+  const RBC = window.RBC;
+  if (!RBC || RBC.dup) return;
+  const { CFG, bus, IS_TOP, TAG } = RBC;
+  const { isWs, clean, hash } = RBC.util;
 
-  // ==========================================================================
-  // CONFIG
-  // ==========================================================================
-  const CFG = {
-    SCHEMA_VERSION: 2,        // [C9]
-    TICK_MS: 150,             // 마스터 클럭
-    CENTER_RATIO: 0.49,       // GVAM 중앙선 (뷰포트 세로 비율)
+  
 
-    // --- 청킹 ---
-    TARGET_CHARS: 200,
-    MIN_CHARS: 110,
-    MAX_CHARS: 340,
-    MIN_UNIT_CHARS: 15,
-
-    // --- 히트 테스트 ---
-    CENTER_Y_TOL: 44,         // 중앙선이 여백에 걸렸을 때 허용할 세로 거리(px)
-    EDGE_Y_TOL: 8,            // [C1] 뷰포트 가장자리 탐색은 엄격하게
-    EDGE_STEPS: 8,            // [C1] 가장자리에서 안쪽으로 몇 번 찔러볼지
-    CURSOR_TOL: 3,
-
-    MIN_ROOT_TEXT: 200,
-    STAT_EVERY: 4,
-
-    // --- 스캔 / DOM 감시 ---
-    FIRST_SCAN_DELAY: 600,
-    SCAN_COLLECT_MS: 400,
-    SCAN_RETRY_MAX: 5,
-    SCAN_RETRY_MS: 1500,
-    MUTATION_DEBOUNCE: 800,
-    MUTATION_DEBOUNCE_REC: 5000,
-    RESCAN_MIN_GAP_REC: 15000,
-
-    // --- 세션 ---
-    IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
-    ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기
-
-    PANEL_ID: 'rbc-panel',
-  };
-
-  // ==========================================================================
-  // 프레임 식별
-  // ==========================================================================
-  const IS_TOP = (() => { try { return window.top === window; } catch (e) { return false; } })();
-  const TAG = Math.random().toString(36).slice(2, 7);
 
   // ==========================================================================
   // STATE
   // ==========================================================================
-  let raw = '';
-  let sig = new Int32Array(1);
-  let segs = [];
-  let nodeIndex = new Map();
-  let breaks = new Set();
-  let units = [];
-  let contentRoot = null;
-  let rootBox = null;
 
-  let recording = false;
-  let overlayOn = false;
-  let uiRecording = false;      // 최상위 프레임 버튼 표시용
-  let uiOverlay = false;
+  // 8-overlay.js 가 소유하는 overlayOn 의 읽기 전용 미러.
+  // overlay:changed 이벤트로만 갱신한다. 여기서 직접 대입하지 말 것.
+  // 8-overlay.js 가 없으면 영원히 false 로 남고, 그게 맞는 동작이다.
   let isPrimary = IS_TOP;
   let primaryTag = null;
 
-  let timeline = [];
-  let tickTimer = null;
-  let tickCount = 0;
-  let recordedTicks = 0;        // [C6] focusMs 계산용
 
-  let latestCursor = null;
-  let prevTickCursor = null;
-  let prevScrollY = window.scrollY;
-  let prevTickTime = null;
-  let scrollEventsSinceTick = 0;
-  let mouseEventsSinceTick = 0; // [C3]
-  let lastSelText = '';
-
-  let winFocused = true;        // [C2] 최상위 프레임이 소유, 하위로 브로드캐스트
-  let lastActivityAt = Date.now();
-  let lastActivityPing = 0;
-
-  const pageEnteredAt = Date.now();   // [C7]
-  let pageLeftAt = null;
-
-  let sessionId = null;         // [C6]
-  let sessionEpoch = 0;
-  let sessionStartISO = null;
-  let sessionEndISO = null;
-  let searchQuery = null;       // [C8]
-
-  let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;
-
-  // ==========================================================================
-  // 유틸
-  // ==========================================================================
-  const WS = /[\s ​]/;
-  const WS_RUN = /[\s ​]+/g;
-  const SENT_END = new Set(['.', '!', '?', '…', '。', '！', '？']);
-
-  function isWs(ch) { return ch !== undefined && WS.test(ch); }
-  function clean(s) { return s.replace(WS_RUN, ' ').trim(); }
-
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  function hash(str) {                       // FNV-1a → base36
-    let h = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-    }
-    return h.toString(36);
-  }
-
-  function uuid() {
-    try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* noop */ }
-    return 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
-  }
-
-  function tNow() { return Date.now() - sessionEpoch; }
-
-  // [C8] referrer가 검색 결과 페이지면 쿼리를 뽑는다.
-  //      단, Referrer-Policy 때문에 origin만 오는 사이트가 많다 → 실패 시 패널 입력으로 보완.
-  const SEARCH_HOSTS = /(^|\.)(google|bing|duckduckgo|daum|naver|yahoo|search\.brave)\./i;
-  const SEARCH_KEYS = ['q', 'query', 'p', 'wd', 'text', 'keyword'];
-  function searchQueryFromReferrer() {
-    try {
-      if (!document.referrer) return null;
-      const u = new URL(document.referrer);
-      if (!SEARCH_HOSTS.test(u.hostname)) return null;
-      for (const k of SEARCH_KEYS) {
-        const v = u.searchParams.get(k);
-        if (v && v.trim()) return v.trim();
-      }
-    } catch (e) { /* noop */ }
-    return null;
-  }
-
-  // ==========================================================================
-  // 1) 본문 루트 찾기
-  // ==========================================================================
-  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG',
-    'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'SELECT', 'TEXTAREA', 'BUTTON',
-    'NAV', 'HEADER', 'FOOTER', 'ASIDE']);
-
-  const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD',
-    'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV',
-    'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH',
-    'THEAD', 'TR', 'UL']);
-
-  function textLen(el) {
-    let n = (el.textContent || '').length;
-    el.querySelectorAll('script,style,noscript').forEach(s => {
-      n -= (s.textContent || '').length;
-    });
-    return Math.max(n, 0);
-  }
-
-  function findContentRoot() {
-    for (const sel of ['article', 'main', '[role="main"]']) {
-      const el = document.querySelector(sel);
-      if (el && textLen(el) > CFG.MIN_ROOT_TEXT) return el;
-    }
-    let best = document.body || document.documentElement, bestScore = -1;
-    const pool = (document.body || document.documentElement)
-      .querySelectorAll('div, section, article, main, td');
-    pool.forEach((el) => {
-      if (el.id === CFG.PANEL_ID || el.closest('#' + CFG.PANEL_ID)) return;
-      const len = textLen(el);
-      if (len < CFG.MIN_ROOT_TEXT) return;
-      let linkLen = 0;
-      el.querySelectorAll('a').forEach(a => { linkLen += (a.textContent || '').length; });
-      const score = len * (1 - Math.min(linkLen / (len + 1), 1));
-      if (score > bestScore) { bestScore = score; best = el; }
-    });
-    return best;
-  }
-
-  // ==========================================================================
-  // 2) 텍스트 스트림 구축
-  // ==========================================================================
-  function nearestBlock(node) {
-    let el = node.parentElement;
-    while (el && el !== document.documentElement) {
-      if (BLOCK_TAGS.has(el.tagName)) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function buildStream() {
-    contentRoot = findContentRoot();
-    const root = contentRoot;
-
-    const walker = document.createTreeWalker(
-      root,
-      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-      {
-        acceptNode(node) {
-          if (node.nodeType === 1) {
-            const el = node;
-            if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
-            if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
-            if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
-              return NodeFilter.FILTER_REJECT;
-            if (el.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
-            return NodeFilter.FILTER_SKIP;
-          }
-          if (!node.data || !node.data.trim()) return NodeFilter.FILTER_REJECT;
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      }
-    );
-
-    const newSegs = [];
-    const newBreaks = new Set();
-    const parts = [];
-    let len = 0;
-    let pendingBreak = true;
-    let lastBlock = null;
-    let n;
-
-    while ((n = walker.nextNode())) {
-      if (n.nodeType === 1) { pendingBreak = true; continue; }  // <br>
-      const blk = nearestBlock(n);
-      if (blk !== lastBlock) pendingBreak = true;
-      lastBlock = blk;
-
-      const r = document.createRange();
-      r.selectNodeContents(n);
-      const rect = r.getBoundingClientRect();
-      if (!rect.width && !rect.height) continue;   // display:none / 0px
-
-      if (pendingBreak) newBreaks.add(len);
-      newSegs.push({ node: n, start: len, len: n.data.length });
-      parts.push(n.data);
-      len += n.data.length;
-      pendingBreak = false;
-    }
-
-    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks };
-  }
-
-  function buildSig(s) {
-    const a = new Int32Array(s.length + 1);
-    let c = 0, prevWs = true;
-    for (let i = 0; i < s.length; i++) {
-      if (isWs(s[i])) { if (!prevWs) c++; prevWs = true; }
-      else { c++; prevWs = false; }
-      a[i + 1] = c;
-    }
-    return a;
-  }
-
-  function commitStream(built) {
-    raw = built.raw;
-    segs = built.segs;
-    breaks = built.breaks;
-    sig = buildSig(raw);
-    nodeIndex = new Map();
-    for (const s of segs) nodeIndex.set(s.node, s);
-  }
-
-  // ==========================================================================
-  // 3) 청킹 — 글자 수 기준으로 자르되 경계에 스냅
-  //    우선순위: 블록/<br> 경계 > 문장 끝 > 공백 > 강제
-  // ==========================================================================
-  function isSentenceBoundary(i) {
-    if (i <= 0 || i > raw.length) return false;
-    if (!SENT_END.has(raw[i - 1])) return false;
-    return i === raw.length || isWs(raw[i]) || raw[i] === '"' || raw[i] === '”';
-  }
-
-  function chunkFrom(fromRaw, existing) {
-    const out = existing ? existing.slice() : [];
-    const N = raw.length;
-    let pos = fromRaw;
-    while (pos < N && isWs(raw[pos])) pos++;
-
-    const push = (a, b) => {
-      const t = clean(raw.slice(a, b));
-      if (!t) return;
-      if (t.length < CFG.MIN_UNIT_CHARS && out.length) {
-        const prev = out[out.length - 1];        // 잔여물은 앞 유닛에 흡수
-        prev.end = b;
-        prev.text = clean(raw.slice(prev.start, prev.end));
-        prev.charLen = prev.text.length;
-        return;
-      }
-      if (t.length < CFG.MIN_UNIT_CHARS) return;
-      out.push({ start: a, end: b, text: t, charLen: t.length });
-    };
-
-    while (pos < N) {
-      const base = sig[pos];
-      if (sig[N] - base <= CFG.MIN_CHARS) { push(pos, N); break; }
-
-      let cutHard = -1, cutSent = -1, cutWs = -1, forced = -1;
-      const target = base + CFG.TARGET_CHARS;
-      const better = (cur, cand) =>
-        cur === -1 || Math.abs(sig[cand] - target) < Math.abs(sig[cur] - target) ? cand : cur;
-
-      for (let i = pos + 1; i <= N; i++) {
-        const s = sig[i] - base;
-        if (s < CFG.MIN_CHARS) continue;
-        if (s > CFG.MAX_CHARS) { forced = i - 1; break; }
-        if (breaks.has(i)) cutHard = better(cutHard, i);
-        if (isSentenceBoundary(i)) cutSent = better(cutSent, i);
-        if (isWs(raw[i - 1]) && !isWs(raw[i])) cutWs = better(cutWs, i);
-      }
-
-      let cut = cutHard !== -1 ? cutHard
-        : cutSent !== -1 ? cutSent
-          : cutWs !== -1 ? cutWs
-            : forced !== -1 ? forced : N;
-      if (cut <= pos) cut = Math.min(pos + 1, N);
-
-      push(pos, cut);
-      pos = cut;
-      while (pos < N && isWs(raw[pos])) pos++;
-    }
-    return out;
-  }
-
-  function assignIds(list) {
-    const seen = new Map();
-    list.forEach((u, i) => {
-      const base = 'u' + hash(u.text.slice(0, 160));
-      const c = (seen.get(base) || 0) + 1;
-      seen.set(base, c);
-      u.pid = c === 1 ? base : base + '_' + c;
-      u.order = i;
-    });
-    return list;
-  }
-
-  function rescan(opts) {
-    const preserve = opts && opts.preserve;
-    const built = buildStream();
-
-    if (preserve && recording && units.length) {
-      if (built.raw.startsWith(raw)) {
-        const tailFrom = raw.length;             // 순수 append → 꼬리만 청킹(pid 보존)
-        commitStream(built);
-        const kept = units.map(u => ({ ...u }));
-        units = assignIds(chunkFrom(tailFrom, kept));
-        timeline.push({ type: 'rescan', t: tNow(), mode: 'append', units: units.length });
-      } else {
-        // 본문 교체. 기록 중에는 재청킹하지 않는다(기존 pid 오염 방지).
-        // 사라진 노드는 nodeIndex 미스 → 해당 틱은 null. 틀린 데이터보다 결측이 낫다.
-        timeline.push({ type: 'rescan', t: tNow(), mode: 'disruptive-skipped' });
-        return units.length;
-      }
-    } else {
-      commitStream(built);
-      units = assignIds(chunkFrom(0, null));
-    }
-
-    rootBox = null;
-    retargetObserver();
-    if (overlayOn) paintOverlay(true);
-    return units.length;
-  }
-
-  // ==========================================================================
-  // 4) 히트 테스트 — 픽셀 → 유닛
-  // ==========================================================================
-  function caretAt(x, y) {
-    try {
-      if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
-      if (document.caretPositionFromPoint) {
-        const p = document.caretPositionFromPoint(x, y);
-        if (!p) return null;
-        const r = document.createRange();
-        r.setStart(p.offsetNode, p.offset);
-        r.collapse(true);
-        return r;
-      }
-    } catch (e) { /* noop */ }
-    return null;
-  }
-
-  function locate(streamPos) {          // raw 오프셋 → {node, offset}
-    if (!segs.length) return null;
-    let lo = 0, hi = segs.length - 1, ans = 0;
-    while (lo <= hi) {
-      const m = (lo + hi) >> 1;
-      if (segs[m].start <= streamPos) { ans = m; lo = m + 1; } else hi = m - 1;
-    }
-    const s = segs[ans];
-    if (!s) return null;
-    return { node: s.node, offset: Math.max(0, Math.min(streamPos - s.start, s.len)) };
-  }
-
-  function unitAtStreamPos(p) {
-    if (p < 0 || !units.length) return null;
-    let lo = 0, hi = units.length - 1, ans = -1;
-    while (lo <= hi) {
-      const m = (lo + hi) >> 1;
-      if (units[m].start <= p) { ans = m; lo = m + 1; } else hi = m - 1;
-    }
-    if (ans < 0) return null;
-    const u = units[ans];
-    return p < u.end ? u : null;
-  }
-
-  function streamPosOf(node, offset) {
-    if (!node || node.nodeType !== 3) return -1;
-    const seg = nodeIndex.get(node);
-    if (!seg) return -1;
-    return seg.start + Math.max(0, Math.min(offset, seg.len));
-  }
-
-  function inPanel(node) {
-    const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest('#' + CFG.PANEL_ID));
-  }
-
-  function charRectAt(node, offset) {
-    const L = node.data.length;
-    if (!L) return null;
-    let a = Math.min(offset, L - 1); if (a < 0) a = 0;
-    const r = document.createRange();
-    try { r.setStart(node, a); r.setEnd(node, Math.min(a + 1, L)); } catch (e) { return null; }
-    const rect = r.getBoundingClientRect();
-    return (rect.width || rect.height) ? rect : null;
-  }
-
-  function ensureRootBox() {
-    if (!rootBox && contentRoot) {
-      const b = contentRoot.getBoundingClientRect();
-      rootBox = { left: b.left, width: b.width || window.innerWidth };
-    }
-  }
-
-  // 뷰포트 세로 y를 지나는 유닛. nx = 가로로 찔러볼 지점 수.
-  function unitAtViewportY(y, tol, nx) {
-    ensureRootBox();
-    const left = rootBox ? rootBox.left : 0;
-    const width = rootBox ? rootBox.width : window.innerWidth;
-    const fr = [0.5, 0.3, 0.7, 0.15, 0.85].slice(0, nx || 5);
-    for (const f of fr) {
-      const x = left + width * f;
-      if (x < 0 || x > window.innerWidth) continue;
-      const r = caretAt(x, y);
-      if (!r) continue;
-      const n = r.startContainer;
-      if (n.nodeType !== 3 || inPanel(n)) continue;
-      const seg = nodeIndex.get(n);
-      if (!seg) continue;
-      const rect = charRectAt(n, r.startOffset);
-      if (!rect) continue;
-      const dy = y < rect.top ? rect.top - y : (y > rect.bottom ? y - rect.bottom : 0);
-      if (dy > tol) continue;
-      const u = unitAtStreamPos(seg.start + r.startOffset);
-      if (u) return u;
-    }
-    return null;
-  }
-
-  // B채널: GVAM 중앙선
-  function unitAtCenterLine() {
-    return unitAtViewportY(window.innerHeight * CFG.CENTER_RATIO, CFG.CENTER_Y_TOL, 5);
-  }
-
-  // [C1] 뷰포트에 실제로 보이는 유닛 범위 [최상단 order, 최하단 order].
-  //      가장자리가 이미지·여백이면 안쪽으로 조금씩 들어가며 첫 텍스트를 찾는다.
-  function visibleRange() {
-    const H = window.innerHeight;
-    const step = H / CFG.EDGE_STEPS;
-    let top = null, bot = null;
-    for (let i = 0; i < CFG.EDGE_STEPS && !top; i++) {
-      top = unitAtViewportY(4 + i * step, CFG.EDGE_Y_TOL, 2);
-    }
-    for (let i = 0; i < CFG.EDGE_STEPS && !bot; i++) {
-      bot = unitAtViewportY(H - 4 - i * step, CFG.EDGE_Y_TOL, 2);
-    }
-    return [top ? top.order : null, bot ? bot.order : null];
-  }
-
-  // A채널: 커서. 실제로 글자 위에 있을 때만 귀속. 여백/이미지/sticky 위면 null.
-  function unitAtCursor(x, y) {
-    const r = caretAt(x, y);
-    if (!r) return null;
-    const n = r.startContainer;
-    if (n.nodeType !== 3 || inPanel(n)) return null;
-    const seg = nodeIndex.get(n);
-    if (!seg) return null;
-    const rect = charRectAt(n, r.startOffset);
-    if (!rect) return null;
-    const T = CFG.CURSOR_TOL;
-    if (x < rect.left - T || x > rect.right + T || y < rect.top - T || y > rect.bottom + T)
-      return null;
-    return unitAtStreamPos(seg.start + r.startOffset);
-  }
-
-  // [C4] 선택 범위가 걸친 유닛 전부. 명세: "여러 문단 걸치면 모두 1".
-  function unitsFromSelection(sel) {
-    if (!sel || sel.rangeCount === 0) return [];
-    let r;
-    try { r = sel.getRangeAt(0); } catch (e) { return []; }
-    let a = streamPosOf(r.startContainer, r.startOffset);
-    let b = streamPosOf(r.endContainer, r.endOffset);
-    if (a < 0 && b < 0) return [];
-    if (a < 0) a = b;
-    if (b < 0) b = a;
-    const lo = Math.min(a, b), hi = Math.max(a, b);
-    const out = [];
-    for (const u of units) {
-      if (u.start < hi && u.end > lo) out.push(u.pid);
-      else if (lo === hi && u.start <= lo && lo < u.end) out.push(u.pid);
-    }
-    return out;
-  }
-
-  // ==========================================================================
-  // 5) 이벤트 리스너
-  // ==========================================================================
-  function bump() {                       // [C5] 사용자 활동 기록
-    lastActivityAt = Date.now();
-    if (IS_TOP && Date.now() - lastActivityPing > CFG.ACTIVITY_PING_MS) {
-      lastActivityPing = Date.now();
-      send('activity');
-    }
-  }
-
-  function onMouseMove(e) {
-    latestCursor = { x: e.clientX, y: e.clientY };
-    mouseEventsSinceTick++;               // [C3]
-    bump();
-  }
-  function onScroll() { scrollEventsSinceTick++; rootBox = null; bump(); }
-  function onKey() { bump(); }
-  function onResize() { rootBox = null; if (overlayOn) paintOverlay(true); }
-
-  function onCopy() {
-    if (!recording) return;
-    const sel = window.getSelection();
-    if (!sel || inPanel(sel.anchorNode)) return;
-    const pids = unitsFromSelection(sel);
-    timeline.push({
-      type: 'copy', t: tNow(), pids, pid: pids[0] || null, text: sel.toString(),
-    });
-    bump();
-  }
-
-  function onSelectionChange() {
-    if (!recording) return;
-    const sel = window.getSelection();
-    if (!sel || inPanel(sel.anchorNode)) return;
-    const text = sel.toString().trim();
-    if (text && text !== lastSelText) {
-      lastSelText = text;
-      const pids = unitsFromSelection(sel);
-      timeline.push({ type: 'highlight', t: tNow(), pids, pid: pids[0] || null, text });
-      bump();
-    } else if (!text) {
-      lastSelText = '';
-    }
-  }
-
-  function onVisibility() {
-    if (recording) {
-      timeline.push({ type: 'visibility', t: tNow(), hidden: document.hidden });
-    }
-    if (!document.hidden) { prevTickTime = null; bump(); }
-  }
-
-  // [C2] 포커스는 최상위 프레임이 소유하고 하위 프레임에 알린다.
-  function onWinFocus() { if (IS_TOP) { bump(); send('focus', { on: true }); } }
-  function onWinBlur() { if (IS_TOP) send('focus', { on: false }); }
-
-  function setFocus(on) {
-    if (winFocused === on) return;
-    winFocused = on;
-    if (recording) timeline.push({ type: 'focus', t: tNow(), focused: on });
-    if (on) prevTickTime = null;          // 복귀 직후 dt 튐 방지
-  }
-
-  function onPageHide() {                 // [C7]
-    pageLeftAt = Date.now();
-    if (recording) timeline.push({ type: 'pagehide', t: tNow() });
-  }
-
-  // ==========================================================================
-  // 6) 마스터 틱
-  // ==========================================================================
-  function tick() {
-    // [C2] 탭이 숨겨졌거나 브라우저 창이 포커스를 잃은 동안은 기록하지 않는다.
-    //      (명세 0-3: focus 시간 = 탭이 active일 때만 카운트)
-    if (recording && (document.hidden || !winFocused)) { prevTickTime = null; return; }
-
-    // [C5] 30분 무동작 → 자동 종료
-    if (recording && Date.now() - lastActivityAt > CFG.IDLE_TIMEOUT_MS) {
-      timeline.push({ type: 'autostop', t: tNow(), reason: 'idle' });
-      stopRecording();
-      if (IS_TOP) { uiRecording = false; renderPanel(); } else toTop({ res: 'autostop' });
-      return;
-    }
-
-    const now = performance.now();
-    const scrollY = window.scrollY;
-    const dt = prevTickTime != null ? (now - prevTickTime) / 1000 : 0;
-
-    const centerU = unitAtCenterLine();
-    const centerPid = centerU ? centerU.pid : null;
-    const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;
-    const [visTop, visBot] = visibleRange();          // [C1]
-
-    let cursorPid = null, cx = null, cy = null, cursorDist = 0, cursorMoved = false;
-    if (latestCursor) {
-      cx = latestCursor.x; cy = latestCursor.y;
-      const cu = unitAtCursor(cx, cy);
-      cursorPid = cu ? cu.pid : null;
-      if (prevTickCursor) {
-        cursorDist = Math.round(Math.hypot(cx - prevTickCursor.x, cy - prevTickCursor.y));
-        cursorMoved = cursorDist > 0;
-      }
-    }
-
-    if (recording) {
-      timeline.push({
-        type: 'tick',
-        t: tNow(),
-        scrollY,
-        scrollSpeed: Math.round(scrollSpeed),   // 부호 = 방향. 감속은 오프라인에서 미분
-        scrollEvents: scrollEventsSinceTick,
-        mouseEvents: mouseEventsSinceTick,      // [C3]
-        centerPid,                              // B채널 귀속
-        visTop, visBot,                         // [C1] 이 사이 유닛은 화면에 노출됨
-        cursorPid,                              // A채널 귀속 (여백이면 null)
-        cx, cy,
-        cursorDist,
-        cursorMoved,
-        vw: window.innerWidth,
-        vh: window.innerHeight,
-        docH: document.documentElement.scrollHeight,
-      });
-      recordedTicks++;
-    }
-
-    prevTickTime = now;
-    prevScrollY = scrollY;
-    if (latestCursor) prevTickCursor = { x: latestCursor.x, y: latestCursor.y };
-    scrollEventsSinceTick = 0;
-    mouseEventsSinceTick = 0;
-
-    lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
-    if (overlayOn) markCurrent(centerU, cursorPid);
-    if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
-  }
-
-  function ensureTicking() {
-    const want = recording || overlayOn;
-    if (want && !tickTimer) {
-      prevTickTime = null; prevScrollY = window.scrollY; prevTickCursor = null;
-      tickTimer = setInterval(tick, CFG.TICK_MS);
-    } else if (!want && tickTimer) {
-      clearInterval(tickTimer); tickTimer = null;
-    }
-  }
 
   // ==========================================================================
   // 7) 녹화 제어 / export
   // ==========================================================================
-  function startRecording(m) {
-    if (!units.length) rescan({});
-    timeline = [];
-    recordedTicks = 0;
-    sessionId = (m && m.sessionId) || uuid();          // [C6]
-    sessionEpoch = (m && m.epoch) || Date.now();
-    sessionStartISO = new Date(sessionEpoch).toISOString();
-    sessionEndISO = null;
-    if (m && m.query) searchQuery = m.query;           // [C8]
-    if (!searchQuery) searchQuery = searchQueryFromReferrer();
-    lastActivityAt = Date.now();
-    recording = true;
-    if (IS_TOP) uiRecording = true;
-    ensureTicking();
-    renderPanel();
-    emitStat();
-  }
-
-  function stopRecording() {
-    if (recording) sessionEndISO = new Date().toISOString();   // [C6]
-    recording = false;
-    if (IS_TOP) uiRecording = false;
-    ensureTicking();
-    renderPanel();
-    emitStat();
-  }
-
-  function buildPayload() {
-    return {
-      meta: {
-        schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
-        collector: 'rbc-v2.2-charstream',
-
-        // --- 세션 [C6] ---
-        sessionId,
-        startedAt: sessionStartISO,
-        endedAt: sessionEndISO || new Date().toISOString(),
-        focusMs: recordedTicks * CFG.TICK_MS,           // 기록된 틱 = focus 상태였던 틱
-
-        // --- 페이지 [C7] ---
-        url: location.href,
-        title: document.title,
-        referrer: document.referrer || null,
-        enteredAt: new Date(pageEnteredAt).toISOString(),
-        leftAt: pageLeftAt ? new Date(pageLeftAt).toISOString() : null,
-        devicePixelRatio: window.devicePixelRatio,
-        userAgent: navigator.userAgent,
-
-        // --- 세션 쿼리 [C8] ---
-        searchQuery: searchQuery || null,
-        searchQuerySource: searchQuery
-          ? (searchQueryFromReferrer() === searchQuery ? 'referrer' : 'manual') : null,
-
-        // --- 수집 설정 ---
-        tickMs: CFG.TICK_MS,
-        centerRatio: CFG.CENTER_RATIO,
-        frameTag: TAG,
-        isTopFrame: IS_TOP,
-        chunking: {
-          target: CFG.TARGET_CHARS, min: CFG.MIN_CHARS,
-          max: CFG.MAX_CHARS, minUnit: CFG.MIN_UNIT_CHARS,
-        },
-        idleTimeoutMs: CFG.IDLE_TIMEOUT_MS,
-
-        notes: [
-          '원본 값만 수집. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.',
-          '유닛 = 본문 텍스트 스트림의 글자 오프셋 구간. DOM 문단이 아님.',
-          'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid.',
-          'visTop/visBot = 그 틱에 뷰포트에 보이던 유닛 order 범위(양끝 포함). ' +
-          '체류시간(뷰포트 노출 누적)은 이걸로 오프라인 계산.',
-          'centerPid = 뷰포트 49% 중앙선 유닛. GVAM 캐비엣: 중앙선=focus 가정은 ' +
-          'dwell에서만 검증됨. scroll_speed/scrlfreq/entry_scrlspeed는 미검증 가정 위.',
-          'cursorPid=null 은 커서가 여백/이미지/sticky 위 (A채널 결측).',
-          '탭이 숨겨졌거나 창이 포커스를 잃은 동안의 틱은 기록하지 않음. ' +
-          'focusMs = 기록된 틱 수 × tickMs.',
-          'highlight/copy 의 pids = 선택이 걸친 유닛 전부. pid는 첫 유닛(하위호환).',
-          'scrollSpeed 부호 = 스크롤 방향. 감속은 속도 시계열을 미분해서 얻을 것.',
-          'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션.',
-        ],
-
-        paragraphs: units.map(u => ({
-          pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
-        })),
-      },
-      timeline,
-    };
-  }
 
   function download(payload) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -814,104 +80,7 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  // ==========================================================================
-  // 8) 오버레이 — 유닛 경계를 눈으로 확인
-  //    유닛이 DOM 요소가 아니라 글자 범위라서 outline을 못 쓴다.
-  //    CSS Custom Highlight API로 글자 범위에 직접 색을 칠한다.
-  // ==========================================================================
-  const HL_OK = typeof CSS !== 'undefined' && CSS.highlights &&
-    typeof Highlight !== 'undefined';
-  let hlA = null, hlB = null, hlC = null, hlU = null;
-  let fallbackLayer = null, centerLineEl = null;
-
-  function rangeForUnit(u) {
-    const a = locate(u.start);
-    const b = locate(u.end);
-    if (!a || !b) return null;
-    const r = document.createRange();
-    try {
-      r.setStart(a.node, Math.min(a.offset, a.node.data.length));
-      r.setEnd(b.node, Math.min(b.offset, b.node.data.length));
-      if (r.collapsed) return null;
-    } catch (e) { return null; }
-    return r;
-  }
-
-  function paintOverlay(on) {
-    if (HL_OK) {
-      if (!hlA) {
-        hlA = new Highlight(); hlB = new Highlight();
-        hlC = new Highlight(); hlU = new Highlight();
-        hlA.priority = 1; hlB.priority = 1; hlC.priority = 5; hlU.priority = 9;
-        CSS.highlights.set('rbc-unit-a', hlA);
-        CSS.highlights.set('rbc-unit-b', hlB);
-        CSS.highlights.set('rbc-center', hlC);
-        CSS.highlights.set('rbc-cursor', hlU);
-      }
-      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear();
-      if (on) {
-        units.forEach((u, i) => {
-          const r = rangeForUnit(u);
-          if (r) (i % 2 ? hlB : hlA).add(r);
-        });
-      }
-    } else {
-      paintFallback(on);
-    }
-
-    if (on && !centerLineEl) {
-      centerLineEl = document.createElement('div');
-      centerLineEl.id = 'rbc-centerline';
-      document.documentElement.appendChild(centerLineEl);
-    }
-    if (centerLineEl) {
-      centerLineEl.style.display = on ? 'block' : 'none';
-      centerLineEl.style.top = (CFG.CENTER_RATIO * 100) + 'vh';
-    }
-  }
-
-  function markCurrent(centerU, cursorPid) {
-    if (!HL_OK || !hlC) return;
-    hlC.clear(); hlU.clear();
-    if (centerU) { const r = rangeForUnit(centerU); if (r) hlC.add(r); }
-    if (cursorPid) {
-      const u = units.find(x => x.pid === cursorPid);
-      if (u) { const r = rangeForUnit(u); if (r) hlU.add(r); }
-    }
-  }
-
-  let fbRaf = 0;
-  function paintFallback(on) {
-    if (!fallbackLayer) {
-      fallbackLayer = document.createElement('div');
-      fallbackLayer.id = 'rbc-fb';
-      document.documentElement.appendChild(fallbackLayer);
-    }
-    fallbackLayer.style.display = on ? 'block' : 'none';
-    if (!on) { fallbackLayer.innerHTML = ''; return; }
-    if (fbRaf) return;
-    fbRaf = requestAnimationFrame(() => {
-      fbRaf = 0;
-      const H = window.innerHeight;
-      const frag = document.createDocumentFragment();
-      units.forEach((u, i) => {
-        const r = rangeForUnit(u);
-        if (!r) return;
-        const rects = r.getClientRects();
-        if (!rects.length) return;
-        if (rects[rects.length - 1].bottom < -H || rects[0].top > 2 * H) return;
-        for (const rc of rects) {
-          const d = document.createElement('div');
-          d.className = 'rbc-fb-box ' + (i % 2 ? 'b' : 'a');
-          d.style.cssText = `left:${rc.left + scrollX}px;top:${rc.top + scrollY}px;` +
-            `width:${rc.width}px;height:${rc.height}px;`;
-          frag.appendChild(d);
-        }
-      });
-      fallbackLayer.innerHTML = '';
-      fallbackLayer.appendChild(frag);
-    });
-  }
+  
 
   // ==========================================================================
   // 9) 프레임 간 통신
@@ -930,74 +99,32 @@
     catch (e) { /* noop */ }
   }
 
-  function emitStat() {
-    const u = units.find(x => x.pid === lastCenterPid);
-    const s = {
-      res: 'stat', tag: TAG, recording, overlayOn, isPrimary,
-      units: units.length, samples: timeline.length,
-      centerPid: lastCenterPid, cursorPid: lastCursorPid,
-      scrollSpeed: Math.round(lastScrollSpeed),
-      centerText: u ? (u.order + ' · ' + u.text.slice(0, 26)) : '',
-      query: searchQuery || '',
-      focusSec: Math.round(recordedTicks * CFG.TICK_MS / 1000),
-      href: location.href,
-    };
-    if (IS_TOP) applyStat(s); else toTop(s);
-  }
-
   function handleCmd(m) {
     switch (m.cmd) {
-      case 'scan': {
-        const n = rescan({});
-        const info = { tag: TAG, units: n, href: location.href, chars: raw.length };
-        if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
+      case 'scan':
+        bus.emit('cmd:scan');                 // primary 아닌 프레임도 돈다 (선출 근거)
         break;
-      }
       case 'primary':
         isPrimary = (m.tag === TAG);
-        if (!isPrimary) {
-          if (recording) timeline.push({ type: 'demoted', t: tNow() }); 
-          recording = false; overlayOn = false;
-          ensureTicking(); paintOverlay(false);
-        }
+        bus.emit('primary:changed', { isPrimary });
+        if (!isPrimary) bus.emit('cmd:overlay', { on: false });
         break;
-      case 'focus': setFocus(!!m.on); break;              // [C2]
-      case 'activity': lastActivityAt = Date.now(); break; // [C5]
-      case 'query':                                        // [C8]
-        searchQuery = (m.q || '').trim() || null;
-        if (isPrimary) emitStat();
-        break;
-      case 'start': if (isPrimary) startRecording(m); break;
-      case 'stop': if (isPrimary) stopRecording(); break;
-      case 'overlay':
-        if (isPrimary) { overlayOn = m.on; paintOverlay(overlayOn); ensureTicking(); }
-        break;
+      case 'focus':    bus.emit('cmd:focus', m); break;      // [C2] 전 프레임
+      case 'activity': bus.emit('cmd:activity'); break;      // [C5] 전 프레임
+      case 'query':    bus.emit('cmd:query', m); break;      // [C8] 전 프레임
       case 'chunk':
-        if (recording) break; // BUG-1: pid 전면 재배정 방지
-        if (isPrimary) {
-          CFG.TARGET_CHARS = m.target;
-          CFG.MIN_CHARS = Math.round(m.target * 0.55);
-          CFG.MAX_CHARS = Math.round(m.target * 1.7);
-          rescan({});
-          emitStat();
-        }
+        if (RBC.recorder.isRecording()) break;               // BUG-1
+        if (isPrimary) bus.emit('cmd:chunk', m);
         break;
-      case 'export':
-        if (isPrimary) {
-          if (IS_TOP) download(buildPayload());
-          else toTop({ res: 'export', payload: buildPayload() });
-        }
-        break;
-      case 'list':
-        if (isPrimary) {
-          const list = units.map(u => ({
-            order: u.order, pid: u.pid, charLen: u.charLen, text: u.text.slice(0, 44),
-          }));
-          if (IS_TOP) showList(list); else toTop({ res: 'list', list });
-        }
-        break;
+      // 아래는 primary 만. 각 모듈은 primary 개념을 몰라도 된다.
+      case 'start':   if (isPrimary) bus.emit('cmd:start', m); break;
+      case 'stop':    if (isPrimary) bus.emit('cmd:stop'); break;
+      case 'overlay': if (isPrimary) bus.emit('cmd:overlay', m); break;
+      case 'list':    if (isPrimary) bus.emit('cmd:list'); break;
+      case 'export':  if (isPrimary) bus.emit('cmd:export'); break;
     }
   }
+
 
   window.addEventListener('message', (e) => {
     const m = e.data;
@@ -1011,10 +138,10 @@
     }
     if (!IS_TOP) return;
     if (m.res === 'scan') collectScan(m);
-    else if (m.res === 'stat') applyStat(m);
+    else if (m.res === 'stat') bus.emit('stat', m);
     else if (m.res === 'export') download(m.payload);
-    else if (m.res === 'list') showList(m.list);
-    else if (m.res === 'autostop') { uiRecording = false; renderPanel(); }
+    else if (m.res === 'list') bus.emit('units:list', m.list);
+    else if (m.res === 'autostop') bus.emit('record:stopped', { reason: 'idle' });
   });
 
   function send(cmd, extra) {
@@ -1031,10 +158,7 @@
   let scanTries = 0;
 
   function doScan(auto) {
-    if (uiRecording) {  // 기록 중 재스캔 = pid 재배정
-      setStat('기록 중에는 스캔할 수 없습니다. 정지 후 다시 시도하세요.');
-      return;
-    }
+    if (RBC.recorder.isRecording()) return;
     if (!auto) scanTries = 0;
     scanBucket = [];
     clearTimeout(scanTimer);
@@ -1043,10 +167,10 @@
       if (!scanBucket.length) {
         if (scanTries < CFG.SCAN_RETRY_MAX) {
           scanTries++;
-          setStat(`본문 탐색 중… (${scanTries}/${CFG.SCAN_RETRY_MAX})`);
+          bus.emit('scan:progress', { tries: scanTries, max: CFG.SCAN_RETRY_MAX });
           setTimeout(() => doScan(true), CFG.SCAN_RETRY_MS);
         } else {
-          setStat('본문을 못 찾음. 페이지가 다 뜬 뒤 <b>스캔</b>을 다시 눌러주세요.');
+          bus.emit('scan:failed');
         }
         return;
       }
@@ -1056,13 +180,15 @@
       primaryTag = win.tag;
       send('primary', { tag: primaryTag });
       send('focus', { on: !document.hidden && document.hasFocus() });   // [C2] 초기 동기화
-      if (searchQuery) send('query', { q: searchQuery });               // [C8]
-      setStat(
-        `프레임 ${scanBucket.length}개 · primary=${esc(win.tag)}` +
-        (win.tag === TAG ? ' (본 페이지)' : ' (iframe)') +
-        `<br>유닛 <b>${win.units}</b>개 · 본문 ${win.chars.toLocaleString()}자`
-      );
-      renderPanel();
+      const q = RBC.recorder.query();
+      if (q) send('query', { q });
+      bus.emit('scan:done', {
+        frames: scanBucket.length,
+        tag: win.tag,
+        isSelf: win.tag === TAG,
+        units: win.units,
+        chars: win.chars,
+      });
     }, CFG.SCAN_COLLECT_MS);
   }
 
@@ -1070,144 +196,6 @@
     if (m.units > 0) scanBucket.push(m);
   }
 
-  // ==========================================================================
-  // 10) 패널 (최상위 프레임에만)
-  // ==========================================================================
-  let panelEl = null, listEl = null;
-
-  function injectStyle() {
-    const s = document.createElement('style');
-    s.textContent = `
-      ::highlight(rbc-unit-a){ background-color: rgba(59,130,246,.13); }
-      ::highlight(rbc-unit-b){ background-color: rgba(245,158,11,.17); }
-      ::highlight(rbc-center){ background-color: rgba(34,197,94,.38); }
-      ::highlight(rbc-cursor){ text-decoration: underline 2px solid rgba(37,99,235,.95); }
-      #rbc-centerline{ position:fixed; left:0; right:0; height:0;
-        border-top:1px dashed rgba(34,197,94,.85);
-        z-index:2147483646; pointer-events:none; }
-      #rbc-fb{ position:absolute; left:0; top:0; width:0; height:0;
-        z-index:2147483645; pointer-events:none; }
-      .rbc-fb-box{ position:absolute; pointer-events:none; }
-      .rbc-fb-box.a{ background:rgba(59,130,246,.13); }
-      .rbc-fb-box.b{ background:rgba(245,158,11,.17); }
-      #${CFG.PANEL_ID}{
-        position:fixed; right:12px; bottom:12px; z-index:2147483647;
-        width:272px; font:12px/1.45 system-ui,-apple-system,sans-serif; color:#111;
-        background:#fff; border:1px solid #ddd; border-radius:10px;
-        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px; }
-      #${CFG.PANEL_ID} h4{ margin:0 0 6px; font-size:12px; }
-      #${CFG.PANEL_ID} button{
-        font:11px system-ui; padding:5px 7px; margin:2px 2px 0 0;
-        border:1px solid #ccc; border-radius:6px; background:#f7f7f7; cursor:pointer; }
-      #${CFG.PANEL_ID} button.on{ background:#16a34a; color:#fff; border-color:#16a34a; }
-      #${CFG.PANEL_ID} .rbc-row{ margin-top:6px; font-size:11px; color:#555;
-        display:flex; align-items:center; gap:6px; }
-      #${CFG.PANEL_ID} input[type=range]{ flex:1; }
-      #${CFG.PANEL_ID} input[type=text]{ flex:1; min-width:0; font:11px system-ui;
-        padding:3px 5px; border:1px solid #ccc; border-radius:5px; }
-      #${CFG.PANEL_ID} .rbc-stat{ margin-top:8px; font-size:11px; color:#333;
-        border-top:1px solid #eee; padding-top:6px; word-break:break-all; }
-      #${CFG.PANEL_ID} .rbc-list{ margin-top:6px; max-height:190px; overflow:auto;
-        border-top:1px solid #eee; padding-top:6px; font-size:11px; display:none; }
-      #${CFG.PANEL_ID} .rbc-list div{ padding:2px 0; border-bottom:1px dotted #eee;
-        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      #${CFG.PANEL_ID} .rbc-list b{ color:#2563eb; }
-      #${CFG.PANEL_ID} .dot{ display:inline-block; width:8px; height:8px;
-        border-radius:50%; margin-right:4px; vertical-align:middle; }
-    `;
-    document.documentElement.appendChild(s);
-  }
-
-  function renderPanel() {
-    if (!IS_TOP) return;
-    if (!panelEl) {
-      panelEl = document.createElement('div');
-      panelEl.id = CFG.PANEL_ID;
-      document.documentElement.appendChild(panelEl);
-    }
-    const prevStat = panelEl.querySelector('#rbc-stat');
-    const keep = prevStat ? prevStat.innerHTML : '스캔 준비 중…';
-    panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.2</span></h4>
-      <div>
-        <button data-act="scan" ${uiRecording ? 'disabled' : ''}>스캔</button>
-        <button data-act="rec" class="${uiRecording ? 'on' : ''}">${uiRecording ? '■ 정지' : '● 기록'}</button>
-        <button data-act="ov" class="${uiOverlay ? 'on' : ''}">오버레이</button>
-        <button data-act="list">유닛 목록</button>
-        <button data-act="exp">JSON</button>
-      </div>
-      <div class="rbc-row">
-        <span>검색어</span>
-        <input type="text" data-act="query" placeholder="referrer에서 못 얻으면 직접"
-               value="${esc(searchQuery || '')}">
-      </div>
-      <div class="rbc-row">
-        <span>청크</span>
-        <input type="range" min="80" max="400" step="20" value="${CFG.TARGET_CHARS}" data-act="chunk" ${uiRecording ? 'disabled' : ''}>
-        <span id="rbc-chunkval">${CFG.TARGET_CHARS}자</span>
-      </div>
-      <div class="rbc-stat" id="rbc-stat">${keep}</div>
-      <div class="rbc-list" id="rbc-list"></div>
-    `;
-    listEl = panelEl.querySelector('#rbc-list');
-
-    // 주의: onclick에 doScan을 직접 넣으면 이벤트 객체가 auto 인자로 들어가
-    //       재시도 카운터가 리셋되지 않는다.
-    panelEl.querySelector('[data-act="scan"]').onclick = () => doScan();
-    panelEl.querySelector('[data-act="rec"]').onclick = () => {
-      if (uiRecording) { uiRecording = false; send('stop'); }
-      else {
-        uiRecording = true;
-        send('start', { epoch: Date.now(), sessionId: uuid(), query: searchQuery });
-      }
-      renderPanel();
-    };
-    panelEl.querySelector('[data-act="ov"]').onclick = () => {
-      uiOverlay = !uiOverlay; send('overlay', { on: uiOverlay }); renderPanel();
-    };
-    panelEl.querySelector('[data-act="list"]').onclick = () => {
-      if (listEl.style.display === 'block') { listEl.style.display = 'none'; return; }
-      send('list');
-    };
-    panelEl.querySelector('[data-act="exp"]').onclick = () => send('export');
-
-    const q = panelEl.querySelector('[data-act="query"]');
-    q.onchange = (e) => { searchQuery = e.target.value.trim() || null; send('query', { q: searchQuery }); };
-
-    const slider = panelEl.querySelector('[data-act="chunk"]');
-    slider.oninput = (e) => {
-      panelEl.querySelector('#rbc-chunkval').textContent = e.target.value + '자';
-    };
-    slider.onchange = (e) => send('chunk', { target: +e.target.value });
-  }
-
-  function setStat(html) {
-    const el = panelEl && panelEl.querySelector('#rbc-stat');
-    if (el) el.innerHTML = html;
-  }
-
-  function applyStat(s) {
-    if (!IS_TOP || !panelEl) return;
-    setStat(`
-      <span class="dot" style="background:${s.recording ? '#16a34a' : '#bbb'}"></span>
-      ${s.recording ? '기록 중' : '대기'} · 샘플 ${s.samples}개 · 유닛 ${s.units}개
-      ${s.recording ? `· focus ${s.focusSec}s` : ''}<br>
-      <b style="color:#16a34a">중앙선(B)</b>: ${esc(s.centerPid) || '—'} <i>${esc(s.centerText)}</i><br>
-      <b style="color:#2563eb">커서(A)</b>: ${esc(s.cursorPid) || '여백/없음'}<br>
-      scrollSpeed: ${s.scrollSpeed} px/s
-      ${s.query ? `· 검색어 "${esc(s.query)}"` : '· <span style="color:#c00">검색어 없음</span>'}
-      ${s.tag !== TAG ? `<br><span style="color:#999">frame ${esc(s.tag)}</span>` : ''}
-    `);
-  }
-
-  function showList(list) {
-    if (!listEl) return;
-    listEl.style.display = 'block';
-    listEl.innerHTML = list.map(u =>
-      `<div><b>#${u.order}</b> <span style="color:#999">${esc(u.pid)}</span> ` +
-      `(${u.charLen}자) ${esc(u.text)}</div>`
-    ).join('') || '<div>유닛 없음</div>';
-  }
 
   // ==========================================================================
   // 11) DOM 변경 감시
@@ -1223,7 +211,8 @@
 
   function retargetObserver() {
     if (!mo) return;
-    const target = (units.length && contentRoot) ? contentRoot : document.documentElement;
+    const root = RBC.stream.root();
+    const target = (RBC.units.count() && root) ? root : document.documentElement;
     if (moTarget === target) return;
     mo.disconnect();
     moTarget = target;
@@ -1233,17 +222,16 @@
   function watchMutations() {
     mo = new MutationObserver(() => {
       clearTimeout(mutTimer);
-      const wait = recording ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE;
+      const wait = RBC.recorder.isRecording() ? CFG.MUTATION_DEBOUNCE_REC : CFG.MUTATION_DEBOUNCE;
       mutTimer = setTimeout(() => {
-        if (!units.length) {
+        if (!RBC.units.count()) {
           // 아직 본문을 못 잡음. auto=true 로 호출해야 재시도 카운터가 유지된다.
           if (IS_TOP && scanTries < CFG.SCAN_RETRY_MAX) doScan(true);
           return;
         }
-        if (recording && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
+        if (RBC.recorder.isRecording() && Date.now() - lastRescanAt < CFG.RESCAN_MIN_GAP_REC) return;
         lastRescanAt = Date.now();
-        rescan({ preserve: true });
-        emitStat();
+        RBC.units.rescan({ preserve: true });
       }, wait);
     });
     retargetObserver();
@@ -1252,30 +240,53 @@
   // ==========================================================================
   // init
   // ==========================================================================
+
+  // [R1] 전: rescan() 이 retargetObserver() 를 직접 호출
+  bus.on('units:changed', () => {
+    retargetObserver();
+  });
+
+  // 스캔 결과를 최상위 프레임으로. primary 선출의 입력이 된다.
+  bus.on('units:scanned', (d) => {
+    const info = { tag: TAG, units: d.count, href: location.href, chars: d.chars };
+    if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
+  });
+
+  // 유닛 목록을 최상위로 중계 (최상위면 패널이 직접 받는다)
+  bus.on('units:list', (list) => {
+    if (!IS_TOP) toTop({ res: 'list', list });
+  });
+
+  bus.on('activity', () => send('activity'));
+
+  // 4-input 이 최상위 프레임의 포커스 변화를 알리면 하위 프레임으로 브로드캐스트한다.
+  bus.on('focus:broadcast', (d) => send('focus', { on: d.on }));
+
+    // 5-recorder 가 만든 통계를 최상위로. 최상위면 9-panel 이 직접 받는다.
+  bus.on('stat', (s) => { if (!IS_TOP) toTop(s); });
+
+  // export payload. 최상위면 바로 저장, 아니면 최상위로 넘긴다.
+  bus.on('export:ready', (payload) => {
+    if (IS_TOP) download(payload); else toTop({ res: 'export', payload });
+  });
+
+  // 자동 종료는 최상위 패널이 알아야 버튼이 돌아온다.
+  bus.on('record:stopped', (d) => {
+    if (!IS_TOP && d && d.reason === 'idle') toTop({ res: 'autostop' });
+  });
+
+
   function init() {
-    injectStyle();
-    searchQuery = searchQueryFromReferrer();      // [C8]
-    if (IS_TOP) {
-      winFocused = !document.hidden && document.hasFocus();
-      renderPanel();
-    }
-    document.addEventListener('mousemove', onMouseMove, { passive: true });
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize, { passive: true });
-    document.addEventListener('keydown', onKey, { passive: true });
-    document.addEventListener('copy', onCopy, true);
-    document.addEventListener('selectionchange', onSelectionChange);
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onWinFocus);
-    window.addEventListener('blur', onWinBlur);
-    window.addEventListener('pagehide', onPageHide);
     watchMutations();
     if (IS_TOP) setTimeout(() => doScan(), CFG.FIRST_SCAN_DELAY);
   }
+
+  RBC.frames = { send, doScan, isPrimary: () => isPrimary };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {
     init();
   }
+
 })();
