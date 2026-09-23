@@ -29,7 +29,13 @@
  *   export 때 같은 글(pageId = origin + pageKey)의 구간들을 한 페이지로 합친다.
  *   이게 결정된 뷰다. 합쳐도 이벤트마다 segId·tabId 가 남으므로, 오프라인에서
  *   구간 단위로 다시 쪼갤 수 있고 연속 틱 간 차분을 경계에서 리셋할 수 있다.
- *   떠남/돌아옴(탭·창 전환)은 visit record 로 남는다.
+ *   떠남/돌아옴(탭·창 전환)은 visit record 로 남는다. 첫 틱 전의 탭을 활성화하면
+ *   visit 에는 tabId 만 남고 pageId 는 null 이다(탭 대응표는 page 기록이 채운다).
+ *
+ * --- 안 본 탭 ---------------------------------------------------------------
+ *   5-recorder 는 첫 틱(보이고 + 창 포커스) 전에는 page 도 chunk 도 보내지 않는다.
+ *   그래서 세션 중 한 번도 안 본 탭은 이 로그에 URL·원문이 들어오지 않는다.
+ *   export 의 droppedPages 는 그 규칙이 깨진 이상 사례를 보여주는 안전망이다.
  *   틱은 보이는 탭에서만 돈다(5-recorder 의 hidden/focused 게이트). 여기선 안 막는다.
  *
  * --- export 모양 -------------------------------------------------------------
@@ -132,7 +138,10 @@ function assemble(log) {
   let startRec = null, stopRec = null, query = null;
   const visits = [];
   const pages = {};          // pageId → { meta, paras: Map, events: [], segs: Map }
+  const segChunks = {};      // segId → { pageId, ns: Set, dup: 수 }
 
+  // 1회차: 세션 · 방문 · 페이지. 로그 안의 도착 순서와 무관하게 페이지가 먼저 모인다.
+  //   (첫 틱에 page 와 첫 chunk 가 거의 동시에 나가므로, chunk 가 먼저 저장될 수 있다)
   for (const r of log) {
     if (r.k === 'start') { startRec = r; query = r.query || null; }
     else if (r.k === 'stop') stopRec = r;
@@ -147,12 +156,22 @@ function assemble(log) {
       if (!pg.segs.has(r.segId)) {
         pg.segs.set(r.segId, { segId: r.segId, tabId: r.tabId, t: r.t, url: r.meta && r.meta.url });
       }
-    } else if (r.k === 'chunk') {
-      const pg = pages[r.pageId];
-      if (!pg) continue;                         // page record 없이 온 조각은 버린다
-      for (const e of r.events) {
-        pg.events.push(Object.assign({}, e, { segId: e.segId || r.segId, tabId: r.tabId }));
-      }
+    }
+  }
+
+  // 2회차: 조각. (segId, n) 이 같은 조각은 처음 것만 쓴다 — 재전송 대비.
+  //   중복은 로그(원본)에 그대로 남고, 여기서만 걸러진다.
+  for (const r of log) {
+    if (r.k !== 'chunk') continue;
+    const sc = segChunks[r.segId] || (segChunks[r.segId] = { pageId: r.pageId, ns: new Set(), dup: 0 });
+    if (r.n != null) {
+      if (sc.ns.has(r.n)) { sc.dup++; continue; }
+      sc.ns.add(r.n);
+    }
+    const pg = pages[r.pageId];
+    if (!pg) continue;                         // page record 가 끝내 없는 조각 — chunkReport 에 남는다
+    for (const e of r.events) {
+      pg.events.push(Object.assign({}, e, { segId: e.segId || r.segId, tabId: r.tabId }));
     }
   }
 
@@ -161,11 +180,38 @@ function assemble(log) {
   let total = 0;
 
   const out = [];
+  const droppedPages = [];
+  const segEnd = {};         // segId → 'closed' | 'unloaded' | 'open'
+
   for (const [pageId, pg] of Object.entries(pages)) {
     const paragraphs = [...pg.paras.values()].sort((a, b) => a.order - b.order);
-    if (!paragraphs.length) continue;            // 유닛 없는 페이지는 visits 에만 남는다
     const timeline = pg.events.slice().sort((a, b) => a.t - b.t);   // 안정 정렬
+    const segments = [...pg.segs.values()];                          // 시작 순서
+
+    // 구간별 끝 상태: segend 가 있으면 정상 종료. 없으면 마지막 틱 뒤에 pagehide 가
+    // 있었는지 본다(bfcache 로 되살아나면 pagehide 뒤에 틱이 또 올 수 있다).
+    for (const sg of segments) {
+      let lastTick = -1, lastHide = -1, closed = false;
+      timeline.forEach((e, i) => {
+        if (e.segId !== sg.segId) return;
+        if (e.type === 'segend') closed = true;
+        else if (e.type === 'tick') lastTick = i;
+        else if (e.type === 'pagehide') lastHide = i;
+      });
+      segEnd[sg.segId] = closed ? 'closed' : (lastHide > lastTick ? 'unloaded' : 'open');
+    }
+
     const ticks = timeline.filter((e) => e.type === 'tick').length;
+    // 안전망. 5-recorder 는 첫 틱 전에는 아무것도 안 보내므로 정상이면 여기 걸리는 게 없다.
+    const why = !paragraphs.length ? 'no-units' : !ticks ? 'no-ticks' : null;
+    if (why) {
+      droppedPages.push({
+        pageId, reason: why,
+        segments: segments.map((g) => ({ segId: g.segId, tabId: g.tabId, url: g.url })),
+      });
+      continue;
+    }
+
     total += ticks * TICK_MS;
     out.push({
       meta: Object.assign({}, pg.meta, {
@@ -173,12 +219,28 @@ function assemble(log) {
         startedAt, endedAt,
         focusMs: ticks * TICK_MS,
         pageId,
-        segments: [...pg.segs.values()],       // 시작 순서. 각 구간의 탭·시작 시각·URL
+        segments,                                // 각 구간의 탭 · 시작 시각 · URL
         paragraphs,
       }),
       timeline,
     });
   }
+
+  // 조각 유실 보고. 판정은 여기(export 시점)에서만 한다 — 늦게 오는 조각이 있으므로
+  // 도착할 때마다 판단하면 오탐이 난다.
+  //   missing  : 0..maxN 중 빠진 번호 → 확실한 유실
+  //   end      : closed(segend) / unloaded(pagehide) / open(열려 있거나 꼬리 유실 가능)
+  //   orphan   : page record 가 없는 구간의 조각 (조립 불가)
+  const chunkReport = Object.entries(segChunks).map(([segId, sc]) => {
+    const maxN = sc.ns.size ? Math.max(...sc.ns) : -1;
+    const missing = [];
+    for (let i = 0; i <= maxN; i++) if (!sc.ns.has(i)) missing.push(i);
+    return {
+      segId, pageId: sc.pageId, maxN, missing, duplicates: sc.dup,
+      end: segEnd[segId] || 'open',
+      orphan: !pages[sc.pageId],
+    };
+  });
 
   return {
     kind: 'rbc-session',
@@ -192,6 +254,8 @@ function assemble(log) {
       tickMs: TICK_MS,
       records: log.length,
       visits,
+      chunkReport,
+      droppedPages,
     },
     pages: out,
   };
@@ -220,6 +284,8 @@ function sessionMsg() {
 // ============================================================================
 const handlers = {
   // 새로 뜬 content script 가 "지금 세션 중이냐"를 묻는다. 재주입·새 탭 복구 경로.
+  // 출석 신호일 뿐이다: 메시지에 페이지 데이터가 없고, sender(탭 URL 등)도 읽지 않으며
+  // 아무것도 저장하지 않는다. 탭의 URL·원문은 첫 틱 뒤의 page 기록으로만 들어온다.
   async hello() { return sessionMsg(); },
 
   async start(m) {
@@ -274,7 +340,7 @@ const handlers = {
     if (m.sessionId !== S.sessionId) return { ok: false, why: 'stale-session' };
     if (!m.events || !m.events.length) return { ok: true };
     const tabId = sender.tab ? sender.tab.id : null;
-    await put({ k: 'chunk', pageId: m.pageId, segId: m.segId, tabId, events: m.events });
+    await put({ k: 'chunk', pageId: m.pageId, segId: m.segId, n: m.n, tabId, events: m.events });
     return { ok: true };
   },
 

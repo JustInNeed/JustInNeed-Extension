@@ -32,10 +32,22 @@
  *   이 하나로 탭 전환·창 이탈·같은 글 다른 탭·재방문이 전부 걸린다.
  *
  * --- 내보내기 ---------------------------------------------------------------
- *   구간을 열 때 seg:page (글 정보 + 유닛 목록), 그 뒤 FLUSH_MS 마다 seg:chunk
- *   (그동안 쌓인 이벤트). 버퍼는 넘기는 즉시 비운다. background 로 실어 나르는
- *   건 11-session 이다 — 여기는 chrome.runtime 을 모른다.
+ *   첫 틱이 찍히는 순간 seg:page (글 정보 + 유닛 목록), 그 뒤 FLUSH_MS 마다
+ *   seg:chunk (그동안 쌓인 이벤트). 버퍼는 넘기는 즉시 비운다. background 로
+ *   실어 나르는 건 11-session 이다 — 여기는 chrome.runtime 을 모른다.
  *   조각 경계는 데이터에 영향이 없다. 이어 붙이면 같은 timeline 이다.
+ *
+ * --- 안 본 탭은 아무것도 내보내지 않는다 ------------------------------------
+ *   세션이 시작되면 열린 탭 전부가 구간을 연다. 그런데 "읽었다"의 기준은 틱이고,
+ *   틱은 보이고 + 창 포커스가 있을 때만 찍힌다. 그래서 첫 틱 전까지는 URL·제목·
+ *   원문(seg:page)도, 이벤트(seg:chunk)도 내보내지 않는다. 첫 틱이 없이 구간이
+ *   닫히면 버퍼를 버린다. 안 본 탭은 background 저장소에 흔적이 남지 않는다.
+ *   (개인정보 · 로그 크기 · 빈 페이지 때문에 check_session 이 FAIL 하는 문제를
+ *    한 번에 막는다)
+ *
+ * --- 조각 번호 n ------------------------------------------------------------
+ *   구간마다 0 부터. background 가 export 때 (segId, n) 으로 중복을 빼고,
+ *   빠진 번호로 유실을 찾는다.
  *
  * --- 원칙 ------------------------------------------------------------------
  *   원본만 남긴다. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.
@@ -70,6 +82,8 @@
   let segId = null;
   let segPageId = null;               // 구간을 연 순간의 글. 이동 뒤에도 이 구간은 이 글이다
   let segMeta = null;                 // 구간을 연 순간에 캡처한 글 정보
+  let pageSent = false;               // 첫 틱에 seg:page 를 보냈는가. 그 전엔 아무것도 안 나간다
+  let chunkN = 0;                     // 이 구간의 다음 조각 번호
   let searchQuery = searchQueryFromReferrer();   // [C8]
 
   let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;
@@ -141,6 +155,7 @@
         docH: document.documentElement.scrollHeight,
       });
       segTicks++;
+      if (!pageSent) { pageSent = true; emitPage(); }   // 첫 틱 = 이 탭을 실제로 봤다
     }
 
     prevTickTime = now;
@@ -182,10 +197,10 @@
   }
 
   function flush() {
-    if (!timeline.length) return;
+    if (!pageSent || !timeline.length) return;       // 첫 틱 전에는 쌓아만 둔다
     const events = timeline;
     timeline = [];
-    bus.emit('seg:chunk', { sessionId, pageId: segPageId, segId, events });
+    bus.emit('seg:chunk', { sessionId, pageId: segPageId, segId, n: chunkN++, events });
   }
 
   // export JSON 의 페이지 meta 가 된다. 세션 필드(sessionId, startedAt, endedAt,
@@ -259,11 +274,13 @@
     segId = uuid();
     segPageId = pageId(location.href);
     segMeta = buildMeta();
+    pageSent = false;
+    chunkN = 0;
 
     RBC.input.bump();                                   // idle 타이머 초기화
     recording = true;
     ensureTicking();
-    emitPage();
+    // seg:page 는 여기서 보내지 않는다 — 첫 틱에서 보낸다
     flushTimer = setInterval(flush, CFG.FLUSH_MS);
     bus.emit('record:started', { sessionId, segId });
     emitStat();
@@ -273,7 +290,8 @@
   // reason: 'user'(세션 정지 방송) | 'idle' | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
     if (recording) push({ type: 'segend', t: tNow(), segId, reason: reason || 'user' });
-    flush();                                           // 마지막 조각까지 넘기고 닫는다
+    if (pageSent) flush();                             // 마지막 조각까지 넘기고 닫는다
+    else timeline = [];                                // 한 번도 안 본 구간: 흔적 없이 버린다
     clearInterval(flushTimer); flushTimer = null;
     recording = false;
     ensureTicking();
@@ -370,7 +388,7 @@
   bus.on('units:rescanned', (d) => {
     if (!recording) return;
     push({ type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count });
-    if (d.mode !== 'disruptive-skipped') emitPage();
+    if (d.mode !== 'disruptive-skipped' && pageSent) emitPage();   // 첫 틱 전이면 첫 틱 때 최신 목록이 나간다
   });
 
   // 유닛이 바뀌면 패널 숫자도 바뀐다.
