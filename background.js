@@ -43,6 +43,17 @@
  *   pages 의 각 원소는 기존 v2 payload 그대로다. extract_features.py 는 피처
  *   계산을 안 바꾸고, 읽을 때 pages 를 풀기만 하면 된다.
  *
+ * --- 동의 (테스트 참가자) -----------------------------------------------------
+ *   동의가 없으면 start 를 거절한다. 강제는 여기 한 곳뿐이다 — 팝업·패널·나중의
+ *   웹앱은 요청만 하고, 거절 사유(why: 'no-consent')를 받아서 보여주기만 한다.
+ *   동의 기록은 'consent' 키에 둔다. 'rec:' 로 시작하지 않으므로 새 세션 시작 때
+ *   로그를 지워도 남는다. version 이 CONSENT_VERSION 과 다르면 없는 것으로 본다
+ *   (고지문을 바꾸면 다시 받는다). 동의 페이지는 자기가 보여준 고지문의 version 을
+ *   보내고, 여기서 다르면 거절한다 — 옛 페이지로 새 동의가 들어오는 것을 막는다.
+ *   참가자 정보(testId·이름·조건 태그)는 start 기록에 복사된다. 그래서 bundle 의
+ *   session.tester 도 assemble() 이 로그만 보고 만든다(순수 함수 유지).
+ *   철회(withdraw) = 정지 + 로그 삭제 + 동의 삭제. 다시 동의하면 새 testId.
+ *
  * --- service worker 라서 지키는 것 --------------------------------------------
  *   1) 유휴 30초면 종료된다. 메모리 상태는 캐시, 원본은 storage.
  *   2) 리스너는 최상위에서 동기적으로 등록해야 깨어날 때 이벤트를 받는다.
@@ -54,6 +65,8 @@ const MODE = 'download';      // 'download' | 'server'  — 빌드 타깃이 바
 const TICK_MS = 150;          // 0-core CFG.TICK_MS 와 같아야 한다
 const K_SESS = 'sess:cur';    // 세션 상태 (작은 것만)
 const REC = 'rec:';           // 기록 로그. 키 = 'rec:' + seq 8자리
+const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
+const CONSENT_VERSION = 1;    // consent.html 고지문 버전과 같아야 한다
 
 // ============================================================================
 // 세션 상태
@@ -68,12 +81,15 @@ function emptyState() {
     tabPage: {},         // tabId → pageId (지금 그 탭이 보여주는 글)
     tabSeg: {},          // tabId → segId  (지금 그 탭에서 열린 구간)
     lastVisit: null,     // 같은 곳 연속 기록 방지용
+    pagePids: {},        // pageId → [pid] (팝업 진행 표시용. 기록 데이터 아님)
   };
 }
 
 let S = emptyState();
-const ready = chrome.storage.local.get(K_SESS).then((r) => {
+let C = null;                 // 동의 기록 { version, testId, name, tag, at } | null
+const ready = chrome.storage.local.get([K_SESS, K_CONSENT]).then((r) => {
   if (r[K_SESS]) S = Object.assign(emptyState(), r[K_SESS]);   // 필드가 늘어난 뒤의 옛 상태 대비
+  C = r[K_CONSENT] || null;
 });
 
 let chain = Promise.resolve();
@@ -98,6 +114,12 @@ async function put(rec) {
   return r;
 }
 
+async function removeLog() {
+  const all = await chrome.storage.local.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith(REC));
+  if (keys.length) await chrome.storage.local.remove(keys);
+}
+
 async function readLog() {
   const all = await chrome.storage.local.get(null);
   return Object.keys(all).filter((k) => k.startsWith(REC)).sort().map((k) => all[k]);
@@ -120,6 +142,27 @@ const SINKS = {
 };
 const SINK = SINKS[MODE];
 
+// ============================================================================
+// 동의
+// ============================================================================
+function consentValid() { return !!(C && C.version === CONSENT_VERSION && C.testId); }
+
+// 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
+const ID_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+function newTestId() {
+  const b = crypto.getRandomValues(new Uint8Array(6));
+  return 't-' + [...b].map((x) => ID_CHARS[x % ID_CHARS.length]).join('');
+}
+
+function testerInfo() {
+  return { testId: C.testId, name: C.name, tag: C.tag, consentVersion: C.version, consentAt: C.at };
+}
+
+function cleanField(v, max) {
+  const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '';
+  return t.slice(0, max);
+}
+
 function visit(tabId, reason) {
   if (!S.recording) return null;
   const pageId = tabId != null ? (S.tabPage[tabId] || null) : null;   // null = 수집 안 되는 곳
@@ -136,6 +179,7 @@ function visit(tabId, reason) {
 // ============================================================================
 function assemble(log) {
   let startRec = null, stopRec = null, query = null;
+  // tester 는 start 기록에서만 온다. 동의 게이트 이전 로그면 null
   const visits = [];
   const pages = {};          // pageId → { meta, paras: Map, events: [], segs: Map }
   const segChunks = {};      // segId → { pageId, ns: Set, dup: 수 }
@@ -247,6 +291,7 @@ function assemble(log) {
     bundleVersion: 1,
     session: {
       sessionId: startRec ? startRec.sessionId : null,
+      tester: (startRec && startRec.tester) || null,
       startedAt, endedAt,
       stopReason: stopRec ? stopRec.reason : null,
       focusMs: total,
@@ -290,18 +335,18 @@ const handlers = {
 
   async start(m) {
     if (S.recording) return sessionMsg();
+    // 동의 게이트. 명령 출처(팝업·패널·웹앱)와 무관하게 여기서만 막는다.
+    if (!consentValid()) return { ok: false, why: 'no-consent' };
     // download 모드: 직전 세션 로그는 여기서 버린다. export 는 그 전에 할 것.
     // (server 모드에서는 ACK 안 된 로그를 지우면 안 된다 — 서버 단계에서 바꿀 것)
-    const old = (await chrome.storage.local.get(null));
-    const keys = Object.keys(old).filter((k) => k.startsWith(REC));
-    if (keys.length) await chrome.storage.local.remove(keys);
+    await removeLog();
 
     S = emptyState();
     S.sessionId = crypto.randomUUID();
     S.epoch = Date.now();
     S.recording = true;
     S.query = (m && m.query) || null;
-    await put({ k: 'start', t: 0, query: S.query, mode: MODE });
+    await put({ k: 'start', t: 0, query: S.query, mode: MODE, tester: testerInfo() });
     await broadcast(sessionMsg());
     return sessionMsg();
   },
@@ -327,6 +372,10 @@ const handlers = {
     if (m.sessionId !== S.sessionId) return { ok: false, why: 'stale-session' };
     const tabId = sender.tab ? sender.tab.id : null;
     if (tabId != null) { S.tabPage[tabId] = m.pageId; S.tabSeg[tabId] = m.segId; }
+    // 진행 표시용 유닛 수 = 페이지별 pid 합집합 (assemble 과 같은 규칙)
+    const known = new Set(S.pagePids[m.pageId] || []);
+    for (const p of m.paragraphs || []) known.add(p.pid);
+    S.pagePids[m.pageId] = [...known];
     await put({
       k: 'page', t: tNow(), pageId: m.pageId, segId: m.segId, tabId,
       meta: m.meta, paragraphs: m.paragraphs || [],
@@ -347,6 +396,64 @@ const handlers = {
   async export() {
     if (MODE !== 'download') return { ok: false, why: 'not-download-mode' };
     return assemble(await readLog());
+  },
+
+  // 팝업이 1초마다 묻는다. 로그를 읽지 않는다 (S 와 C 만).
+  async status() {
+    const pids = Object.values(S.pagePids);
+    return {
+      ok: true,
+      consent: C ? Object.assign({ valid: consentValid() }, C) : null,
+      consentVersion: CONSENT_VERSION,
+      recording: S.recording,
+      sessionId: S.sessionId,
+      startedAt: S.epoch || null,
+      query: S.query,
+      pages: pids.length,
+      units: pids.reduce((n, a) => n + a.length, 0),
+      records: S.seq,
+    };
+  },
+
+  // 동의 페이지가 보낸다. version = 그 페이지가 보여준 고지문 버전.
+  //   재동의(고지문 버전 변경)는 testId 를 유지한다. 철회 뒤 동의는 새 testId.
+  async consent(m) {
+    if (!m || m.version !== CONSENT_VERSION) return { ok: false, why: 'consent-version' };
+    const name = cleanField(m.name, 40);
+    if (!name) return { ok: false, why: 'no-name' };
+    C = {
+      version: CONSENT_VERSION,
+      testId: (C && C.testId) || newTestId(),
+      name,
+      tag: cleanField(m.tag, 40) || null,
+      at: new Date().toISOString(),
+    };
+    await chrome.storage.local.set({ [K_CONSENT]: C });
+    return { ok: true, consent: Object.assign({ valid: true }, C) };
+  },
+
+  // 철회: 기록 중이면 정지 방송 → 로그 · 세션 상태 · 동의 전부 삭제.
+  //   정지 직후 늦게 오는 조각은 sessionId 가 null 이 됐으므로 stale-session 으로 거절된다.
+  async withdraw() {
+    if (S.recording) {
+      S.recording = false;
+      await broadcast(sessionMsg());
+    }
+    await removeLog();
+    S = emptyState();
+    await saveState();
+    C = null;
+    await chrome.storage.local.remove(K_CONSENT);
+    return { ok: true };
+  },
+
+  // 기록 삭제 (동의는 유지). 기록 중에는 거절 — 정지 먼저.
+  async clear() {
+    if (S.recording) return { ok: false, why: 'recording' };
+    await removeLog();
+    S = emptyState();
+    await saveState();
+    return { ok: true };
   },
 };
 
@@ -383,5 +490,10 @@ chrome.tabs.onRemoved.addListener((tabId) => serial(async () => {
   await saveState();
 }));
 
+// 새로 설치하면 동의 페이지를 연다. 업데이트·확장 새로고침(reason 'update')에서는 안 연다.
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('consent.html') });
+});
+
 // 콘솔 점검용: 서비스 워커 콘솔에서 await RBCBG.handle({ rbc: 'start' })
-self.RBCBG = { handle, state: () => S, readLog, assemble };
+self.RBCBG = { handle, state: () => S, consent: () => C, readLog, assemble };
