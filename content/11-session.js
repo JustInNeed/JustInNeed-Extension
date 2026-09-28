@@ -3,7 +3,7 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, export:ready
+ * 발행: session:changed, session:link, export:ready
  * 구독: seg:page, seg:chunk, record:stopped, scan:done,
  *       ui:rec, ui:export, ui:query
  *
@@ -37,6 +37,18 @@
  *         다시 스캔한다. 스캔이 끝나면 위 합류 경로로 새 글의 구간이 열린다.
  *         세션은 그대로다.
  *   주관: 최상위 프레임만. iframe 은 src 가 바뀌면 진짜 로드라 스크립트가 새로 뜬다.
+ *
+ * --- 조용히 실패하지 않는다 --------------------------------------------------
+ *   background 에 못 닿으면 session:link { ok:false, why } 를 발행하고 패널이
+ *   그걸 보여준다. 가장 흔한 원인은 "확장을 새로고침했는데 탭은 그대로" —
+ *   이 content script 는 고아가 되어 방송도 못 받고 보내지도 못한다.
+ *   고칠 방법은 페이지 새로고침뿐이라 그 문장을 그대로 띄운다.
+ *
+ * --- 탭이 다시 보일 때마다 재확인 --------------------------------------------
+ *   방송은 한 번만 온다. 탭이 얼어 있었거나(절전) 메시지를 놓치면 이 탭은
+ *   세션과 어긋난 채로 남는다. 그래서 탭이 보이게 될 때마다 hello 로 다시
+ *   물어서 놓친 시작/정지를 따라잡는다. start 는 이미 기록 중이면 무시되므로
+ *   여러 번 불러도 구간이 중복으로 열리지 않는다.
  * ========================================================================== */
 (() => {
   'use strict';
@@ -45,17 +57,44 @@
   const { CFG, bus, IS_TOP } = RBC;
   const { pageKey } = RBC.util;
 
-  // background 로 보낸다. 확장이 새로고침돼서 이 content script 가 고아가 되면
-  // chrome.runtime 이 예외를 던진다 — 그때는 조용히 포기한다(페이지 새로고침 필요).
+  // background 로 보낸다. 실패는 전부 session:link 로 알린다(패널이 표시).
+  //   고아: 확장을 새로고침하면 이미 떠 있던 content script 는 chrome.runtime.id 가
+  //         사라지고 sendMessage 가 예외를 던진다. 회복 불가 — 페이지 새로고침 필요.
+  let linkOk = true;
+  function link(ok, why) {
+    if (ok === linkOk && ok) return;
+    linkOk = ok;
+    bus.emit('session:link', { ok, why: why || null });
+  }
+
+  // why 는 패널에 그대로 찍힌다 — 콘솔 없이 원인을 보기 위해서다.
+  //   고아로 확정하는 건 두 경우뿐: runtime.id 가 없거나, 에러 문구가 invalidated.
+  //   그 외 예외를 고아로 뭉뚱그리면 새로고침해도 안 풀리는 문제를 "새로고침하라"로
+  //   잘못 안내하게 된다(velog 에서 실제로 그랬다).
+  function fail(msg, e, stage) {
+    const m = (e && e.message) || String(e);
+    console.warn('[RBC] background 전송 실패', msg.rbc, stage, m);
+    link(false, /invalidated/i.test(m) ? 'orphan:invalidated' : `${msg.rbc}/${stage}: ${m}`);
+    return null;
+  }
+
   function toBg(msg) {
-    try {
-      return chrome.runtime.sendMessage(msg).catch((e) => {
-        console.warn('[RBC] background 전송 실패', msg.rbc, e && e.message);
-        return null;
-      });
-    } catch (e) {
+    if (!chrome.runtime || !chrome.runtime.id) {
+      link(false, 'orphan:no-id');
       return Promise.resolve(null);
     }
+    let p;
+    try {
+      p = chrome.runtime.sendMessage(msg);
+    } catch (e) {
+      return Promise.resolve(fail(msg, e, 'throw'));
+    }
+    return Promise.resolve(p).then((r) => {
+      if (r == null) { link(false, `${msg.rbc}/no-reply`); return null; }
+      if (r.ok === false) { link(false, `${msg.rbc}/bg: ${r.why}`); return r; }
+      link(true);
+      return r;
+    }, (e) => fail(msg, e, 'reject'));
   }
 
   // ==========================================================================
@@ -104,10 +143,20 @@
     return false;
   });
 
-  // 합류: 스캔이 끝날 때마다 묻는다.
-  bus.on('scan:done', () => {
-    toBg({ rbc: 'hello' }).then((m) => { applySession(m); joinIfRecording(); });
-  });
+  // 합류: 스캔이 끝날 때마다, 그리고 탭이 다시 보일 때마다 묻는다.
+  //   세션이 멈춰 있는데 이 탭이 아직 기록 중이면(정지 방송을 놓친 경우) 닫는다.
+  function resync() {
+    toBg({ rbc: 'hello' }).then((m) => {
+      if (!m) return;
+      const wasRecording = session.recording;
+      applySession(m);
+      if (session.recording) joinIfRecording();
+      else if (wasRecording || RBC.recorder.isRecording()) RBC.frames.send('stop', { reason: 'user' });
+    });
+  }
+
+  bus.on('scan:done', resync);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resync(); });
 
   // ==========================================================================
   // 버튼 → background (9-panel 이 발행)
