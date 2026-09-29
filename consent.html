@@ -7,6 +7,9 @@
 <!--
   consent.html — 테스트 참가자 동의 · 참여 정보 (확장 페이지)
 
+  팝업의 '파일로 내보내기'는 이 페이지를 #export 로 연다 — 팝업에서 저장하면 저장 창이 뜨는
+  순간 팝업이 닫혀 다운로드가 실패할 수 있어서, 파일 저장은 탭인 이 페이지가 맡는다.
+
   고지문 버전은 <main data-consent-version> 하나뿐이다. 고지문을 고치면 이 숫자를 올리고
   background.js 의 CONSENT_VERSION 도 같이 올린다. 둘이 다르면 background 가 동의를 거절한다.
   MV3 확장 페이지는 인라인 스크립트가 막혀 있어서 동작은 전부 consent.js 에 있다.
@@ -88,7 +91,7 @@
   }
   button:focus-visible { outline: 3px solid var(--green-line); outline-offset: 2px; }
   button.primary { background: var(--green); border-color: var(--green); color: #fff; }
-  button.primary:disabled { background: #cfd8cc; border-color: #cfd8cc; cursor: not-allowed; }
+  button.primary:disabled { background: #cfd8cc; border-color: #cfd8cc; color: #fff; cursor: not-allowed; }
   button.danger { color: var(--red-ink); border-color: var(--red-line); }
   button.armed { background: var(--red-ink); border-color: var(--red-ink); color: #fff; }
   button:disabled:not(.primary) { color: var(--faint); cursor: not-allowed; }
@@ -147,6 +150,9 @@
   <main id="main" data-consent-version="1">
     <div id="msg" class="banner" role="status" hidden></div>
 
+    <!-- consent.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
+    <p id="loading" class="lead">불러오는 중…</p>
+
     <!-- ===== 참여 정보 (동의한 뒤) ===== -->
     <section id="view-joined" hidden>
       <h1>참여 정보</h1>
@@ -167,6 +173,10 @@
       </div>
 
       <div class="card">
+        <div class="action">
+          <p><b>파일로 내보내기</b>쌓인 기록을 JSON 파일 하나로 저장합니다. 이 파일을 연구 담당자에게 전달하세요.</p>
+          <button id="btn-export" class="primary" type="button">파일로 내보내기</button>
+        </div>
         <div class="action">
           <p><b>기록 삭제</b>이 브라우저에 쌓인 기록을 지웁니다. 참여 정보는 남습니다. 아직 파일로 내보내지 않은 기록도 함께 사라집니다.</p>
           <button id="btn-clear" type="button">기록 삭제</button>

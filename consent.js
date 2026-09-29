@@ -6,8 +6,12 @@
  *   consent  → { version, name, tag }. version 은 이 페이지 고지문의 버전
  *   clear    → 기록만 삭제 (기록 중이면 거절)
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
+ *   export   → bundle 을 받아 JSON 파일로 저장 (6-frames download() 와 같은 파일명)
+ *
+ * 주소가 #export 로 열리면(팝업의 내보내기) 첫 status 뒤 한 번 바로 내보낸다.
  *
  * 조용히 실패하지 않는다: background 에 못 닿거나 거절되면 사유 원문을 배너에 띄운다.
+ * 화면 기본은 '불러오는 중…' 이고 첫 render 가 지운다 — 스크립트가 안 뜨면 그 문구에서 멈춘다.
  * 되돌릴 수 없는 버튼(삭제 · 철회)은 두 번 눌러야 실행된다.
  * ========================================================================== */
 (() => {
@@ -78,6 +82,7 @@
   }
 
   function render() {
+    $('loading').hidden = true;
     const c = st.consent;
     if (!c || !c.valid) {
       setView('consent');
@@ -105,6 +110,8 @@
     else parts.push('쌓인 기록 없음');
     $('s-detail').textContent = parts.join(', ');
 
+    $('btn-export').disabled = st.recording || !st.records;
+    $('btn-export').title = st.recording ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
     $('btn-clear').disabled = st.recording || !st.records;
     $('btn-clear').title = st.recording ? '기록을 정지한 뒤에 지울 수 있습니다' : '';
   }
@@ -145,6 +152,28 @@
   });
 
   // ---------------------------------------------------------------------------
+  // 내보내기 — 파일명은 6-frames download() 와 같다 (터미널의 rbc_*.json 규칙 유지)
+  // ---------------------------------------------------------------------------
+  async function exportFile() {
+    const bundle = await bg({ rbc: 'export' });
+    if (!bundle || bundle.kind !== 'rbc-session') throw new Error('내보낼 기록을 만들지 못했습니다. (export: 형식 불일치)');
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
+    a.download = `rbc_${sid}_${Date.now()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // 탭이라 여유 있게
+    show(`파일로 내보냈습니다: 글 ${bundle.pages.length}개. 다운로드 폴더를 확인하세요.`);
+  }
+
+  $('btn-export').addEventListener('click', async () => {
+    $('btn-export').disabled = true;
+    try { await exportFile(); } catch (e) { show(e.message, 'err'); }
+    await refresh();
+  });
+
+  // ---------------------------------------------------------------------------
   // 되돌릴 수 없는 버튼: 첫 클릭은 무장, 4초 안에 두 번째 클릭이면 실행
   // ---------------------------------------------------------------------------
   function twoStep(btn, armedText, run) {
@@ -180,6 +209,15 @@
   // ---------------------------------------------------------------------------
   // 시작 · 갱신 (보이는 동안만 1초마다 — 경과 시간과 기록 상태)
   // ---------------------------------------------------------------------------
-  refresh();
+  // 팝업의 내보내기로 열렸으면 한 번만 내보낸다 (새로고침해도 반복되지 않게 해시를 지운다)
+  const wantExport = location.hash === '#export';
+  if (wantExport) history.replaceState(null, '', location.pathname);
+
+  refresh().then(async () => {
+    if (!wantExport || !st || view !== 'joined') return;
+    if (st.recording) { show('기록 중에는 내보낼 수 없습니다. 먼저 기록을 정지하세요.', 'err'); return; }
+    if (!st.records) { show('내보낼 기록이 없습니다.', 'warn'); return; }
+    try { await exportFile(); } catch (e) { show(e.message, 'err'); }
+  });
   setInterval(() => { if (!document.hidden) refresh(); }, 1000);
 })();
