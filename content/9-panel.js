@@ -3,18 +3,37 @@
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder   ← 전부 자기보다 낮은 번호
- * 발행: cmd:* (버튼이 명령을 쏜다)
- * 구독: stat, units:list, record:started, record:stopped,
+ * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
+ * 구독: stat, units:list, session:changed, session:link,
  *       scan:progress, scan:failed, scan:done
+ *
+ * --- 상태줄은 primary 프레임 것만 그린다 -------------------------------------
+ *   stat 은 모든 프레임에서 올라온다. 광고 iframe 이 재스캔할 때마다 그 iframe 의
+ *   "유닛 1개" 가 상태줄을 덮어써서 기록이 이상해 보였다(데이터는 멀쩡했다).
+ *   선출 전에는 자기 프레임 것만, 선출 뒤에는 primary 것만 받는다.
+ *
+ * --- 연결 끊김 표시 ----------------------------------------------------------
+ *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
+ *   background 응답으로만 바뀌므로, 이게 없으면 "버튼이 안 눌린다"로만 보인다.
  *
  * --- 판정 기준 --------------------------------------------------------------
  *   manifest에서 8-overlay.js 와 9-panel.js 를 둘 다 빼면 순수 수집기만 남는다.
  *   그 상태에서 콘솔로 RBC.frames.doScan() → RBC.recorder... 를 직접 불러
  *   수집이 도는 것이 Step 1 전체의 최종 판정이다.
  *
+ * --- 기록 · JSON 버튼은 세션을 직접 만지지 않는다 ------------------------------
+ *   세션은 background 소유다. 버튼은 ui:rec / ui:export 를 발행하고, 11-session 이
+ *   background 에 요청한다. 시작/정지는 background 의 방송으로 일어난다.
+ *   그래서 버튼 상태(uiRecording)도 낙관적으로 먼저 바꾸지 않고 session:changed
+ *   로만 바꾼다. 다른 탭에서 시작한 세션, 30분 무동작 종료, 웹앱에서 온 명령
+ *   (나중)까지 전부 같은 경로로 버튼에 반영된다.
+ *
+ *   record:started / record:stopped 는 이제 "구간"의 시작/끝이라 버튼에 쓰면
+ *   안 된다. SPA 이동으로 구간이 닫힐 때 버튼이 "기록"으로 돌아가 버린다.
+ *
  * --- v2.2 대비 달라진 점 ----------------------------------------------------
  *   [R6]  전: tick() 이 emitStat() → applyStat() 을 직접 호출  → stat 구독
- *   [R7]  전: tick() 이 autostop 에서 renderPanel() 직접 호출  → record:stopped 구독
+ *   [R7]  전: tick() 이 autostop 에서 renderPanel() 직접 호출  → session:changed 구독
  *   [R9]  전: startRecording/stopRecording 이 renderPanel() 호출 → 위와 동일
  *   [R10] 전: doScan() 이 setStat()/renderPanel() 직접 호출
  *             → scan:progress / scan:failed / scan:done 구독.
@@ -22,9 +41,10 @@
  *   uiRecording / uiOverlay 의 소유자도 여기로 옮겼다.
  *
  * --- BUG-1 / BUG-2 방어 -----------------------------------------------------
- *   기록 중에는 스캔 버튼과 청크 슬라이더를 잠근다. 기록 도중 재청킹이 일어나면
+ *   세션 중에는 스캔 버튼과 청크 슬라이더를 잠근다. 기록 도중 재청킹이 일어나면
  *   이미 쌓인 timeline 의 pid 와 meta.paragraphs 의 pid 가 어긋나서 세션이
- *   통째로 무효가 되는데, 아무 경고도 안 뜬다.
+ *   통째로 무효가 되는데, 아무 경고도 안 뜬다. 잠금 기준이 구간이 아니라
+ *   세션인 이유: 한 세션 안의 글들은 같은 청킹 설정으로 잘려야 비교가 된다.
  * ========================================================================== */
 (() => {
   'use strict';
@@ -32,12 +52,13 @@
   if (!RBC || RBC.dup) return;
   if (!RBC.IS_TOP) return;               // 패널은 최상위 프레임에만 뜬다
   const { CFG, bus, TAG } = RBC;
-  const { esc, uuid } = RBC.util;
+  const { esc } = RBC.util;
 
   // --- 이 파일이 소유하는 상태 ---
   let panelEl = null, listEl = null;
-  let uiRecording = false;
+  let uiRecording = false;               // 세션 상태의 표시용 사본. session:changed 로만 바뀐다
   let uiOverlay = false;
+  let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -69,6 +90,8 @@
       #${CFG.PANEL_ID} .rbc-list div{ padding:2px 0; border-bottom:1px dotted #eee;
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       #${CFG.PANEL_ID} .rbc-list b{ color:#2563eb; }
+      #${CFG.PANEL_ID} .rbc-link{ margin-top:8px; padding:6px; font-size:11px;
+        color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; }
       #${CFG.PANEL_ID} .dot{ display:inline-block; width:8px; height:8px;
         border-radius:50%; margin-right:4px; vertical-align:middle; }
     `;
@@ -89,7 +112,7 @@
     const lock = uiRecording ? 'disabled' : '';      // BUG-1 / BUG-2 방어
 
     panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.2</span></h4>
+      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.3</span></h4>
       <div>
         <button data-act="scan" ${lock}>스캔</button>
         <button data-act="rec" class="${uiRecording ? 'on' : ''}">${uiRecording ? '■ 정지' : '● 기록'}</button>
@@ -108,6 +131,7 @@
                data-act="chunk" ${lock}>
         <span id="rbc-chunkval">${RBC.units.opts().target}자</span>
       </div>
+      ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-list" id="rbc-list"></div>
     `;
@@ -123,18 +147,8 @@
       RBC.frames.doScan();
     };
 
-    panelEl.querySelector('[data-act="rec"]').onclick = () => {
-      if (uiRecording) {
-        uiRecording = false;
-        RBC.frames.send('stop');
-      } else {
-        uiRecording = true;
-        RBC.frames.send('start', {
-          epoch: Date.now(), sessionId: uuid(), query: RBC.recorder.query(),
-        });
-      }
-      render();
-    };
+    // 요청만 한다. 버튼은 session:changed 가 오면 바뀐다.
+    panelEl.querySelector('[data-act="rec"]').onclick = () => bus.emit('ui:rec');
 
     panelEl.querySelector('[data-act="ov"]').onclick = () => {
       uiOverlay = !uiOverlay;
@@ -147,11 +161,16 @@
       RBC.frames.send('list');
     };
 
-    panelEl.querySelector('[data-act="exp"]').onclick = () => RBC.frames.send('export');
+    // 세션 bundle 은 background 가 만든다. 받아서 저장하는 건 11-session → 6-frames.
+    panelEl.querySelector('[data-act="exp"]').onclick = () => bus.emit('ui:export');
 
+    // 검색어는 두 군데로 간다: 페이지 meta 에 넣는 recorder(모든 프레임)와,
+    // 세션 검색어를 기록하는 background.
     const q = panelEl.querySelector('[data-act="query"]');
     q.onchange = (e) => {
-      RBC.frames.send('query', { q: e.target.value.trim() || null });
+      const v = e.target.value.trim() || null;
+      RBC.frames.send('query', { q: v });
+      bus.emit('ui:query', { q: v });
     };
 
     const slider = panelEl.querySelector('[data-act="chunk"]');
@@ -169,8 +188,11 @@
     if (el) el.innerHTML = html;
   }
 
+  // s.recording 은 "이 탭에서 지금 구간을 기록 중"이다. 세션 여부는 버튼이 보여준다.
   function applyStat(s) {
     if (!panelEl || !s) return;
+    const primary = RBC.frames.primaryTag();
+    if (primary ? s.tag !== primary : s.tag !== TAG) return;   // 광고 iframe 등은 무시
     setStat(`
       <span class="dot" style="background:${s.recording ? '#16a34a' : '#bbb'}"></span>
       ${s.recording ? '기록 중' : '대기'} · 샘플 ${s.samples}개 · 유닛 ${s.units}개
@@ -201,12 +223,25 @@
 
   bus.on('units:list', showList);
 
-  // [R7][R9] 전: startRecording / stopRecording / autostop 이 renderPanel() 호출.
-  //   일반 시작·정지는 버튼 핸들러가 낙관적으로 먼저 갱신하므로, 이 구독이
-  //   실제로 쓰이는 건 30분 무동작 자동 종료 때다. 그때 패널이 안 돌아오면
-  //   사용자는 아직 기록 중인 줄 안다.
-  bus.on('record:started', () => { uiRecording = true; render(); });
-  bus.on('record:stopped', () => { uiRecording = false; render(); });
+  // [R7][R9] 버튼은 세션 상태만 따른다. 11-session 이 background 의 방송·hello
+  //   응답을 받을 때마다 발행한다.
+  bus.on('session:changed', (d) => {
+    const on = !!(d && d.recording);
+    if (on === uiRecording) return;
+    uiRecording = on;
+    render();
+  });
+
+  bus.on('session:link', (d) => {
+    const why = d && d.why;
+    linkMsg = d && d.ok ? ''
+      : String(why).startsWith('orphan')
+        ? '확장이 새로고침돼서 이 탭과 연결이 끊겼습니다. <b>페이지를 새로고침</b>하세요.' +
+          `<br><span style="color:#999">[${esc(why)}]</span>`
+        : 'background 연결 실패' +
+          `<br><span style="color:#999;word-break:break-all">${esc(why || '응답 없음')}</span>`;
+    render();
+  });
 
   // [R10] 전: doScan() 안에서 setStat(...) / renderPanel().
   //   6-frames 는 숫자만 넘기고 문장 조립은 여기서 한다.

@@ -7,6 +7,11 @@
  * 구독: units:scanned, units:list, stat, export:ready, record:stopped,
  *       activity, focus:broadcast
  *
+ * --- export 는 여기서 저장만 한다 --------------------------------------------
+ *   세션 bundle 은 background 가 만들고 11-session(최상위)이 받아 export:ready
+ *   로 흘린다. 여기는 최상위에서 파일로 떨어뜨리기만 한다. 전에는 primary 의
+ *   recorder 가 payload 를 만들어 최상위로 중계했는데, 그 경로는 없어졌다.
+ *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   버스는 프레임 안에서만 돈다. 프레임 경계를 넘는 건 postMessage 뿐이고,
  *   그 변환을 여기서만 한다. 밖에서 들어온 명령은 cmd:* 로 풀어 버스에 흘리고,
@@ -89,10 +94,10 @@
 
       // primary 전용
       case 'start':   if (isPrimary) bus.emit('cmd:start', m); break;
-      case 'stop':    if (isPrimary) bus.emit('cmd:stop'); break;
+      // 사유를 실어 보낸다: user(세션 정지 방송) / navigation(SPA, 구간만 닫음)
+      case 'stop':    if (isPrimary) bus.emit('cmd:stop', m); break;
       case 'overlay': if (isPrimary) bus.emit('cmd:overlay', m); break;
       case 'list':    if (isPrimary) bus.emit('cmd:list'); break;
-      case 'export':  if (isPrimary) bus.emit('cmd:export'); break;
     }
   }
 
@@ -110,7 +115,6 @@
     if (!IS_TOP) return;
     if (m.res === 'scan') collectScan(m);
     else if (m.res === 'stat') bus.emit('stat', m);
-    else if (m.res === 'export') download(m.payload);
     else if (m.res === 'list') bus.emit('units:list', m.list);
     else if (m.res === 'autostop') bus.emit('record:stopped', { reason: 'idle' });
   });
@@ -173,7 +177,9 @@
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    const sid = (payload.meta.sessionId || 'nosid').slice(0, 8);
+    // bundle 은 session.sessionId, 옛 단일 payload 는 meta.sessionId
+    const sid = ((payload.session && payload.session.sessionId) ||
+      (payload.meta && payload.meta.sessionId) || 'nosid').slice(0, 8);
     a.download = `rbc_${sid}_${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -192,9 +198,7 @@
   bus.on('units:list', (list) => { if (!IS_TOP) toTop({ res: 'list', list }); });
   bus.on('stat', (s) => { if (!IS_TOP) toTop(s); });
 
-  bus.on('export:ready', (payload) => {
-    if (IS_TOP) download(payload); else toTop({ res: 'export', payload });
-  });
+  bus.on('export:ready', (payload) => { if (IS_TOP) download(payload); });
 
   // 자동 종료는 최상위 패널이 알아야 버튼이 돌아온다.
   bus.on('record:stopped', (d) => {

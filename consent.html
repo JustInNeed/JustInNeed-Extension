@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JustInNeed · 테스트 참여</title>
+<!--
+  consent.html — 테스트 참가자 동의 · 참여 정보 (확장 페이지)
+
+  팝업의 '파일로 내보내기'는 이 페이지를 #export 로 연다 — 팝업에서 저장하면 저장 창이 뜨는
+  순간 팝업이 닫혀 다운로드가 실패할 수 있어서, 파일 저장은 탭인 이 페이지가 맡는다.
+
+  고지문 버전은 <main data-consent-version> 하나뿐이다. 고지문을 고치면 이 숫자를 올리고
+  background.js 의 CONSENT_VERSION 도 같이 올린다. 둘이 다르면 background 가 동의를 거절한다.
+  MV3 확장 페이지는 인라인 스크립트가 막혀 있어서 동작은 전부 consent.js 에 있다.
+-->
+<style>
+  :root {
+    --bg: #ffffff;
+    --side: #f8f9f7;
+    --line: #e4e7e2;
+    --ink: #1e211f;
+    --sub: #6a706b;
+    --faint: #9aa09b;
+    --green: #4caf3f;
+    --green-ink: #3b7f2d;
+    --green-tint: #eef7e9;
+    --green-line: #cfe6c2;
+    --red-ink: #c0392b;
+    --red-line: #f0cdc8;
+    --red-tint: #fdf3f2;
+    --radius-card: 16px;
+    --radius-ctl: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+      "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
+    font-size: 15px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  .side { background: var(--side); border-right: 1px solid var(--line); padding: 28px 24px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { flex: none; }
+  .brand b { display: block; font-size: 18px; letter-spacing: -0.01em; }
+  .brand small { display: block; color: var(--sub); font-size: 12px; line-height: 1.3; }
+  .side p { color: var(--sub); font-size: 13px; margin: 28px 0 0; }
+
+  main { padding: 36px 40px 64px; max-width: 820px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0; letter-spacing: -0.02em; }
+  .lead { color: var(--sub); margin: 6px 0 24px; }
+
+  .card {
+    background: #fff; border: 1px solid var(--line); border-radius: var(--radius-card);
+    padding: 22px 24px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 17px; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .card h2 + p { margin-top: 0; }
+  .card ul { margin: 0; padding-left: 20px; }
+  .card li + li { margin-top: 4px; }
+  .card .note { color: var(--sub); font-size: 13.5px; margin: 10px 0 0; }
+  .blank { background: #fff6d6; border-radius: 4px; padding: 0 4px; }
+
+  .banner {
+    border-radius: var(--radius-ctl); padding: 12px 16px; margin-bottom: 16px; font-size: 14px;
+    background: var(--green-tint); border: 1px solid var(--green-line); color: var(--green-ink);
+  }
+  .banner.warn { background: #fff8e6; border-color: #f1dfaa; color: #7a5b0c; }
+  .banner.err { background: var(--red-tint); border-color: var(--red-line); color: var(--red-ink); }
+  .banner code { font-size: 12.5px; word-break: break-all; }
+
+  label.field { display: block; margin-bottom: 16px; }
+  label.field span { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  label.field em { font-style: normal; color: var(--faint); font-weight: 400; margin-left: 4px; }
+  input[type=text] {
+    width: 100%; max-width: 360px; font: inherit; color: var(--ink);
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-tint); }
+  .hint { display: block; color: var(--sub); font-size: 13px; margin-top: 6px; }
+  .agree { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 20px; cursor: pointer; }
+  .agree input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--green); flex: none; }
+
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    padding: 10px 18px; border-radius: var(--radius-ctl);
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+  }
+  button:focus-visible { outline: 3px solid var(--green-line); outline-offset: 2px; }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+  button.primary:disabled { background: #cfd8cc; border-color: #cfd8cc; color: #fff; cursor: not-allowed; }
+  button.danger { color: var(--red-ink); border-color: var(--red-line); }
+  button.armed { background: var(--red-ink); border-color: var(--red-ink); color: #fff; }
+  button:disabled:not(.primary) { color: var(--faint); cursor: not-allowed; }
+
+  .who { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-end; }
+  .who .id { font-size: 28px; font-weight: 700; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+  .who dt { color: var(--sub); font-size: 13px; }
+  .who dd { margin: 0; font-weight: 600; }
+  .who dl { margin: 0; }
+
+  .status { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c7ccc6; flex: none; }
+  .dot.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-tint); }
+  .status b { font-size: 15px; }
+  .status span { color: var(--sub); font-size: 14px; }
+
+  .action { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+  .action + .action { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .action p { margin: 0; color: var(--sub); font-size: 14px; }
+  .action b { display: block; color: var(--ink); font-size: 15px; }
+  .action button { flex: none; }
+
+  .card > p:last-child, .card > ul:last-child { margin-bottom: 0; }
+  details.card summary { cursor: pointer; font-weight: 600; }
+  details.card .card { border: 0; border-radius: 0; padding: 0; margin: 0 0 18px; }
+  details.card[open] summary { margin-bottom: 14px; }
+
+  [hidden] { display: none !important; }
+
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; }
+    .side { border-right: 0; border-bottom: 1px solid var(--line); padding: 18px 20px; }
+    .side p { display: none; }
+    main { padding: 24px 20px 48px; }
+    .action { flex-direction: column; align-items: stretch; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#78c957"/><stop offset="1" stop-color="#4caf3f"/></linearGradient></defs>
+        <rect width="44" height="44" rx="12" fill="url(#g)"/>
+        <path d="M22 33V21" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M22 22c0-5 3.4-8.4 8.6-8.4 0 5.2-3.6 8.4-8.6 8.4Z" fill="#fff"/>
+        <path d="M22 24.5c-4.2 0-7.2-2.8-7.2-7 4.4 0 7.2 2.9 7.2 7Z" fill="#fff" opacity=".85"/>
+      </svg>
+      <div><b>JustInNeed</b><small>웹서핑 정리 도우미</small></div>
+    </div>
+    <p>읽기 행동 수집 테스트 버전입니다. 기록은 이 브라우저 안에만 저장됩니다.</p>
+  </aside>
+
+  <main id="main" data-consent-version="1">
+    <div id="msg" class="banner" role="status" hidden></div>
+
+    <!-- consent.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
+    <p id="loading" class="lead">불러오는 중…</p>
+
+    <!-- ===== 참여 정보 (동의한 뒤) ===== -->
+    <section id="view-joined" hidden>
+      <h1>참여 정보</h1>
+      <p class="lead">연구 담당자에게 파일을 보낼 때 참여 번호를 함께 알려주세요.</p>
+
+      <div class="card">
+        <div class="who">
+          <dl><dt>참여 번호</dt><dd class="id" id="j-id"></dd></dl>
+          <dl><dt>이름</dt><dd id="j-name"></dd></dl>
+          <dl><dt>조건 태그</dt><dd id="j-tag"></dd></dl>
+          <dl><dt>동의한 날</dt><dd id="j-at"></dd></dl>
+        </div>
+        <div class="status">
+          <i class="dot" id="s-dot"></i>
+          <b id="s-state">기록 대기</b>
+          <span id="s-detail"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="action">
+          <p><b>파일로 내보내기</b>쌓인 기록을 JSON 파일 하나로 저장합니다. 이 파일을 연구 담당자에게 전달하세요.</p>
+          <button id="btn-export" class="primary" type="button">파일로 내보내기</button>
+        </div>
+        <div class="action">
+          <p><b>기록 삭제</b>이 브라우저에 쌓인 기록을 지웁니다. 참여 정보는 남습니다. 아직 파일로 내보내지 않은 기록도 함께 사라집니다.</p>
+          <button id="btn-clear" type="button">기록 삭제</button>
+        </div>
+        <div class="action">
+          <p><b>동의 철회</b>기록을 멈추고, 이 브라우저의 기록과 참여 정보를 모두 지웁니다. 다시 참여하면 새 참여 번호를 받습니다.</p>
+          <button id="btn-withdraw" class="danger" type="button">동의 철회</button>
+        </div>
+      </div>
+
+      <details class="card" id="notice-slot-joined"><summary>동의한 안내 내용 보기</summary></details>
+    </section>
+
+    <!-- ===== 동의 (처음 또는 안내 변경 뒤) ===== -->
+    <section id="view-consent" hidden>
+      <h1>테스트 참여 동의</h1>
+      <p class="lead">아래 내용을 읽고 동의하면 기록을 시작할 수 있습니다.</p>
+
+      <div id="notice">
+        <div class="card">
+          <h2>무엇을 위한 테스트인가요</h2>
+          <p>웹 글을 읽을 때의 행동(스크롤, 커서 움직임, 머문 시간)과 읽은 사람이 중요하다고 표시한 부분 사이의 관계를 연구합니다. 수집한 데이터는 읽기 행동 분류 모델의 학습과 평가에만 씁니다.</p>
+          <p class="note">연구 담당 <span class="blank">[이름]</span>, 연락처 <span class="blank">[연락처]</span></p>
+        </div>
+
+        <div class="card">
+          <h2>기록 중에 수집하는 것</h2>
+          <ul>
+            <li>열어서 본 글의 주소(URL)와 제목, 본문 텍스트</li>
+            <li>스크롤 위치와 속도, 마우스 커서 위치, 글의 각 부분이 화면에 머문 시간</li>
+            <li>탭 전환 순서, 화면 크기</li>
+            <li>본문에서 선택하거나 복사한 텍스트</li>
+            <li>직접 입력한 검색어, 이 페이지에 입력한 이름과 조건 태그</li>
+          </ul>
+          <p class="note">검색 결과 페이지도 기록 중에 열면 글과 같은 방식으로 수집됩니다.</p>
+        </div>
+
+        <div class="card">
+          <h2>수집하지 않는 것</h2>
+          <ul>
+            <li>기록을 시작하기 전과 정지한 뒤의 활동</li>
+            <li>기록 중이라도 한 번도 화면에 띄우지 않은 탭</li>
+            <li>검색창, 로그인, 비밀번호 같은 입력칸에 입력한 내용</li>
+          </ul>
+          <p class="note">게시판 댓글창처럼 글 안에 붙어 있는 편집 영역은 본문으로 수집될 수 있습니다. 민감한 내용은 기록을 정지한 뒤에 작성하세요.</p>
+        </div>
+
+        <div class="card">
+          <h2>저장과 삭제</h2>
+          <ul>
+            <li>기록은 이 브라우저 안에만 저장되고 서버로 보내지 않습니다.</li>
+            <li>기록을 파일로 내보내 연구 담당자에게 직접 전달합니다. 파일에는 이름이 포함됩니다.</li>
+            <li>새 기록을 시작하면 이전 기록은 지워집니다. 필요하면 먼저 파일로 내보내세요.</li>
+            <li>참여 정보 페이지의 기록 삭제로 언제든 지울 수 있고, 확장 프로그램을 제거해도 모두 지워집니다.</li>
+            <li>이미 전달한 파일의 삭제는 연구 담당자에게 요청하세요.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h2>참여와 철회</h2>
+          <p>참여는 자유이며 언제든 그만둘 수 있습니다. 동의를 철회하면 진행 중인 기록이 멈추고, 이 브라우저의 기록과 참여 정보가 모두 지워집니다.</p>
+        </div>
+      </div>
+
+      <form class="card" id="form" novalidate>
+        <label class="field">
+          <span>이름</span>
+          <input type="text" id="f-name" maxlength="40" autocomplete="off" placeholder="예: 홍길동">
+        </label>
+        <label class="field">
+          <span>조건 태그<em>선택</em></span>
+          <input type="text" id="f-tag" maxlength="40" autocomplete="off">
+          <small class="hint">연구 담당자가 알려준 경우에만 입력하세요.</small>
+        </label>
+        <label class="agree">
+          <input type="checkbox" id="f-agree">
+          <span>위 내용을 읽었고 테스트 참여에 동의합니다.</span>
+        </label>
+        <button class="primary" id="btn-agree" type="submit" disabled>동의하고 참여하기</button>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="consent.js"></script>
+</body>
+</html>
