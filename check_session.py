@@ -23,6 +23,9 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
     [S5] 안전망에 걸린 페이지 (droppedPages)    WARN
   페이지마다 추가:
     [10] 이벤트의 segId 가 meta.segments 에 있는가   FAIL
+    [11] 포착 못 한 스크롤 (감사 §6-D)                 FAIL / WARN
+         화면에 보이는 유닛이 바뀌었는데 scrollY 도 그대로, scrollEvents 도 0 인 틱 쌍.
+         스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤은 이렇게 나타난다.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -322,6 +325,77 @@ def check_segments(rep, meta, timeline):
         rep.add(OK, "구간 정합성", f"구간 {len(segs)}개 · 탭 {len(tabs)}개")
 
 
+# [11] 포착 못 한 스크롤 ------------------------------------------------------
+SCROLL_GAP_TOL = 1.8        # 두 틱 간격이 tickMs 의 이 배수를 넘으면 연속 아님 (extract_features 와 같은 값)
+UNSEEN_FAIL_MIN = 3         # 이 이상이면서
+UNSEEN_FAIL_RATIO = 0.2     # 화면이 바뀐 쌍 중 이 비율 이상이면 FAIL
+IFRAME_STATIC_MIN_TICKS = 40  # iframe 본문에서 이만큼(≈6초) 틱이 있는데 스크롤 흔적이 전혀 없으면 WARN
+
+
+def check_scroll_capture(rep, meta, timeline, ticks):
+    """[11] 화면 내용이 움직였는데 스크롤이 기록되지 않은 틱 쌍을 센다.
+
+    판정 대상은 같은 구간(segId)의 연속된 두 틱이다. 그 사이에
+      - 보이는 유닛 범위(visTop/visBot)가 바뀌었고
+      - scrollY 변화도, scrollEvents 도 없으면
+    '포착 못 한 스크롤'로 센다.
+
+    레이아웃이 밀려서 내용이 움직이는 경우(이미지 늦게 로드, 재스캔)는 스크롤이 아니다.
+    그래서 docH · vh · vw 가 바뀐 쌍과, 그 사이에 rescan 이벤트가 있는 쌍은 뺀다.
+
+    iframe 본문은 이 방식으로 못 잡는다 — 바깥 창이 스크롤되면 iframe 안에서는
+    visTop/visBot 도 scrollY 도 그대로라 '움직임'조차 안 보인다. 그래서 iframe 은
+    '스크롤 흔적이 전혀 없음'을 따로 WARN 으로 알린다.
+    """
+    tick_ms = meta.get("tickMs", 150)
+    rescans = sorted(e.get("t", 0) for e in timeline if e.get("type") == "rescan")
+
+    def rescan_between(a, b):
+        return any(a < t <= b for t in rescans)
+
+    moved = unseen = 0
+    examples = []
+    ordered = sorted(ticks, key=lambda e: e.get("t", 0))
+    for prev, cur in zip(ordered, ordered[1:]):
+        if prev.get("segId") != cur.get("segId"):
+            continue
+        if cur.get("t", 0) - prev.get("t", 0) > tick_ms * SCROLL_GAP_TOL:
+            continue
+        if any(prev.get(k) != cur.get(k) for k in ("docH", "vh", "vw")):
+            continue
+        if rescan_between(prev.get("t", 0), cur.get("t", 0)):
+            continue
+        a0, b0, a1, b1 = prev.get("visTop"), prev.get("visBot"), cur.get("visTop"), cur.get("visBot")
+        if None in (a0, b0, a1, b1) or (a0, b0) == (a1, b1):
+            continue
+        moved += 1
+        if cur.get("scrollY") == prev.get("scrollY") and not cur.get("scrollEvents"):
+            unseen += 1
+            if len(examples) < 3:
+                examples.append(f"t={cur.get('t', 0) / 1000:.1f}s [{a0},{b0}]→[{a1},{b1}]")
+
+    if meta.get("isTopFrame") is False and len(ticks) >= IFRAME_STATIC_MIN_TICKS:
+        ys = {e.get("scrollY") for e in ticks}
+        evs = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
+        if len(ys) <= 1 and evs == 0:
+            rep.add(WARN, "스크롤 포착(iframe)",
+                    f"본문이 iframe 인데 틱 {len(ticks)}개 동안 scrollY 불변 · scrollEvents 0 — "
+                    f"바깥 창이 스크롤되는 구조면 스크롤이 전혀 기록되지 않는다. 실제로 스크롤했다면 문제")
+
+    if moved == 0:
+        rep.add(OK, "스크롤 포착", "화면 범위가 바뀐 틱 쌍 없음 (판정 대상 없음)")
+    elif unseen == 0:
+        rep.add(OK, "스크롤 포착", f"화면이 바뀐 {moved}쌍 전부 스크롤 기록 있음")
+    elif unseen >= UNSEEN_FAIL_MIN and unseen / moved >= UNSEEN_FAIL_RATIO:
+        rep.add(FAIL, "스크롤 포착",
+                f"화면이 바뀐 {moved}쌍 중 {unseen}쌍({unseen / moved:.0%})에 스크롤 기록 없음 "
+                f"({'; '.join(examples)}) — 내부 스크롤 컨테이너 의심")
+    else:
+        rep.add(WARN, "스크롤 포착",
+                f"화면이 바뀐 {moved}쌍 중 {unseen}쌍에 스크롤 기록 없음 ({'; '.join(examples)}) "
+                f"— 소수면 레이아웃 흔들림일 수 있음")
+
+
 def check_bundle_session(rep, session):
     """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
     report = session.get("chunkReport") or []
@@ -386,6 +460,7 @@ def run_payload(label, data, baseline=None):
     check_rescan(rep, timeline)
     check_order_continuity(rep, meta)
     check_segments(rep, meta, timeline)
+    check_scroll_capture(rep, meta, timeline, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
