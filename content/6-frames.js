@@ -2,7 +2,7 @@
  * 6-frames.js — 프레임 간 통신 · primary 선출 · export 저장
  *
  * 소유: isPrimary, primaryTag, seenMsg, scanBucket/Timer/Tries
- * 의존(직접 호출): 0-core, 2-units, 5-recorder
+ * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 5-recorder
  * 발행: cmd:*, primary:changed, scan:progress, scan:failed, scan:done
  * 구독: units:scanned, units:list, stat, export:ready, record:stopped,
  *       activity, focus:broadcast
@@ -161,6 +161,7 @@
         isSelf: win.tag === TAG,
         units: win.units,
         chars: win.chars,
+        root: win.root || null,
       });
     }, CFG.SCAN_COLLECT_MS);
   }
@@ -191,7 +192,9 @@
 
   // 2-units 가 스캔을 마치면 선출의 입력이 된다.
   bus.on('units:scanned', (d) => {
-    const info = { tag: TAG, units: d.count, href: location.href, chars: d.chars };
+    // root: 이 프레임이 본문으로 고른 요소와 이유 (1-stream). 패널이 primary 것을 보여준다.
+    const info = { tag: TAG, units: d.count, href: location.href, chars: d.chars,
+      root: RBC.stream.rootInfo() };
     if (IS_TOP) collectScan(info); else toTop(Object.assign({ res: 'scan' }, info));
   });
 

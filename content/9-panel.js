@@ -2,7 +2,7 @@
  * 9-panel.js — 디버그 패널 (최상위 프레임 전용)
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay
- * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder   ← 전부 자기보다 낮은 번호
+ * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
  * 구독: stat, units:list, session:changed, session:link,
  *       scan:progress, scan:failed, scan:done
@@ -257,10 +257,21 @@
     setStat(
       `프레임 ${d.frames}개 · primary=${esc(d.tag)}` +
       (d.isSelf ? ' (본 페이지)' : ' (iframe)') +
-      `<br>유닛 <b>${d.units}</b>개 · 본문 ${d.chars.toLocaleString()}자`
+      `<br>유닛 <b>${d.units}</b>개 · 본문 ${d.chars.toLocaleString()}자` +
+      rootLine(d.root)
     );
     render();
   });
+
+  // 본문으로 고른 요소와 이유. 루트를 잘못 고르면 유닛 수만으로는 티가 안 날 때가
+  // 있어서(헤럴드: 제목 영역, 감사 §6-F) 콘솔 없이 바로 보이게 한다.
+  const ROOT_HOW = { semantic: '시맨틱 태그', fallback: '링크 아닌 글자 최다', body: '후보 없음 → body' };
+  function rootLine(r) {
+    if (!r) return '';
+    const warn = r.how === 'body';
+    return `<br><span style="color:${warn ? '#c00' : '#999'}">루트 ${esc(r.sel)} · ` +
+      `${ROOT_HOW[r.how] || esc(r.how)} · 링크 ${Number(r.link || 0).toLocaleString()}자</span>`;
+  }
 
   // ==========================================================================
   // 공개 + 마운트
