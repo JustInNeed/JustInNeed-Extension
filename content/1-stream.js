@@ -59,6 +59,7 @@
   let nodeIndex = new Map();
   let breaks = new Set();
   let contentRoot = null;
+  let rootInfo = null;       // 루트를 왜 골랐나 — 패널 표시용 { how, sel, len, link }
 
   // ==========================================================================
   // 태그 분류
@@ -95,11 +96,28 @@
     return false;
   }
 
+  // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
+  // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
+  function elementFilter(el) {
+    if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+    if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
+      return NodeFilter.FILTER_REJECT;
+    if (isExcluded(el)) return NodeFilter.FILTER_REJECT;   // [0-5]
+    return NodeFilter.FILTER_SKIP;
+  }
+
   // ==========================================================================
   // 본문 루트 찾기
   //   innerText 가 아니라 textContent 를 쓴다. innerText 는 요소마다 강제
   //   레이아웃을 유발해서, 노션처럼 요소가 많은 페이지에서 수 초가 걸린다.
   // ==========================================================================
+  //   textLen: 빠른 상한값. 공백 · 숨은 텍스트까지 세므로 measure().len 보다 항상 크거나 같다.
+  //            후보를 싸게 걸러내는 데만 쓴다 (textLen < 문턱 이면 measure 도 < 문턱).
+  //   measure: 스트림과 같은 잣대 — elementFilter 로 거르고 앞뒤 공백을 뺀 글자 수와,
+  //            그중 <a> 안에 있는 글자 수. 판정은 이걸로 한다.
+  //            build() 와 다른 점은 크기 0 노드(display:none)를 빼지 않는 것 하나.
+  //            그걸 하려면 노드마다 레이아웃을 읽어야 해서 후보 수백 개에는 못 쓴다.
   function textLen(el) {
     let n = (el.textContent || '').length;
     el.querySelectorAll('script,style,noscript').forEach(s => {
@@ -108,25 +126,58 @@
     return Math.max(n, 0);
   }
 
+  function measure(el) {
+    let len = 0, link = 0, n;
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (x) => (x.nodeType === 1 ? elementFilter(x) : NodeFilter.FILTER_ACCEPT),
+    });
+    while ((n = w.nextNode())) {
+      const t = n.data.trim().length;
+      if (!t) continue;
+      len += t;
+      if (n.parentElement && n.parentElement.closest('a')) link += t;
+    }
+    return { len, link };
+  }
+
+  function describe(el) {
+    const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
+  }
+
   function findContentRoot() {
+    // 1) 시맨틱 태그: 선택자마다 첫 요소만 본다 (기존 동작 유지).
+    //    바뀐 것은 문턱을 재는 잣대뿐 — textContent(공백 포함) → 스트림 글자 수.
+    //    헤럴드경제는 main.view(제목 영역)가 textContent 1297 로 통과했지만
+    //    스트림은 124자였다. 이제 여기서 떨어지고 2) 로 간다.
+    //    지금 잘 되는 사이트는 첫 요소의 스트림이 이미 문턱을 넘으므로 결과가 같다.
     for (const sel of ['article', 'main', '[role="main"]']) {
       const el = document.querySelector(sel);
-      if (el && textLen(el) > CFG.MIN_ROOT_TEXT) return el;
+      if (!el || textLen(el) <= CFG.MIN_ROOT_TEXT) continue;
+      const m = measure(el);
+      if (m.len > CFG.MIN_ROOT_TEXT) {
+        rootInfo = { how: 'semantic', sel: describe(el), len: m.len, link: m.link };
+        return el;
+      }
     }
-    // 시맨틱 태그가 없으면 "텍스트는 많고 링크는 적은" 요소를 고른다.
-    // 링크 비율로 깎는 이유: 사이드바·추천목록은 텍스트 길이만 보면 본문을 이긴다.
-    let best = document.body || document.documentElement, bestScore = -1;
+    // 2) 링크가 아닌 글자가 가장 많은 요소.
+    //    링크 글자를 빼는 이유: 사이드바 · 인기기사 목록은 글자 수만 보면 본문을 이긴다
+    //    (헤럴드: 인기기사 2422자 > 본문 1796자). 목록은 글자 대부분이 기사 제목 링크다.
+    //    같은 원리: Mozilla Readability 의 링크 밀도 감점, Kohlschütter 외 WSDM 2010.
+    let best = document.body || document.documentElement, bestScore = -1, bestM = null;
     const pool = (document.body || document.documentElement)
       .querySelectorAll('div, section, article, main, td');
     pool.forEach((el) => {
       if (el.id === CFG.PANEL_ID || el.closest('#' + CFG.PANEL_ID)) return;
-      const len = textLen(el);
-      if (len < CFG.MIN_ROOT_TEXT) return;
-      let linkLen = 0;
-      el.querySelectorAll('a').forEach(a => { linkLen += (a.textContent || '').length; });
-      const score = len * (1 - Math.min(linkLen / (len + 1), 1));
-      if (score > bestScore) { bestScore = score; best = el; }
+      if (textLen(el) < CFG.MIN_ROOT_TEXT) return;
+      const m = measure(el);
+      if (m.len < CFG.MIN_ROOT_TEXT) return;
+      const score = m.len - m.link;
+      if (score > bestScore) { bestScore = score; best = el; bestM = m; }
     });
+    rootInfo = bestM
+      ? { how: 'fallback', sel: describe(best), len: bestM.len, link: bestM.link }
+      : { how: 'body', sel: describe(best), len: 0, link: 0 };
     return best;
   }
 
@@ -155,14 +206,10 @@
       {
         acceptNode(node) {
           if (node.nodeType === 1) {
-            const el = node;
-            if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
-            if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
-            if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
-              return NodeFilter.FILTER_REJECT;
-            if (isExcluded(el)) return NodeFilter.FILTER_REJECT;   // [0-5]
-            if (el.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
-            return NodeFilter.FILTER_SKIP;
+            const f = elementFilter(node);
+            if (f === NodeFilter.FILTER_REJECT) return f;
+            if (node.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
+            return f;
           }
           if (!node.data || !node.data.trim()) return NodeFilter.FILTER_REJECT;
           return NodeFilter.FILTER_ACCEPT;
@@ -233,5 +280,6 @@
     segs: () => segs,
     segFor: (node) => nodeIndex.get(node),
     root: () => contentRoot,
+    rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link }
   };
 })();

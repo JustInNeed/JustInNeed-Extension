@@ -26,6 +26,9 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
     [11] 포착 못 한 스크롤 (감사 §6-D)                 FAIL / WARN
          화면에 보이는 유닛이 바뀌었는데 scrollY 도 그대로, scrollEvents 도 0 인 틱 쌍.
          스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤은 이렇게 나타난다.
+    [12] 본문 추출 의심 (감사 §6-F)                    FAIL
+         긴 페이지를 스크롤했는데 유닛 글자가 거의 없으면 루트를 잘못 고른 것.
+         [11] 은 유닛이 없으면 '판정 대상 없음'으로 통과하므로 이게 따로 필요하다.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -197,9 +200,9 @@ def check_viewport_covers_dwell(rep, meta, ticks):
     페이지 최상단처럼 가장자리가 헤더·여백인 구간에서 첫 유닛을 놓친다.
     그 사이 중앙선(tol 44px)은 그 유닛을 잡고 있다.
 
-    extract_features.py 가 노출을 "visTop..visBot ∪ centerPid의 order" 로
-    합집합 계산해서 이 차이를 메운다. 여기서는 그 보정이 얼마나 필요한지를
-    보고만 한다 — 값이 크면 visibleRange 를 실제로 손볼 때가 된 것이다.
+    합집합 보정(visTop..visBot ∪ centerPid)은 철회된 결정이다. 노출은 스키마 v3 의
+    유닛별 화면 구간(tick.vis, 감사 §8-1)으로 대체된다. 여기서는 원본의 차이를
+    보고만 한다.
 
     분할 작업의 통과/실패를 가르는 건 구조적 검사([1] pid 정합성,
     [3] focusMs, [5] 카운터, [7] order, 유닛 기준선)이지 이 항목이 아니다.
@@ -241,7 +244,7 @@ def check_viewport_covers_dwell(rep, meta, ticks):
         deficit = sum(d - vv for _, d, vv in broken)
         rep.add(WARN, "노출 ≥ 체류(원본)",
                 f"{len(broken)}/{len(center)}개 유닛에서 노출 < 체류 ({head}), "
-                f"부족분 합 {deficit:.1f}s — extract_features 가 중앙선 합집합으로 보정")
+                f"부족분 합 {deficit:.1f}s — 가장자리 탐색(H/8)의 한계. v3 tick.vis 로 대체 예정")
 
 
 def check_counters(rep, ticks):
@@ -396,6 +399,51 @@ def check_scroll_capture(rep, meta, timeline, ticks):
                 f"— 소수면 레이아웃 흔들림일 수 있음")
 
 
+
+# [12] 본문 추출 의심 --------------------------------------------------------
+EXTRACT_MIN_CHARS = 400      # 유닛 글자 합이 이보다 적으면 '본문이 거의 없음' (청크 200 기준 2유닛)
+EXTRACT_MIN_SCREENS = 3      # 문서 높이가 뷰포트의 이 배수 이상이면 '긴 페이지'
+EXTRACT_MIN_SCROLL_EV = 20   # scrollY 가 안 움직여도 스크롤 이벤트가 이만큼이면 '스크롤했음'
+
+
+def check_extraction(rep, meta, ticks):
+    """[12] 루트를 잘못 골라 본문이 빠졌는가.
+
+    findContentRoot() 는 article → main → [role=main] 의 *첫 요소*를 textContent
+    길이(공백 포함)로 거른다. 그래서 제목 · 날짜 영역만 감싼 main 이 통과해 유닛이
+    한두 개가 되는 사이트가 있다(헤럴드경제, 감사 §6-F). 이 경우 다른 검사는 전부
+    '대상 없음'으로 통과하거나 WARN 에 그친다.
+
+    FAIL: 유닛 글자 합 < EXTRACT_MIN_CHARS 인데, 문서가 길고(≥ EXTRACT_MIN_SCREENS 화면)
+          실제로 스크롤했다(scrollY 가 한 화면 이상 움직였거나 scrollEvents 가 많음).
+    짧은 글 + 긴 댓글처럼 정상인데 걸리는 경우가 있으므로 FAIL 은 '확인 필요' 뜻이다.
+
+    중앙선 적중률은 판정에 쓰지 않고 수치로만 보여준다. 적중률은 추출 품질만이 아니라
+    '어디에 오래 머물렀나'(댓글 · 관련기사를 오래 봤나)에 좌우되므로, 문턱을 두면
+    읽기 행동을 추출 실패로 오판한다. 정상 기사 실측 20~72% (2026-09-30).
+    """
+    if not ticks:
+        return                                          # [5] 가 이미 FAIL
+    chars = sum(p.get("charLen", 0) or 0 for p in meta.get("paragraphs", []))
+    units = len(meta.get("paragraphs", []))
+    vh = statistics.median(e.get("vh", 0) or 0 for e in ticks) or 0
+    doc_h = max(e.get("docH", 0) or 0 for e in ticks)
+    ys = [e.get("scrollY", 0) or 0 for e in ticks]
+    span = max(ys) - min(ys)
+    scroll_ev = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
+    hit = sum(1 for e in ticks if e.get("centerPid"))
+
+    screens = doc_h / vh if vh else 0
+    scrolled = (vh and span >= vh) or scroll_ev >= EXTRACT_MIN_SCROLL_EV
+    facts = (f"유닛 {units}개 · {chars}자 · 문서 {screens:.1f}화면 · "
+             f"스크롤 {span:.0f}px/{scroll_ev}회 · 중앙선 적중 {hit}/{len(ticks)}")
+
+    if chars < EXTRACT_MIN_CHARS and screens >= EXTRACT_MIN_SCREENS and scrolled:
+        rep.add(FAIL, "본문 추출", f"{facts} — 긴 페이지를 스크롤했는데 본문이 거의 없음. "
+                                 f"루트 선택 실패 의심 (패널 '본문 N자' · RBC.stream.root())")
+    else:
+        rep.add(OK, "본문 추출", facts)
+
 def check_bundle_session(rep, session):
     """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
     report = session.get("chunkReport") or []
@@ -461,6 +509,7 @@ def run_payload(label, data, baseline=None):
     check_order_continuity(rep, meta)
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
+    check_extraction(rep, meta, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
