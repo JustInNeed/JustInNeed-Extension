@@ -255,7 +255,8 @@
         'focusMs = 기록된 틱 수 × tickMs.',
         'highlight/copy 의 pids = 선택이 걸친 유닛 전부. pid는 첫 유닛(하위호환).',
         'scrollSpeed 부호 = 스크롤 방향. 감속은 속도 시계열을 미분해서 얻을 것.',
-        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션.',
+        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션. ' +
+        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. 원인은 첫 이벤트.',
         '기사 제목은 유닛에 포함되지 않는다(본문 루트 밖). 제목 텍스트는 meta.title.',
         '한 페이지 = 같은 글(pageId)의 모든 구간(segId)을 합친 것. 탭 전환은 ' +
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
@@ -395,7 +396,9 @@
   // timeline 에만 있고 meta.paragraphs 에는 없어서 pid 정합성이 깨진다.
   bus.on('units:rescanned', (d) => {
     if (!recording) return;
-    push({ type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count });
+    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count };
+    if (d.diff) e.diff = d.diff;                      // disruptive-skipped 진단
+    push(e);
     if (d.mode !== 'disruptive-skipped' && pageSent) emitPage();   // 첫 틱 전이면 첫 틱 때 최신 목록이 나간다
   });
 

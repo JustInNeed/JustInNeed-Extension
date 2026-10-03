@@ -228,6 +228,25 @@
   //   순수 append 면 꼬리만 청킹하고, 본문이 교체됐으면 아예 건드리지 않는다.
   //   사라진 노드는 segFor 미스 → 해당 틱은 null. 틀린 데이터보다 결측이 낫다.
   // ==========================================================================
+  // 기록 중 본문 교체(disruptive-skipped) 진단 — 무엇이 바뀌었나.
+  //   옛 raw 와 새 raw 가 처음 달라지는 위치와 그 앞뒤 글자를 남긴다.
+  //   한 번 disruptive 가 나면 스트림을 커밋하지 않으므로 뒤 재스캔도 같은 옛 raw 와
+  //   비교된다 → 원인은 첫 번째 이벤트의 diff 다.
+  const DIFF_CTX = 40;
+  function rawDiff(a, b) {
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+    const clean = RBC.util.clean;
+    const u = unitAtStreamPos(i);
+    return {
+      at: i, unit: u ? u.order : null, oldLen: a.length, newLen: b.length,
+      ctx: clean(a.slice(Math.max(0, i - DIFF_CTX), i)),
+      old: clean(a.slice(i, i + DIFF_CTX)),
+      new: clean(b.slice(i, i + DIFF_CTX)),
+    };
+  }
+
   function rescan(opts) {
     const preserve = opts && opts.preserve;
     const built = RBC.stream.build();
@@ -241,7 +260,10 @@
         units = fillPieces(assignIds(chunkFrom(tailFrom, kept)));
         bus.emit('units:rescanned', { mode: 'append', count: units.length });
       } else {
-        bus.emit('units:rescanned', { mode: 'disruptive-skipped', count: units.length });
+        bus.emit('units:rescanned', {
+          mode: 'disruptive-skipped', count: units.length,
+          diff: rawDiff(RBC.stream.raw(), built.raw),
+        });
         return units.length;
       }
     } else {

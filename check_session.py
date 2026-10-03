@@ -272,7 +272,18 @@ def check_rescan(rep, timeline):
     """[6] 본문 교체가 일어났는가."""
     modes = [e.get("mode") for e in timeline if e.get("type") == "rescan"]
     if "disruptive-skipped" in modes:
-        rep.add(FAIL, "본문 교체", "disruptive-skipped 발생 — 이 세션은 학습에서 제외")
+        first = next(e for e in timeline
+                     if e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped")
+        d = first.get("diff")
+        if d:
+            where = f"유닛 #{d['unit']}" if d.get("unit") is not None else "유닛 밖"
+            why = (f" 첫 번째(t={first.get('t', 0) / 1000:.1f}s): {where} · 위치 {d.get('at')} · "
+                   f"{d.get('oldLen')}→{d.get('newLen')}자 · "
+                   f"…{d.get('ctx', '')} ⟨{d.get('old', '')}⟩ → ⟨{d.get('new', '')}⟩")
+        else:
+            why = " (diff 없음)"
+        rep.add(FAIL, "본문 교체",
+                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 학습에서 제외.{why}")
     elif modes:
         rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
     else:
