@@ -5,6 +5,12 @@
  * 의존(직접 호출): 0-core
  * 발행: 없음   구독: 없음
  *
+ * --- seg 하나 = 텍스트 노드 하나 (v3) -----------------------------------------
+ *   { node, start, len, blk, link }
+ *     blk  = 가장 가까운 DOM 블록 (nearestBlock). 2-units 가 이 값이 바뀌는 지점에서
+ *            유닛을 조각으로 나눈다 (감사 §8-4). <br> 은 조각 경계가 아니다.
+ *     link = <a> 안 텍스트인가. 스캔 때 한 번만 본다 (틱 비용 0).
+ *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   TreeWalker로 본문 영역의 텍스트 노드를 DOM 순서대로 전부 모아
  *   하나의 긴 문자열(raw)과 [노드, 시작오프셋] 인덱스(segs)를 만든다.
@@ -59,7 +65,7 @@
   let nodeIndex = new Map();
   let breaks = new Set();
   let contentRoot = null;
-  let rootInfo = null;       // 루트를 왜 골랐나 — 패널 표시용 { how, sel, len, link }
+  let rootInfo = null;       // 루트를 왜 골랐나 — { how, sel, len, link, el }. 패널 · meta.root
 
   // ==========================================================================
   // 태그 분류
@@ -140,6 +146,16 @@
     return { len, link };
   }
 
+  // [tag, id, class, role] — 조각 path(2-units) 와 meta.root 가 같이 쓴다 (감사 §8-4).
+  //   class 는 getAttribute 로 읽는다 (SVG 의 className 은 문자열이 아님).
+  //   해시 클래스명도 그대로 남긴다. 해석은 백엔드.
+  function attrs(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const cls = (el.getAttribute('class') || '').replace(/\s+/g, ' ').trim();
+    return [el.tagName, (el.id || '').slice(0, 40), cls.slice(0, 80),
+      (el.getAttribute('role') || '').trim()];
+  }
+
   function describe(el) {
     const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
     return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
@@ -156,7 +172,7 @@
       if (!el || textLen(el) <= CFG.MIN_ROOT_TEXT) continue;
       const m = measure(el);
       if (m.len > CFG.MIN_ROOT_TEXT) {
-        rootInfo = { how: 'semantic', sel: describe(el), len: m.len, link: m.link };
+        rootInfo = { how: 'semantic', sel: describe(el), len: m.len, link: m.link, el: attrs(el) };
         return el;
       }
     }
@@ -176,8 +192,8 @@
       if (score > bestScore) { bestScore = score; best = el; bestM = m; }
     });
     rootInfo = bestM
-      ? { how: 'fallback', sel: describe(best), len: bestM.len, link: bestM.link }
-      : { how: 'body', sel: describe(best), len: 0, link: 0 };
+      ? { how: 'fallback', sel: describe(best), len: bestM.len, link: bestM.link, el: attrs(best) }
+      : { how: 'body', sel: describe(best), len: 0, link: 0, el: attrs(best) };
     return best;
   }
 
@@ -237,7 +253,11 @@
       if (!rect.width && !rect.height) continue;   // display:none / 0px
 
       if (pendingBreak) newBreaks.add(len);
-      newSegs.push({ node: n, start: len, len: n.data.length });
+      newSegs.push({
+        node: n, start: len, len: n.data.length,
+        blk,                                                     // 조각 경계 (v3)
+        link: !!(n.parentElement && n.parentElement.closest('a')),  // linkChars (v3)
+      });
       parts.push(n.data);
       len += n.data.length;
       pendingBreak = false;
@@ -280,6 +300,7 @@
     segs: () => segs,
     segFor: (node) => nodeIndex.get(node),
     root: () => contentRoot,
-    rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link }
+    rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link, el }
+    attrs,                              // el → [tag, id, class, role]
   };
 })();

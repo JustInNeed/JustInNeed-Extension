@@ -13,10 +13,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
   실제로 깨지는 종류의 버그(상태 소유권 이관 실패, pid 오염, 틱 지연)는
   전부 여기 걸린다.
 
-스키마 v3 전용 (감사 §8). schemaVersion 이 3 미만이면 "지원 안 함"으로 그 페이지 검사를 멈춘다.
-
-세션 bundle (background 가 만든 것):
-  { kind: 'rbc-session', session: {...}, pages: [ 페이지 payload, ... ] }
+세션 bundle (v2.3~, background 가 만든 것):
+  { kind: 'rbc-session', session: {...}, pages: [ v2 payload, ... ] }
   pages 의 각 원소에 기존 검사를 그대로 돌리고, 세션 단위 검사를 추가로 돌린다.
     [S1] 조각 유실 (chunkReport.missing)       FAIL
     [S2] page 기록 없는 조각 (orphan)           FAIL
@@ -31,10 +29,6 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
     [12] 본문 추출 의심 (감사 §6-F)                    FAIL
          긴 페이지를 스크롤했는데 유닛 글자가 거의 없으면 루트를 잘못 고른 것.
          [11] 은 유닛이 없으면 '판정 대상 없음'으로 통과하므로 이게 따로 필요하다.
-    [13] 조각 연결 (감사 §8-4)                        FAIL
-         유닛마다 pieces 가 text 를 빈틈 · 겹침 없이 나누는가. 첫 off = 0,
-         다음 off = 앞 off + chars, 마지막 끝 = charLen, 0 < chars, 0 <= linkChars <= chars,
-         path 칸 4개 · 최대 6단계, pathCut 이면 정확히 6단계.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -97,19 +91,22 @@ def all_pids_used(timeline):
 
 # --- 개별 검사 -------------------------------------------------------------
 def check_schema(rep, meta):
-    """[0] 스키마 v3 파일인가. 아니면 False — 나머지 검사를 돌리지 않는다.
+    """[0] 현재 수집기(v2.2+)가 만든 파일인가.
 
-    가장 흔한 사고는 `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을
-    집는 것 — 새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
+    이게 아니면 나머지 검사가 전부 무의미하다. 가장 흔한 사고는
+    `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을 집는 것 —
+    새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
     """
     v = meta.get("schemaVersion")
-    if not isinstance(v, int) or v < 3:
+    if v is None:
         rep.add(FAIL, "스키마 버전",
-                f"v{v} — 지원 안 함 (v3 전용). 나머지 검사 생략. 새로 기록해서 내보낼 것")
-        return False
-    rep.add(OK, "스키마 버전",
-            f"v{v} · {meta.get('collector', '?')} · 기록 시작 {meta.get('startedAt', '?')}")
-    return True
+                "schemaVersion 없음 — v2.2 이전 파일이다. 현재 수집기가 만든 게 아니므로 "
+                "나머지 결과를 믿지 말 것. 패널에서 JSON 을 다시 내보낼 것")
+    elif v != 2:
+        rep.add(FAIL, "스키마 버전", f"v{v} — 이 검사기는 v2 용이다")
+    else:
+        started = meta.get("startedAt", "?")
+        rep.add(OK, "스키마 버전", f"v2 · 기록 시작 {started}")
 
 
 def check_pid_integrity(rep, meta, timeline):
@@ -447,66 +444,6 @@ def check_extraction(rep, meta, ticks):
     else:
         rep.add(OK, "본문 추출", facts)
 
-# [13] 조각 연결 ---------------------------------------------------------------
-PATH_MAX = 6
-
-
-def piece_problem(p):
-    """유닛 하나의 pieces 문제를 한 줄로. 문제없으면 None."""
-    pcs = p.get("pieces")
-    n = p.get("charLen")
-    if not isinstance(pcs, list) or not pcs:
-        return "pieces 없음"
-    end = 0
-    for k, c in enumerate(pcs):
-        off, ch, lk = c.get("off"), c.get("chars"), c.get("linkChars")
-        path, cut = c.get("path"), c.get("pathCut")
-        if off != end:
-            return f"k{k} off {off} ≠ {end} ({'겹침' if isinstance(off, int) and off < end else '빈틈'})"
-        if not isinstance(ch, int) or ch <= 0:
-            return f"k{k} chars {ch}"
-        if not isinstance(lk, int) or not 0 <= lk <= ch:
-            return f"k{k} linkChars {lk} / chars {ch}"
-        if (not isinstance(path, list) or len(path) > PATH_MAX
-                or any(not isinstance(x, list) or len(x) != 4 for x in path)):
-            return f"k{k} path 형식"
-        if not isinstance(cut, bool) or (cut and len(path) != PATH_MAX):
-            return f"k{k} pathCut {cut} · path {len(path)}단계"
-        end = off + ch
-    if end != n:
-        return f"조각 끝 {end} ≠ charLen {n}"
-    return None
-
-
-def check_pieces(rep, meta):
-    """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가.
-
-    오름차순 + 합계만 보면 빈틈과 겹침이 서로 상쇄돼 통과하므로 연결을 본다.
-    원문 → 정리된 text 오프셋 변환이 어긋나도 여기서 끝 ≠ charLen 으로 잡힌다.
-    """
-    paras = meta.get("paragraphs", [])
-    bad = [(p.get("order"), why) for p in paras if (why := piece_problem(p))]
-    if bad:
-        ex = "; ".join(f"#{o} {w}" for o, w in bad[:3])
-        rep.add(FAIL, "조각 연결", f"{len(bad)}/{len(paras)} 유닛 ({ex})")
-    else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결")
-
-
-def pieces_summary(meta):
-    """사람이 보는 요약 (판정 아님)."""
-    paras = meta.get("paragraphs", [])
-    pcs = [c for p in paras for c in (p.get("pieces") or [])]
-    multi = sum(1 for p in paras if len(p.get("pieces") or []) > 1)
-    linked = sum(1 for c in pcs if c.get("linkChars"))
-    cut = sum(1 for c in pcs if c.get("pathCut"))
-    root = meta.get("root") or {}
-    el = root.get("el") or ["?", "", "", ""]
-    rdesc = el[0].lower() + (f"#{el[1]}" if el[1] else "") + (f".{el[2].split(' ')[0]}" if el[2] else "")
-    return (f"조각 {len(pcs)} · 여러 조각 유닛 {multi} · 링크 글자 있는 조각 {linked} · "
-            f"pathCut {cut} · 루트 {rdesc} ({root.get('how', '?')})")
-
-
 def check_bundle_session(rep, session):
     """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
     report = session.get("chunkReport") or []
@@ -555,15 +492,13 @@ def baseline_url(path):
 
 # --- main -----------------------------------------------------------------
 def run_payload(label, data, baseline=None):
-    """페이지 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
+    """v2 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
     timeline = data.get("timeline", [])
     ticks = ticks_of(timeline)
 
     rep = Report(label)
-    if not check_schema(rep, meta):
-        rep.show()
-        return rep
+    check_schema(rep, meta)
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
@@ -575,14 +510,12 @@ def run_payload(label, data, baseline=None):
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
-    check_pieces(rep, meta)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
     rep.show()
     print(f"  -- 유닛 {len(meta.get('paragraphs', []))}개 · 틱 {len(ticks)}개 · "
           f"이벤트 {len(timeline)}개 · schema v{meta.get('schemaVersion', '?')}")
-    print(f"  -- {pieces_summary(meta)}")
     return rep
 
 

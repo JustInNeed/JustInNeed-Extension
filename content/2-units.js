@@ -17,21 +17,27 @@
  *   order = 본문 내 순서 (0..n-1 연속).
  *   이 둘이 유닛을 서로 구분하고 줄 세우는 유일한 근거다.
  *
- * --- 왜 rect / DOM 경로·태그를 수집하지 않는가  (2026-09-19 결정) -----------
- *   이 항목은 원래 "사이트별 DOM 구조가 너무 달라 텍스트 추출이 안 되면,
- *   화면 픽셀 기준으로라도 유닛을 자르자"는 대안을 위한 것이었다.
- *   v2에서 글자 스트림 청킹이 네이버 블로그·기사·티스토리·노션에서 모두
- *   동일하게 동작하는 것이 확인되면서 그 대안 자체가 폐기됐고,
- *   함께 필요했던 좌표 정보도 근거를 잃었다.
+ * --- 조각 pieces (v3, 감사 §8-4) ----------------------------------------------
+ *   유닛 = 약 200자 글자 구간. DOM 블록 = <p> <li> <div> 같은 HTML 블록 요소.
+ *   조각 = 유닛 중 DOM 블록 하나에 속하는 부분. 짧은 문단은 다음 문단과 합쳐지므로
+ *   유닛 하나가 조각 여럿일 수 있다 ("본문 마지막 문장 + 관련기사 제목").
  *
- *   남길 이유가 없는 구체적 사유:
- *     · 확정 feature 17개 중 rect 를 입력으로 쓰는 것이 하나도 없다
- *     · 유닛은 좌표가 아니라 글자 오프셋으로 정의된다. 따라서 rect 는
- *       이미지 lazy-load·광고 삽입·폰트 로딩 때마다 달라지고, 남길 수 있는
- *       건 "스캔 시점 스냅샷" 하나뿐인데 그건 세션 중반 이후로는 이미 틀린
- *       값이다. 틀린 값을 남기느니 안 남긴다
- *     · 위치 정보가 필요한 곳(위치 편향 확인, LLM 단계의 본문 순서)은
- *       unit_order 와 scroll_depth_pct 로 이미 충족된다
+ *   u.pieces = [{ off, chars, linkChars, path, pathCut }, …]   배열 순서 = 조각 번호 k
+ *     off, chars = 유닛 text(clean 뒤, UTF-16) 안 위치. 빈틈 · 겹침 없이 text 를 나눈다.
+ *     linkChars  = 그중 <a> 안 글자 수 (개수, 비율 아님).
+ *     path       = 조각 첫 텍스트 노드의 DOM 블록부터 위로 최대 6단계, 루트 직전에서 멈춤.
+ *                  DOM 블록이 루트 자신이거나 루트 밖이면 [].
+ *     pathCut    = 6단계에서 잘려 루트에 못 닿았다.
+ *   계산 시점 = 청킹할 때. 이미 계산된 유닛은 끝(end)이 그대로면 다시 계산하지 않는다
+ *   (DOM 이 나중에 다시 그려져도 pid 가 같으면 기존 값 유지).
+ *
+ *   원문 → 정리된 text 오프셋 = sig[p] - sig[u.start] 를 charLen 에서 자른 값.
+ *   sig 가 clean() 과 같은 규칙(공백 연속 = 1글자, 앞 공백 안 셈)이고 유닛 시작은
+ *   항상 공백이 아니므로 성립한다. 끝의 공백은 clean 이 trim 하므로 자른다.
+ *   highlight/copy 의 ranges(세트 C)도 이 함수(textOff)를 쓴다.
+ *
+ *   2026-09-19 의 "rect / DOM 경로 수집 안 함" 결정은 2026-10-01 폐기됐다 (감사 §8).
+ *   유닛 전체가 아니라 조각 단위로 남기므로 "유닛은 글자 오프셋 기준"과 충돌하지 않는다.
  *
  * --- BUG-1 배경: 가변 파라미터 분리 ----------------------------------------
  *   TARGET/MIN/MAX/MIN_UNIT 은 패널 슬라이더가 런타임에 바꾼다. 전에는 이게
@@ -74,6 +80,7 @@
   bus.on('record:stopped', () => { recording = false; });
 
   const SENT_END = new Set(['.', '!', '?', '…', '。', '！', '？']);
+  const PATH_MAX = 6;
 
   // ==========================================================================
   // 청킹
@@ -148,6 +155,74 @@
   }
 
   // ==========================================================================
+  // 조각 (v3)
+  // ==========================================================================
+
+  // 원문 스트림 위치 p → 유닛 u 의 text 안 오프셋.
+  function textOff(u, p) {
+    const q = p < u.start ? u.start : p > u.end ? u.end : p;
+    const o = sig[q] - sig[u.start];
+    return o < u.charLen ? o : u.charLen;
+  }
+
+  // start <= p 인 마지막 seg 의 번호. 없으면 -1.
+  function segIndexAt(segs, p) {
+    let lo = 0, hi = segs.length - 1, ans = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (segs[m].start <= p) { ans = m; lo = m + 1; } else hi = m - 1;
+    }
+    return ans;
+  }
+
+  function pathOf(blk, root) {
+    const path = [];
+    if (!blk || !root || blk === root || !root.contains(blk)) return { path, cut: false };
+    let el = blk;
+    while (el && el !== root) {
+      if (path.length === PATH_MAX) return { path, cut: true };
+      path.push(RBC.stream.attrs(el));
+      el = el.parentElement;
+    }
+    return { path, cut: false };
+  }
+
+  function buildPieces(u, segs, root) {
+    const runs = [];
+    let cur = null;
+    for (let i = Math.max(segIndexAt(segs, u.start), 0); i < segs.length; i++) {
+      const s = segs[i];
+      if (s.start >= u.end) break;
+      if (s.start + s.len <= u.start) continue;
+      const oa = textOff(u, Math.max(s.start, u.start));
+      const ob = textOff(u, Math.min(s.start + s.len, u.end));
+      if (!cur || s.blk !== cur.blk) {
+        cur = { blk: s.blk, off: oa, end: ob, link: 0 };
+        runs.push(cur);
+      } else {
+        cur.end = ob;
+      }
+      if (s.link) cur.link += ob - oa;
+    }
+    // 끝 공백만 있던 조각은 trim 으로 0글자가 된다 → 뺀다 (off 연결은 유지됨)
+    return runs.filter(r => r.end > r.off).map((r) => {
+      const { path, cut } = pathOf(r.blk, root);
+      return { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
+    });
+  }
+
+  function fillPieces(list) {
+    const segs = RBC.stream.segs();
+    const root = RBC.stream.root();
+    for (const u of list) {
+      if (u.pieces && u.piecesEnd === u.end) continue;   // 기존 값 유지
+      u.pieces = buildPieces(u, segs, root);
+      u.piecesEnd = u.end;
+    }
+    return list;
+  }
+
+  // ==========================================================================
   // 재스캔
   //   기록 중에는 기존 pid 를 절대 재배정하지 않는다.
   //   순수 append 면 꼬리만 청킹하고, 본문이 교체됐으면 아예 건드리지 않는다.
@@ -163,7 +238,7 @@
         RBC.stream.commit(built);
         syncStream();
         const kept = units.map(u => ({ ...u }));
-        units = assignIds(chunkFrom(tailFrom, kept));
+        units = fillPieces(assignIds(chunkFrom(tailFrom, kept)));
         bus.emit('units:rescanned', { mode: 'append', count: units.length });
       } else {
         bus.emit('units:rescanned', { mode: 'disruptive-skipped', count: units.length });
@@ -172,7 +247,7 @@
     } else {
       RBC.stream.commit(built);
       syncStream();
-      units = assignIds(chunkFrom(0, null));
+      units = fillPieces(assignIds(chunkFrom(0, null)));
       bus.emit('units:rescanned', { mode: 'full', count: units.length });
     }
 
@@ -228,6 +303,7 @@
     at: unitAtStreamPos,
     byPid: (pid) => units.find(u => u.pid === pid),
     rescan,
+    textOff,                             // (unit, 원문 위치) → unit.text 오프셋
     opts: () => ({ ...chunkOpts }),      // 복사본. 밖에서 못 바꾼다.
   };
 })();

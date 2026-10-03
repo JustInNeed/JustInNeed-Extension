@@ -3,7 +3,7 @@
  *
  * 소유: recording, 구간(segId, segPageId, segMeta), timeline 버퍼, tickTimer,
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
- * 의존(직접 호출): 0-core, 2-units, 3-hittest, 4-input
+ * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 3-hittest, 4-input
  * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
@@ -183,6 +183,7 @@
   function paragraphs() {
     return RBC.units.all().map(u => ({
       pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
+      pieces: u.pieces || [],                      // v3 조각 (감사 §8-4)
     }));
   }
 
@@ -208,16 +209,17 @@
   // 이 모양은 extract_features.py 와의 계약이다 — 바꾸려면 schemaVersion 을
   // 올리고 양쪽을 같이 고칠 것.
   function buildMeta() {
+    const ri = RBC.stream.rootInfo();
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
-      collector: 'rbc-v2.3-session',
+      // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력. 세트가 끝날 때마다 올린다.
+      collector: 'rbc-v3-A',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
       title: document.title,
       referrer: document.referrer || null,
       enteredAt: new Date().toISOString(),
-      leftAt: null,
       devicePixelRatio: window.devicePixelRatio,
       userAgent: navigator.userAgent,
 
@@ -232,12 +234,18 @@
       frameTag: TAG,
       isTopFrame: IS_TOP,
       chunking: RBC.units.opts(),
+      root: ri ? { el: ri.el, how: ri.how } : null,  // 본문 루트 [tag,id,class,role] · semantic|fallback|body
       idleTimeoutMs: CFG.IDLE_TIMEOUT_MS,
 
       notes: [
         '원본 값만 수집. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.',
         '유닛 = 본문 텍스트 스트림의 글자 오프셋 구간. DOM 문단이 아님.',
         'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid.',
+        'pieces = 유닛을 DOM 블록 경계로 나눈 조각. 배열 순서 = 조각 번호 k. off/chars 는 ' +
+        '유닛 text(공백 정리 뒤, UTF-16) 기준이며 빈틈·겹침 없이 text 를 나눈다. linkChars = <a> 안 글자 수.',
+        'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
+        'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
+        '이탈 시각은 segend 이벤트 · session.chunkReport.end 로 본다 (meta.leftAt 없음).',
         'visTop/visBot = 그 틱에 뷰포트에 보이던 유닛 order 범위(양끝 포함). ' +
         '체류시간(뷰포트 노출 누적)은 이걸로 오프라인 계산.',
         'centerPid = 뷰포트 49% 중앙선 유닛. GVAM 캐비엣: 중앙선=focus 가정은 ' +
