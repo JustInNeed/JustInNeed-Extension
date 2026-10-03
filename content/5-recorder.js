@@ -87,6 +87,7 @@
   let searchQuery = searchQueryFromReferrer();   // [C8]
 
   let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;
+  let lastVisN = 0;                     // 패널 표시용 — 마지막 틱 vis 조각 수
 
   // --- 미러 (읽기 전용) ---
   let isPrimary = IS_TOP;
@@ -145,7 +146,8 @@
         scrollEvents: ev.scrollEvents,
         mouseEvents: ev.mouseEvents,            // [C3]
         centerPid,                              // B채널 귀속
-        visTop: s.visTop, visBot: s.visBot,     // [C1] 이 사이 유닛은 화면에 노출됨
+        visTop: s.visTop, visBot: s.visBot,     // [C1] 이 사이 유닛은 화면에 노출됨 (vis 교차검증용)
+        vis: s.vis,                             // v3: 뷰포트와 겹친 조각 [pid,k,top,bottom,left,right]
         cursorPid,                              // A채널 귀속 (여백이면 null)
         cx, cy,
         cursorDist,
@@ -153,6 +155,7 @@
         vw: window.innerWidth,
         vh: window.innerHeight,
         docH: document.documentElement.scrollHeight,
+        dpr: window.devicePixelRatio,           // v3: 기록 중 확대/축소
       });
       segTicks++;
       if (!pageSent) { pageSent = true; emitPage(); }   // 첫 틱 = 이 탭을 실제로 봤다
@@ -163,7 +166,8 @@
     if (cursor) prevTickCursor = { x: cursor.x, y: cursor.y };
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
-    bus.emit('tick:done', { centerU, cursorPid });
+    lastVisN = s.vis.length;
+    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis });
     if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
   }
 
@@ -213,7 +217,7 @@
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
       // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-A',
+      collector: 'rbc-v3-B',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
@@ -246,6 +250,9 @@
         'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
         'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
         '이탈 시각은 segend 이벤트 · session.chunkReport.end 로 본다 (meta.leftAt 없음).',
+        'tick.vis = 그 틱에 뷰포트와 겹친 조각 [pid, k, top, bottom, left, right]. 자기 프레임 뷰포트 기준 CSS px, ' +
+        '자르지 않음(음수 · vh 초과 허용). 조각마다 Range 외곽 상자. 같은 pid 의 조각은 세로 구간 합집합으로 합칠 것(단순 합 금지). ' +
+        '보이는 조각이 없으면 []. tick.dpr = devicePixelRatio.',
         'visTop/visBot = 그 틱에 뷰포트에 보이던 유닛 order 범위(양끝 포함). ' +
         '체류시간(뷰포트 노출 누적)은 이걸로 오프라인 계산.',
         'centerPid = 뷰포트 49% 중앙선 유닛. GVAM 캐비엣: 중앙선=focus 가정은 ' +
@@ -321,6 +328,7 @@
       scrollSpeed: Math.round(lastScrollSpeed),
       centerText: u ? (u.order + ' · ' + u.text.slice(0, 26)) : '',
       query: searchQuery || '',
+      sampleMs: RBC.hittest.stats(), visN: lastVisN,   // 패널: sample() p95 · 이번 틱 vis 조각 수
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
     });

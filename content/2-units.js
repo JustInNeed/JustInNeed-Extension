@@ -28,6 +28,8 @@
  *     path       = 조각 첫 텍스트 노드의 DOM 블록부터 위로 최대 6단계, 루트 직전에서 멈춤.
  *                  DOM 블록이 루트 자신이거나 루트 밖이면 [].
  *     pathCut    = 6단계에서 잘려 루트에 못 닿았다.
+ *   u.spans  = 조각마다 원문 구간 [a, b) (pieces 와 같은 순서). 내부용 — 3-hittest 가 조각
+ *              Range(vis 사각형)를 만들 때 쓴다. paragraphs() 가 필드를 골라 내보내므로 JSON 에 안 나감.
  *   계산 시점 = 청킹할 때. 이미 계산된 유닛은 끝(end)이 그대로면 다시 계산하지 않는다
  *   (DOM 이 나중에 다시 그려져도 pid 가 같으면 기존 값 유지).
  *
@@ -194,21 +196,27 @@
       const s = segs[i];
       if (s.start >= u.end) break;
       if (s.start + s.len <= u.start) continue;
-      const oa = textOff(u, Math.max(s.start, u.start));
-      const ob = textOff(u, Math.min(s.start + s.len, u.end));
+      const ra = Math.max(s.start, u.start), rb = Math.min(s.start + s.len, u.end);
+      const oa = textOff(u, ra);
+      const ob = textOff(u, rb);
       if (!cur || s.blk !== cur.blk) {
-        cur = { blk: s.blk, off: oa, end: ob, link: 0 };
+        cur = { blk: s.blk, off: oa, end: ob, link: 0, ra, rb };
         runs.push(cur);
       } else {
         cur.end = ob;
+        cur.rb = rb;
       }
       if (s.link) cur.link += ob - oa;
     }
     // 끝 공백만 있던 조각은 trim 으로 0글자가 된다 → 뺀다 (off 연결은 유지됨)
-    return runs.filter(r => r.end > r.off).map((r) => {
-      const { path, cut } = pathOf(r.blk, root);
-      return { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
-    });
+    const kept = runs.filter(r => r.end > r.off);
+    return {
+      pieces: kept.map((r) => {
+        const { path, cut } = pathOf(r.blk, root);
+        return { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
+      }),
+      spans: kept.map(r => [r.ra, r.rb]),
+    };
   }
 
   function fillPieces(list) {
@@ -216,7 +224,9 @@
     const root = RBC.stream.root();
     for (const u of list) {
       if (u.pieces && u.piecesEnd === u.end) continue;   // 기존 값 유지
-      u.pieces = buildPieces(u, segs, root);
+      const b = buildPieces(u, segs, root);
+      u.pieces = b.pieces;
+      u.spans = b.spans;
       u.piecesEnd = u.end;
     }
     return list;

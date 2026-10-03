@@ -35,6 +35,11 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          유닛마다 pieces 가 text 를 빈틈 · 겹침 없이 나누는가. 첫 off = 0,
          다음 off = 앞 off + chars, 마지막 끝 = charLen, 0 < chars, 0 <= linkChars <= chars,
          path 칸 4개 · 최대 6단계, pathCut 이면 정확히 6단계.
+         + 모든 틱에 vis 키, vis 칸 6개, pid 가 paragraphs 에 있고 k < pieces 개수, top ≤ bottom, left ≤ right.
+    [14] vis 교차검사 (감사 §8 검증 장치)
+         caret 탐침(centerPid · visTop/visBot)과 Range 사각형(vis)은 따로 잰 값이다.
+         centerPid ∉ vis 틱이 하나라도 있으면 FAIL — 중앙선 ±44px 의 글자는 반드시 화면 안이다.
+         visTop..visBot ⊄ vis 는 WARN — 가장자리 탐침이 화면 밖 8px 까지 받아주는 설계 차이.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -489,19 +494,116 @@ def piece_problem(p):
     return None
 
 
-def check_pieces(rep, meta):
-    """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가.
+def vis_problems(meta, ticks):
+    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개)."""
+    npieces = {p["pid"]: len(p.get("pieces") or []) for p in meta.get("paragraphs", [])}
+    bad, ex = 0, []
+
+    def note(t, why):
+        nonlocal bad
+        bad += 1
+        if len(ex) < 3:
+            ex.append(f"t={t / 1000:.1f}s {why}")
+
+    for e in ticks:
+        t = e.get("t", 0)
+        if "vis" not in e:
+            note(t, "vis 키 없음")
+            continue
+        vis = e.get("vis")
+        if not isinstance(vis, list):
+            note(t, f"vis={vis!r}")
+            continue
+        for v in vis:
+            if not isinstance(v, list) or len(v) != 6:
+                note(t, f"칸 {v!r}")
+                break
+            pid, k, top, bot, left, right = v
+            if pid not in npieces:
+                note(t, f"모르는 pid {pid}")
+                break
+            if not isinstance(k, int) or not 0 <= k < npieces[pid]:
+                note(t, f"{pid} k={k} / 조각 {npieces[pid]}")
+                break
+            if top > bot or left > right:
+                note(t, f"{pid}·{k} 사각형 {top},{bot},{left},{right}")
+                break
+    return bad, ex
+
+
+def check_pieces(rep, meta, ticks):
+    """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가 + 틱 vis 가 조각을 제대로 가리키는가.
 
     오름차순 + 합계만 보면 빈틈과 겹침이 서로 상쇄돼 통과하므로 연결을 본다.
     원문 → 정리된 text 오프셋 변환이 어긋나도 여기서 끝 ≠ charLen 으로 잡힌다.
     """
     paras = meta.get("paragraphs", [])
     bad = [(p.get("order"), why) for p in paras if (why := piece_problem(p))]
-    if bad:
-        ex = "; ".join(f"#{o} {w}" for o, w in bad[:3])
-        rep.add(FAIL, "조각 연결", f"{len(bad)}/{len(paras)} 유닛 ({ex})")
+    vbad, vex = vis_problems(meta, ticks)
+    if bad or vbad:
+        parts = []
+        if bad:
+            parts.append(f"유닛 {len(bad)}/{len(paras)} (" + "; ".join(f"#{o} {w}" for o, w in bad[:3]) + ")")
+        if vbad:
+            parts.append(f"vis 틱 {vbad}/{len(ticks)} (" + "; ".join(vex) + ")")
+        rep.add(FAIL, "조각 연결", " · ".join(parts))
     else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결")
+        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합")
+
+
+def check_vis_cross(rep, meta, ticks):
+    """[14] caret 탐침과 Range 사각형의 대조 (감사 §8). 등급은 2026-10-03 블로그 PC 실측으로 결정.
+
+    centerPid 는 화면 한가운데라 거의 항상 vis 에 있어야 한다. visTop..visBot 은 order 범위라
+    사이드바가 order 사이에 끼는 사이트(§6-H)에서는 화면에 없는 유닛이 범위에 들어갈 수 있다.
+    """
+    order = {p["pid"]: p.get("order", -1) for p in meta.get("paragraphs", [])}
+    c_n = c_ok = r_n = r_ok = 0
+    c_ex, r_ex = [], []
+    for e in ticks:
+        vis = e.get("vis")
+        if not isinstance(vis, list):
+            continue
+        seen = {v[0] for v in vis if isinstance(v, list) and v}
+        seen_o = {order.get(p) for p in seen}
+        cp = e.get("centerPid")
+        if cp:
+            c_n += 1
+            if cp in seen:
+                c_ok += 1
+            elif len(c_ex) < 2:
+                c_ex.append(f"t={e.get('t', 0) / 1000:.1f}s #{order.get(cp)}")
+        a, b = e.get("visTop"), e.get("visBot")
+        if a is not None and b is not None:
+            lo, hi = (a, b) if a <= b else (b, a)
+            r_n += 1
+            miss = [o for o in range(lo, hi + 1) if o not in seen_o]
+            if not miss:
+                r_ok += 1
+            elif len(r_ex) < 2:
+                r_ex.append(f"t={e.get('t', 0) / 1000:.1f}s [{lo},{hi}] 빠짐 {miss[:3]}")
+    if not c_n and not r_n:
+        rep.add(WARN, "vis 교차검사", "대조할 틱 없음")
+        return
+    pct = lambda ok, n: f"{ok}/{n} ({ok / n:.0%})" if n else "—"
+    detail = f"centerPid∈vis {pct(c_ok, c_n)} · visTop..visBot⊂vis {pct(r_ok, r_n)}"
+    ex = c_ex + r_ex
+    if c_ok < c_n:
+        rep.add(FAIL, "vis 교차검사", detail + f" (예: {'; '.join(c_ex)}) — centerPid 귀속 또는 vis 사각형 오류")
+    elif r_ok < r_n:
+        rep.add(WARN, "vis 교차검사", detail + (f" (예: {'; '.join(r_ex)})" if r_ex else ""))
+    else:
+        rep.add(OK, "vis 교차검사", detail)
+
+
+def vis_summary(ticks):
+    """용량 실측용 (판정 아님)."""
+    if not ticks:
+        return "vis — 틱 없음"
+    n = [len(e.get("vis") or []) for e in ticks]
+    size = [len(json.dumps(e, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) for e in ticks]
+    return (f"vis 평균 {statistics.mean(n):.1f}조각/틱 (최대 {max(n)}) · "
+            f"틱 평균 {statistics.mean(size):.0f}B (최대 {max(size)}B)")
 
 
 def pieces_summary(meta):
@@ -586,7 +688,8 @@ def run_payload(label, data, baseline=None):
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
-    check_pieces(rep, meta)
+    check_pieces(rep, meta, ticks)
+    check_vis_cross(rep, meta, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -594,6 +697,7 @@ def run_payload(label, data, baseline=None):
     print(f"  -- 유닛 {len(meta.get('paragraphs', []))}개 · 틱 {len(ticks)}개 · "
           f"이벤트 {len(timeline)}개 · schema v{meta.get('schemaVersion', '?')}")
     print(f"  -- {pieces_summary(meta)}")
+    print(f"  -- {vis_summary(ticks)}")
     return rep
 
 

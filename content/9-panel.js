@@ -201,6 +201,9 @@
       <b style="color:#2563eb">커서(A)</b>: ${esc(s.cursorPid) || '여백/없음'}<br>
       scrollSpeed: ${s.scrollSpeed} px/s
       ${s.query ? `· 검색어 "${esc(s.query)}"` : '· <span style="color:#c00">검색어 없음</span>'}
+      ${s.sampleMs ? `<br><span style="color:${s.sampleMs.p95 > 10 ? '#c00' : '#333'}">` +
+        `sample p95 ${s.sampleMs.p95}ms (그중 vis ${s.sampleMs.visP95}ms) · max ${s.sampleMs.max}ms` +
+        ` (최근 ${s.sampleMs.n}틱)</span> · 측정 조각 ${s.sampleMs.pieces} · 화면 조각 ${s.visN}` : ''}
       ${s.tag !== TAG ? `<br><span style="color:#999">frame ${esc(s.tag)}</span>` : ''}
     `);
   }
