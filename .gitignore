@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .env
 site_*.json
+diag_*.json
+site*.json
+step*.json
