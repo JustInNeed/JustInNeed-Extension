@@ -1,10 +1,10 @@
 /* =============================================================================
  * 4-input.js — DOM 이벤트 → 원시 신호
  *
- * 소유: latestCursor, scrollEventsSinceTick, mouseEventsSinceTick,
- *       lastSelText, winFocused, lastActivityAt, lastActivityPing
- * 의존(직접 호출): 0-core, 3-hittest
- * 발행: sel:highlight, sel:copy, visibility, focus, pagehide, activity,
+ * 소유: latestCursor, 틱 사이 카운터(scroll · scrollOther · mouse · mdx · mdy · edits),
+ *       scrollerEl(본문 스크롤 주체), lastSelText, winFocused, lastActivityAt, lastActivityPing
+ * 의존(직접 호출): 0-core, 1-stream(root), 2-units, 3-hittest(locate) — 스크롤 주체 판정
+ * 발행: sel:highlight({ranges,text}), sel:copy({ranges,text}), visibility, focus, pagehide, activity,
  *       viewport:resized
  * 구독: cmd:focus, cmd:activity
  *
@@ -19,6 +19,24 @@
  *   직접 0 으로 되돌렸다. 남의 변수를 리셋하면 "누가 언제 비웠는지"를 추적할 수
  *   없고, 나중에 틱을 둘로 나누면 카운터가 조용히 반토막 난다.
  *   이제 소유자가 읽기+리셋을 한 번에 제공하고, 부르는 쪽은 한 번만 부른다.
+ *   v3: 틱을 건너뛸 때와 기록을 시작할 때도 5-recorder 가 drain() 을 부르고 값을 버린다
+ *   (안 부르면 공백 동안 쌓인 값이 다음 틱에 섞인다 — 감사 §8 공통 규칙).
+ *
+ * --- 스크롤 (v3, 감사 §8-6) ---------------------------------------------------
+ *   리스너는 document capture 하나. 요소 스크롤은 bubble 하지 않지만 capture 로는 잡힌다.
+ *   window 리스너를 같이 두면 창 스크롤이 두 번 세진다.
+ *   대상이 document 이거나 **첫 유닛과 마지막 유닛의 텍스트 노드를 둘 다 품은 요소**면 본문 스크롤 →
+ *   scrollEvents, 그 대상을 스크롤 주체로 기억. 나머지(코드 블록 가로 · 캐러셀 · 사이드바)는
+ *   scrollOther. 패널 안 스크롤은 세지 않는다. 유닛이 없으면 target.contains(root) 로 대신한다.
+ *   원래 규칙(target.contains(root))은 "스크롤 상자가 루트를 품는다"는 전제였는데, 노션은 루트
+ *   (main.notion-frame) **안에** 스크롤 상자가 있어서 전부 scrollOther 로 빠졌다 (2026-10-04 실측,
+ *   [15] 조각 +69px vs scrollY 0). "본문 글자를 움직이는가"로 바꾸면 두 구조가 다 잡힌다.
+ *   첫 스크롤 전 주체는 seedScroller(): 첫 · 마지막 유닛 텍스트 노드의 공통 조상(유닛이 없으면 루트)
+ *   에서 위로 올라가 overflow-y 가 auto/scroll/overlay 이고 내용이 넘치는 첫 요소. 없으면 window(null).
+ *
+ * --- 커서 이동량 (v3, 감사 §8-7) · 편집 (§8-9b) --------------------------------
+ *   mdx/mdy = mousemove 마다 직전 위치 대비 |dx| · |dy| 누적. 150ms 표본 사이 왕복을 보존한다.
+ *   edits = input 이벤트 개수만. 내용 · 대상 · 종류는 절대 안 남긴다. 패널 안 제외.
  *
  * --- 포커스 소유권 [C2] -----------------------------------------------------
  *   iframe 안에서 document.hasFocus() 는 그 프레임 내부에 포커스가 있어야 true라,
@@ -33,8 +51,13 @@
 
   // --- 이 파일이 소유하는 상태 ---
   let latestCursor = null;
-  let scrollEventsSinceTick = 0;
+  let scrollEventsSinceTick = 0;  // 본문 스크롤
+  let scrollOtherSinceTick = 0;   // 본문을 안 움직이는 스크롤 (v3)
   let mouseEventsSinceTick = 0;   // [C3] cursorfreq = 커서이벤트수 ÷ 활성시간
+  let mdxSinceTick = 0, mdySinceTick = 0;   // v3: Σ|dx|, Σ|dy|
+  let editsSinceTick = 0;         // v3: input 이벤트 개수
+  let lastMove = null;            // 직전 mousemove 위치 (drain 해도 유지 — 이동량의 기준점)
+  let scrollerEl = null;          // 본문 스크롤 주체. null = window
   let lastSelText = '';
   let winFocused = true;          // [C2] 최상위 프레임이 소유, 하위로 브로드캐스트
   let lastActivityAt = Date.now();
@@ -66,13 +89,86 @@
   function onMouseMove(e) {
     latestCursor = { x: e.clientX, y: e.clientY };
     mouseEventsSinceTick++;          // [C3]
+    if (lastMove) {
+      mdxSinceTick += Math.abs(e.clientX - lastMove.x);
+      mdySinceTick += Math.abs(e.clientY - lastMove.y);
+    }
+    lastMove = { x: e.clientX, y: e.clientY };
     bump();
   }
 
-  function onScroll() {
-    scrollEventsSinceTick++;
+  // 첫 유닛 · 마지막 유닛의 시작 텍스트 노드. 유닛이 없으면 null.
+  function bodyNodes() {
+    const us = RBC.units.all();
+    if (!us.length) return null;
+    const a = RBC.hittest.locate(us[0].start);
+    const b = RBC.hittest.locate(us[us.length - 1].start);
+    return a && b ? [a.node, b.node] : null;
+  }
+
+  // 이 요소가 스크롤되면 본문 글자가 움직이는가.
+  function movesBody(t) {
+    if (!t || !t.contains) return false;
+    const ns = bodyNodes();
+    if (ns) return t.contains(ns[0]) && t.contains(ns[1]);
+    const root = RBC.stream.root();
+    return !!(root && t.contains(root));
+  }
+
+  // document capture — 창 스크롤(target = document)과 요소 스크롤을 한 곳에서 받는다.
+  function onScroll(e) {
+    const t = e.target;
     RBC.hittest.invalidate();        // 본문 가로 범위 캐시 무효화
+    if (t !== document && inPanel(t)) return;
+    if (t === document) {
+      scrollEventsSinceTick++;
+      scrollerEl = null;             // window
+    } else if (movesBody(t)) {
+      scrollEventsSinceTick++;
+      scrollerEl = t;
+    } else {
+      scrollOtherSinceTick++;
+    }
     bump();
+  }
+
+  // 첫 스크롤 전의 주체: 본문 글자의 공통 조상에서 위로, 실제로 세로 스크롤되는 첫 요소.
+  // 구간 시작 때 5-recorder 가 부른다. getComputedStyle 이 조상 수만큼 — 틱 경로가 아니다.
+  // body · html 에서 멈춘다: 보통 페이지는 그 overflow 가 뷰포트로 넘어가서 실제 주체가 window 다
+  // (여기서 html 을 고르면 경로만 달라지고 값은 같은 가짜 주체가 생긴다). body 가 진짜 스크롤 상자인
+  // 드문 구조는 첫 스크롤 이벤트(target = body, contains(root))가 바로잡는다.
+  function seedScroller() {
+    scrollerEl = null;
+    let el = RBC.stream.root();
+    const ns = bodyNodes();
+    if (ns) {
+      const r = document.createRange();
+      try {
+        r.setStart(ns[0], 0); r.setEnd(ns[1], 0);
+        const c = r.commonAncestorContainer;
+        el = c.nodeType === 1 ? c : c.parentElement;
+      } catch (e) { /* 순서가 뒤집혔거나 분리된 노드 → 루트에서 시작 */ }
+    }
+    while (el && el !== document.body && el !== document.documentElement) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollHeight > el.clientHeight) {
+        scrollerEl = el;
+        break;
+      }
+      el = el.parentElement;
+    }
+    return scrollerEl;
+  }
+
+  // 기억한 주체가 DOM 에서 빠졌으면(SPA 리렌더) 다시 찾는다.
+  function scroller() {
+    if (scrollerEl && !scrollerEl.isConnected) seedScroller();
+    return scrollerEl;
+  }
+
+  function onInput(e) {
+    if (inPanel(e.target)) return;
+    editsSinceTick++;
   }
 
   function onKey() { bump(); }
@@ -85,15 +181,15 @@
   function onCopy() {
     const sel = window.getSelection();
     if (!sel || inPanel(sel.anchorNode)) return;
-    const pids = RBC.hittest.unitsFromSelection(sel);
+    const ranges = RBC.hittest.rangesFromSelection(sel);
     // [0-5] 본문 스트림 밖의 선택 — 댓글 작성창, 검색창, 로그인 폼 등.
     //   어느 유닛에도 귀속되지 않으니 feature 로는 못 쓰는데, 예전에는 원문 text 만
     //   timeline 에 남았다. 수집 목적에 전혀 기여하지 않으면서 사용자가 입력한
     //   내용만 저장되는, 가장 나쁜 형태였다. 활동으로는 치되 기록하지 않는다.
-    if (!pids.length) { bump(); return; }
+    if (!ranges.length) { bump(); return; }
     // trim: highlight 쪽과 맞춘다. 안 맞추면 같은 선택인데도 두 텍스트가
     //   끝 공백 하나 때문에 달라져서, 오프라인에서 비교가 안 된다.
-    bus.emit('sel:copy', { pids, text: sel.toString().trim() });
+    bus.emit('sel:copy', { ranges, text: sel.toString().trim() });
     bump();
   }
 
@@ -136,9 +232,9 @@
     const text = sel.toString().trim();
     if (text && text !== lastSelText) {
       lastSelText = text;
-      const pids = RBC.hittest.unitsFromSelection(sel);
-      if (!pids.length) { bump(); return; }          // [0-5] 위와 동일
-      bus.emit('sel:highlight', { pids, text });
+      const ranges = RBC.hittest.rangesFromSelection(sel);
+      if (!ranges.length) { bump(); return; }        // [0-5] 위와 동일
+      bus.emit('sel:highlight', { ranges, text });
       bump();
     } else if (!text) {
       lastSelText = '';
@@ -204,7 +300,8 @@
   document.addEventListener('mousemove', onMouseMove, { passive: true });
   document.addEventListener('mousedown', onMouseDown, true);
   document.addEventListener('mouseup', onMouseUp, true);
-  window.addEventListener('scroll', onScroll, { passive: true });
+  document.addEventListener('scroll', onScroll, { capture: true, passive: true });   // v3: window 리스너 삭제
+  document.addEventListener('input', onInput, true);                                 // v3: edits
   window.addEventListener('resize', onResize, { passive: true });
   document.addEventListener('keydown', onKey, { passive: true });
   document.addEventListener('copy', onCopy, true);
@@ -228,11 +325,22 @@
     idleMs: () => Date.now() - lastActivityAt,
     bump,
 
+    scroller,               // 본문 스크롤 주체 요소. null = window
+    seedScroller,           // 구간 시작 때 5-recorder 가 부른다
+
     // 틱마다 정확히 한 번만 부를 것. 읽으면서 리셋한다.
+    // 틱을 건너뛸 때 · 기록 시작 때도 불러서 버린다 (5-recorder).
     drain() {
-      const v = { scrollEvents: scrollEventsSinceTick, mouseEvents: mouseEventsSinceTick };
-      scrollEventsSinceTick = 0;
+      const v = {
+        scrollEvents: scrollEventsSinceTick, scrollOther: scrollOtherSinceTick,
+        mouseEvents: mouseEventsSinceTick,
+        mdx: Math.round(mdxSinceTick), mdy: Math.round(mdySinceTick),
+        edits: editsSinceTick,
+      };
+      scrollEventsSinceTick = 0; scrollOtherSinceTick = 0;
       mouseEventsSinceTick = 0;
+      mdxSinceTick = 0; mdySinceTick = 0;
+      editsSinceTick = 0;
       return v;
     },
   };

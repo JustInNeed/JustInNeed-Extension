@@ -258,8 +258,11 @@
     return RBC.units.at(seg.start + off);
   }
 
-  // [C4] 선택 범위가 걸친 유닛 전부. 명세: "여러 문단 걸치면 모두 1".
-  function unitsFromSelection(sel) {
+  // [C4] 선택 범위가 걸친 유닛 전부 + 유닛마다 자기 text 안 범위 (v3 ranges, 감사 §8-5).
+  //   명세: "여러 문단 걸치면 모두 1". → [[pid, lo, hi], …] (유닛 order 순, lo < hi).
+  //   lo/hi 는 유닛 text(공백 정리 뒤, UTF-16) 오프셋 — pieces 와 같은 변환(RBC.units.textOff).
+  //   정리 뒤 0글자가 되는 걸침(앞 유닛의 끝 공백만 잡힌 경우, 빈 선택)은 뺀다.
+  function rangesFromSelection(sel) {
     if (!sel || sel.rangeCount === 0) return [];
     let r;
     try { r = sel.getRangeAt(0); } catch (e) { return []; }
@@ -271,8 +274,10 @@
     const lo = Math.min(a, b), hi = Math.max(a, b);
     const out = [];
     for (const u of RBC.units.all()) {
-      if (u.start < hi && u.end > lo) out.push(u.pid);
-      else if (lo === hi && u.start <= lo && lo < u.end) out.push(u.pid);
+      if (!(u.start < hi && u.end > lo)) continue;
+      const tl = RBC.units.textOff(u, Math.max(lo, u.start));
+      const th = RBC.units.textOff(u, Math.min(hi, u.end));
+      if (th > tl) out.push([u.pid, tl, th]);
     }
     return out;
   }
@@ -312,7 +317,7 @@
   // ==========================================================================
   RBC.hittest = {
     sample,
-    unitsFromSelection,
+    rangesFromSelection,
     streamPosOf,
     locate,                 // 8-overlay 의 rangeForUnit 이 쓴다
     invalidate,

@@ -27,7 +27,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
     [10] 이벤트의 segId 가 meta.segments 에 있는가   FAIL
     [11] 포착 못 한 스크롤 (감사 §6-D)                 FAIL / WARN
          화면에 보이는 유닛이 바뀌었는데 scrollY 도 그대로, scrollEvents 도 0 인 틱 쌍.
-         스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤은 이렇게 나타난다.
+         v2 는 스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤이 이렇게 나타났다.
+         v3 세트 C 부터 scrollY · scrollEvents 는 본문 스크롤 주체 기준 (감사 §8-6).
     [12] 본문 추출 의심 (감사 §6-F)                    FAIL
          긴 페이지를 스크롤했는데 유닛 글자가 거의 없으면 루트를 잘못 고른 것.
          [11] 은 유닛이 없으면 '판정 대상 없음'으로 통과하므로 이게 따로 필요하다.
@@ -40,6 +41,14 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          caret 탐침(centerPid · visTop/visBot)과 Range 사각형(vis)은 따로 잰 값이다.
          centerPid ∉ vis 틱이 하나라도 있으면 FAIL — 중앙선 ±44px 의 글자는 반드시 화면 안이다.
          visTop..visBot ⊄ vis 는 WARN — 가장자리 탐침이 화면 밖 8px 까지 받아주는 설계 차이.
+    [15] 스크롤 교차검사 (감사 §8 검증 장치)            WARN
+         같은 구간의 연속 두 틱에서 둘 다 보인 조각 (pid,k) 의 top 이동량 중앙값 vs scrollY 변화량.
+         2px 넘게 어긋난 쌍이 하나라도 있으면 WARN — 스크롤 주체 판정이나 vis 가 틀렸을 수 있다.
+         비교 대상 = 무언가 움직인 쌍. [11] 과 같이 간격 끊김 · docH/vh/vw/dpr 변화 · rescan 사이 쌍은 뺀다.
+    [16] v3 필드 (감사 §8 "v3 tick 최종 필드" · §8-5)  FAIL
+         틱 필수 필드 누락 · 삭제 필드(scrollSpeed · cursorDist · cursorMoved) 잔존,
+         highlight/copy 의 ranges 누락 · 형식(0 ≤ lo < hi ≤ charLen) · pids/pid 잔존,
+         틱이 있는데 scroller 이벤트 없음. 세트 B 이전 파일은 FAIL — 정상.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -90,13 +99,13 @@ def all_pids_used(timeline):
     """timeline이 참조하는 모든 pid."""
     used = set()
     for e in timeline:
-        for k in ("centerPid", "cursorPid", "pid"):
+        for k in ("centerPid", "cursorPid"):
             v = e.get(k)
             if v:
                 used.add(v)
-        p = e.get("pids")
-        if isinstance(p, list):
-            used.update(x for x in p if x)
+        r = e.get("ranges")                      # v3 highlight / copy
+        if isinstance(r, list):
+            used.update(x[0] for x in r if isinstance(x, list) and x and x[0])
     return used
 
 
@@ -262,12 +271,12 @@ def check_counters(rep, ticks):
         return
     mouse = sum(e.get("mouseEvents", 0) or 0 for e in ticks)
     scroll = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
-    moved = sum(1 for e in ticks if e.get("cursorMoved"))
+    moved = sum(1 for e in ticks if (e.get("mdx", 0) or 0) + (e.get("mdy", 0) or 0) > 0)
     if "mouseEvents" not in ticks[0]:
         rep.add(WARN, "이벤트 카운터", "mouseEvents 필드 없음 (v2.2 이전 로그)")
     elif mouse == 0 and moved > 0:
         rep.add(FAIL, "이벤트 카운터",
-                f"cursorMoved 틱이 {moved}개인데 mouseEvents 합이 0 "
+                f"mdx+mdy>0 틱이 {moved}개인데 mouseEvents 합이 0 "
                 f"— input.drain() 이관 실패")
     else:
         rep.add(OK, "이벤트 카운터", f"mouse {mouse} / scroll {scroll}")
@@ -596,6 +605,132 @@ def check_vis_cross(rep, meta, ticks):
         rep.add(OK, "vis 교차검사", detail)
 
 
+# [15] 스크롤 교차검사 --------------------------------------------------------
+SCROLL_CROSS_TOL = 2         # px. vis 좌표는 정수 반올림, scrollY 는 소수가 나온다
+
+
+def check_scroll_cross(rep, meta, timeline, ticks):
+    """[15] vis 조각 이동량 ≈ scrollY 변화량 (감사 §8 검증 장치).
+
+    아래로 스크롤하면 scrollY 는 늘고 조각 top 은 같은 만큼 줄어든다.
+    중앙값을 쓰는 이유: sticky 영역 · 늦게 커진 이미지 아래 조각처럼 따로 움직이는 소수를 무시.
+    """
+    tick_ms = meta.get("tickMs", 150)
+    rescans = sorted(e.get("t", 0) for e in timeline if e.get("type") == "rescan")
+    n = bad = 0
+    ex = []
+    ordered = sorted(ticks, key=lambda e: e.get("t", 0))
+    for prev, cur in zip(ordered, ordered[1:]):
+        if prev.get("segId") != cur.get("segId"):
+            continue
+        t0, t1 = prev.get("t", 0), cur.get("t", 0)
+        if t1 - t0 > tick_ms * SCROLL_GAP_TOL:
+            continue
+        if any(prev.get(k) != cur.get(k) for k in ("docH", "vh", "vw", "dpr")):
+            continue
+        if any(t0 < t <= t1 for t in rescans):
+            continue
+        a = {(v[0], v[1]): v[2] for v in (prev.get("vis") or []) if isinstance(v, list) and len(v) == 6}
+        b = {(v[0], v[1]): v[2] for v in (cur.get("vis") or []) if isinstance(v, list) and len(v) == 6}
+        common = a.keys() & b.keys()
+        if not common:
+            continue
+        move = statistics.median(a[k] - b[k] for k in common)
+        dy = (cur.get("scrollY") or 0) - (prev.get("scrollY") or 0)
+        if move == 0 and abs(dy) < 0.5:
+            continue                                   # 아무것도 안 움직인 쌍은 비교 대상 아님
+        n += 1
+        if abs(move - dy) > SCROLL_CROSS_TOL:
+            bad += 1
+            if len(ex) < 3:
+                ex.append(f"t={t1 / 1000:.1f}s 조각 {move:+.0f} vs scrollY {dy:+.1f}")
+    if n == 0:
+        rep.add(OK, "스크롤 교차검사", "움직인 틱 쌍 없음 (판정 대상 없음)")
+    elif bad == 0:
+        rep.add(OK, "스크롤 교차검사", f"움직인 {n}쌍 전부 ±{SCROLL_CROSS_TOL}px 안에서 일치")
+    else:
+        rep.add(WARN, "스크롤 교차검사",
+                f"움직인 {n}쌍 중 {bad}쌍({bad / n:.0%}) 어긋남 ({'; '.join(ex)}) "
+                f"— 스크롤 주체 판정 또는 vis 오류, 소수면 레이아웃 흔들림")
+
+
+# [16] v3 필드 ----------------------------------------------------------------
+# 감사 §8 "v3 tick 최종 필드" 중 세트 C 까지 들어간 것. media(세트 E) · fo(세트 D, iframe primary) 는 그때 추가.
+TICK_REQUIRED = ("type", "t", "segId",
+                 "scrollY", "scrollEvents", "scrollOther",
+                 "mouseEvents", "mdx", "mdy", "cursorPid", "cx", "cy",
+                 "centerPid", "visTop", "visBot",
+                 "vis",
+                 "edits",
+                 "vw", "vh", "docH", "dpr")
+TICK_REMOVED = ("scrollSpeed", "cursorDist", "cursorMoved")
+SEL_REMOVED = ("pids", "pid")
+
+
+def check_v3_fields(rep, meta, timeline, ticks):
+    """[16] 필수 필드 누락 · 삭제 필드 잔존 · ranges 형식 · scroller 이벤트."""
+    probs = []
+    miss = {}
+    left = {}
+    for e in ticks:
+        for k in TICK_REQUIRED:
+            if k not in e:
+                miss[k] = miss.get(k, 0) + 1
+        for k in TICK_REMOVED:
+            if k in e:
+                left[k] = left.get(k, 0) + 1
+    if miss:
+        probs.append("틱 누락 " + ", ".join(f"{k}×{v}" for k, v in miss.items()))
+    if left:
+        probs.append("틱 삭제 필드 잔존 " + ", ".join(f"{k}×{v}" for k, v in left.items()))
+
+    clen = {p["pid"]: p.get("charLen", 0) for p in meta.get("paragraphs", [])}
+    sels = [e for e in timeline if e.get("type") in ("highlight", "copy")]
+    for e in sels:
+        tag = f"{e.get('type')} t={e.get('t', 0) / 1000:.1f}s"
+        if any(k in e for k in SEL_REMOVED):
+            probs.append(f"{tag} pids/pid 잔존")
+            break
+        r = e.get("ranges")
+        if not isinstance(r, list) or not r:
+            probs.append(f"{tag} ranges 없음")
+            break
+        badr = [x for x in r if not (isinstance(x, list) and len(x) == 3 and x[0] in clen
+                                     and isinstance(x[1], int) and isinstance(x[2], int)
+                                     and 0 <= x[1] < x[2] <= clen[x[0]])]
+        if badr:
+            probs.append(f"{tag} ranges 형식 {badr[0]!r}")
+            break
+
+    if ticks and not any(e.get("type") == "scroller" for e in timeline):
+        probs.append("scroller 이벤트 없음")
+
+    if probs:
+        rep.add(FAIL, "v3 필드", " · ".join(probs))
+    else:
+        rep.add(OK, "v3 필드", f"틱 {len(ticks)}개 · 선택/복사 {len(sels)}건 형식 일치")
+
+
+def input_summary(timeline, ticks):
+    """세트 C 입력 · 스크롤 요약 (판정 아님)."""
+    paths = []
+    for e in timeline:
+        if e.get("type") == "scroller":
+            p = e.get("path")
+            if isinstance(p, list) and p:
+                d = str(p[0]).lower() + (f"#{p[1]}" if p[1] else "") + (f".{str(p[2]).split(' ')[0]}" if p[2] else "")
+            else:
+                d = str(p)
+            if not paths or paths[-1] != d:
+                paths.append(d)
+    other = sum(e.get("scrollOther", 0) or 0 for e in ticks)
+    ev = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
+    ed = sum(1 for e in ticks if (e.get("edits", 0) or 0) > 0)
+    ratio = f"{ed}/{len(ticks)} ({ed / len(ticks):.0%})" if ticks else "—"
+    return (f"스크롤 주체 {' → '.join(paths) if paths else '없음'} · scrollEvents {ev} · "
+            f"scrollOther {other} · edits>0 틱 {ratio}")
+
+
 def vis_summary(ticks):
     """용량 실측용 (판정 아님)."""
     if not ticks:
@@ -690,6 +825,8 @@ def run_payload(label, data, baseline=None):
     check_extraction(rep, meta, ticks)
     check_pieces(rep, meta, ticks)
     check_vis_cross(rep, meta, ticks)
+    check_scroll_cross(rep, meta, timeline, ticks)
+    check_v3_fields(rep, meta, timeline, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -698,6 +835,7 @@ def run_payload(label, data, baseline=None):
           f"이벤트 {len(timeline)}개 · schema v{meta.get('schemaVersion', '?')}")
     print(f"  -- {pieces_summary(meta)}")
     print(f"  -- {vis_summary(ticks)}")
+    print(f"  -- {input_summary(timeline, ticks)}")
     return rep
 
 
