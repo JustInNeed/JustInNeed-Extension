@@ -1,106 +1,78 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-extract_features.py  (v2)
+extract_features.py  (v3)
 =========================
-content.js가 뱉은 raw JSON 세션 파일(들) -> 유닛별 feature 테이블(CSV).
+세션 bundle(rbc-session, schemaVersion 3) → 유닛별 feature 테이블(CSV).
+계산 정의의 기준 문서 = 피처_계산_논리.md. 이 파일과 문서가 어긋나면 문서를 먼저 고칠 것.
 
-핵심 원칙(설계 4번):
-  - 수집(content.js)은 raw만. feature 계산은 전부 여기서.
-  - 그래서 feature 정의/임계값을 바꾸면 *재수집 없이* 이 스크립트만 다시 돌리면 됨.
+원칙: 수집은 원자료만, 판정·가공은 여기서. 정의/문턱을 바꾸면 재수집 없이 다시 돌린다.
 
-v1 -> v2 변경점:
-  [P1] has_highlight / has_copy 는 모델 feature로 유지한다. (2026-09-12 결정)
-       한때 라벨 누수를 우려해 제외했었다. 근거는 "PDF 5단계 평가가 사용자
-       하이라이트를 정답으로 쓰는데 같은 신호를 입력에도 넣으면 성능이 뻥튀기된다"
-       였다.
-       그 전제가 바뀌었다: 평가용 정답은 하이라이트/복사가 아니라 **별도의
-       '관심 문단 선택' UI**로 따로 받기로 했다. 즉 라벨과 이 두 신호는 서로 다른
-       행위이므로 누수가 아니고, 둘 다 중요한 행동 feature다.
-       - 라벨링 UI가 붙으면 timeline에 별도 이벤트 타입(예: type='label')으로
-         들어오고, 그때 라벨 컬럼을 하나 추가한다. 지금은 없다.
-       - 그래도 실험 삼아 빼보고 싶으면 --no-selection-features.
-
-  [P2] 델타(diff) 기반 feature의 구간 오염 수정
-       v1은 df 전체에 dx = cx.diff() 를 계산한 뒤 유닛별로 subset했다.
-       커서가 유닛을 떠났다 돌아오면 그 diff가 "떠나 있던 구간 전체의 이동량"을
-       담아서, 유닛 진입 첫 행마다 가짜 큰 dx/속도가 들어갔다.
-       -> 유닛별 '연속 구간(run)' 단위로 diff를 다시 계산하고,
-          각 run의 첫 행(직전 틱이 다른 유닛인 행)은 델타 계산에서 제외한다.
-       같은 뿌리의 버그라 아래 항목이 전부 영향을 받았고, 함께 고쳤다:
-          xdist, horizontal_ratio, horizontal_ratio_trend,
-          cursor_speed_z / _std / _trend, cursorfreq, pause_count
-       추가로 content.js v2는 탭 이탈(document.hidden) 중 틱을 기록하지 않으므로
-       타임라인에 시간 구멍이 생긴다. 그 구멍을 사이에 둔 두 틱의 델타도 무효라
-       run 분리 기준에 '시간 간격'을 함께 넣었다.
-
-v1 설계 결정(그대로 유지):
-  - ML 단위 = "유닛 1개당 1행". 재방문 신호는 visit_count feature로 흡수.
-  - z-score = "이 입력 파일들 전체"를 그 사용자의 baseline으로 봄.
-    세션이 3개 미만이면 z_is_weak=True 플래그.
-  - trend/std는 샘플 N개 미만이면 0 + *_low_sample 플래그(설계 5번).
-  - idle은 모델한테 안 맡기고 룰로 컷(설계 2번). rule_label 컬럼으로 표시.
+v2 → v3
+  - 입력 = background 가 내보낸 세션 bundle. 페이지 schemaVersion < 3 은 거부 (v2 하위호환 없음).
+  - 행 = 페이지의 **모든 유닛** (안 본 유닛 포함 — 순위 평가 · "안읽음" 상태에 필요).
+  - A채널(커서 계열) 귀속 = 글자 바로 위(cursorPid) → 커서가 든 조각 상자 (tick.vis 로 계산, 2026-10-05).
+  - B채널(스크롤 계열 · 체류) = 중앙선 한 줄 → GVAM 가중치 (tick.vis 조각 세로 구간,
+    가우시안 μ 0.492 σ 0.201, 분모 = 화면 전체 가중치 상수, 같은 높이 여러 유닛은 나눠 가짐).
+  - 차분값(scrollSpeed · cursorDist · cursorMoved)은 로그에 없다 → 리셋 규칙으로 여기서 계산.
+    커서 이동량은 tick.mdx / mdy (150ms 표본 사이 이동 보존).
+  - 하이라이트 · 복사 = ranges 의 pid.
+  - 재방문 = 방문 뒤 화면 위로 빠진 적이 있는 유닛이 다시 읽기 구간(μ±σ)에 1초 머문 횟수 (revisit_count, 모델 입력).
+  - idle(120초 이상 입력 없음) · 편집(edits>0) 틱은 모든 feature 계산에서 제외.
 
 사용법:
-  python extract_features.py session1.json [session2.json ...] -o features.csv
-  python extract_features.py *.json -o features.csv --no-selection-features
+  python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
+  python3 extract_features.py *.json -o features.csv --noise noise.json
+      noise.json = {"<pageId 또는 url>": ["<pid>", ...], ...}  (본문 아닌 유닛)
 """
 
 import argparse
 import json
+import math
 import sys
+from urllib.parse import urlparse, parse_qs
+
 import numpy as np
 import pandas as pd
 
 # =============================================================================
-# CONFIG  — 전부 여기서 튜닝. 코드 안 건드림.
+# CONFIG — 문서 "파라미터" 표와 같은 값. 튜닝은 여기서만.
 # =============================================================================
 CFG = {
-    # --- 스크롤 "정지" 판정 (viewport_fixed_duration용) ---
-    "SCROLL_STILL_PXPS": 5,       # |scrollSpeed| 이 이하면 "스크롤 안 함"으로 봄 (px/s)
+    # GVAM (Grusky 외 CHI 2017, 뷰포트 높이 비율)
+    "GVAM_MU": 0.492,
+    "GVAM_SIGMA": 0.201,
 
-    # --- pause(커서 정지) 판정 (pause_count용) ---
-    "PAUSE_MIN_TICKS": 2,         # 커서가 이만큼 연속 정지하면 pause 1회 (2틱≈300ms)
+    # 리셋 규칙: segId 변경 · scroller 이벤트 · 두 틱 간격 > 이 배수 × tickMs
+    "RESET_GAP_MULT": 2.0,
 
-    # --- trend/std 최소 샘플 가드 (설계 5번) ---
-    "MIN_SAMPLES_TREND": 4,       # 이보다 샘플 적으면 trend=0, std=0 + 플래그
+    # 스크롤 "정지" (viewport_fixed_duration)
+    "SCROLL_STILL_PXPS": 5,
 
-    # --- visit(재방문) 카운트 ---
-    "VISIT_GAP_TOL_TICKS": 3,     # 중앙선이 잠깐(이 틱 수 이하) 벗어났다 돌아오면 같은 방문
+    # 커서 정지 (pause_count): 움직이다가 이 틱 수 연속 정지 → 1회
+    "PAUSE_MIN_TICKS": 2,
 
-    # --- [P2] 연속 구간(run) 판정 ---
-    # 직전 행과의 시간 간격이 tick_sec * 이 배수를 넘으면 델타 무효(다른 run).
-    # 탭 이탈로 틱이 비어 있는 구간, 유닛을 떠났다 돌아온 구간을 모두 잡는다.
-    "RUN_GAP_TOL": 1.8,
+    # trend / std 최소 표본
+    "MIN_SAMPLES_TREND": 4,
 
-    # --- 개인화 정규화: WPS(독해 속도) ---
-    # dwell_normalized = actual_dwell / (charLen / CHARS_PER_SEC)
-    # ⚠ v1 placeholder. 진짜로는 사용자별 WPS를 추정해야 함. 일단 상수로 둠.
-    "CHARS_PER_SEC": 8.0,         # 한국어 대략치(튜닝 대상). 글자/초.
+    # 재방문: 읽기 구간 = μ ± ZONE_K·σ
+    "ZONE_K": 1.0,
+    "VISIT_MIN_SEC": 1.0,          # 이만큼 읽기 구간에 머물러야 방문 1회 (2틱은 빠른 스크롤 통과도 잡음)
+    "VISIT_GAP_TOL_TICKS": 3,      # 이하로 잠깐 벗어난 건 같은 방문 (떨림)
 
-    # --- z-score baseline 경고선 ---
-    "MIN_SESSIONS_FOR_Z": 3,      # 세션 < 이 수 이면 z_is_weak=True
+    # idle: 입력(mouse · scroll · scrollOther · edits) 없는 연속 구간이 이 이상이면 구간 전체 제외
+    "IDLE_MIN_SEC": 120,
 
-    # --- idle 룰 컷 (설계 2번): 명백한 AFK만. 미묘한 멍때림은 안 건드림 ---
-    "IDLE_MIN_DWELL_SEC": 120,    # 한 유닛에 이 이상 머물렀는데
-    "IDLE_MAX_CURSOR_MOVE_FRAC": 0.02,  # 커서 움직인 틱 비율이 이 이하 +
-    "IDLE_MAX_SCRL_EVENTS": 1,    # 스크롤 이벤트가 사실상 0 이면 -> idle(AFK)
+    # z-score 기준선 경고 (참가자당 세션 수)
+    "MIN_SESSIONS_FOR_Z": 3,
 
-    # --- "스쳐간" 유닛: 진짜 방문으로 안 침 ---
-    "MIN_DWELL_SEC_KEEP": 0.45,   # dwell이 이 미만이면 행에서 제외(그냥 지나감)
+    # 메타용 길이 정규화 (임시 상수)
+    "CHARS_PER_SEC": 8.0,
 }
 
 EPS = 1e-9
 
-# =============================================================================
-# 모델 feature 목록
-# =============================================================================
-# 선택(하이라이트)·복사 신호. 평가용 정답은 별도 '관심 문단 선택' UI로 받으므로
-# 이 둘은 라벨이 아니라 행동 feature다. 기본 포함.
 SELECTION_FEATURES = ["has_highlight", "has_copy"]
-
-# 확정 명세(수집 feature 명세 표) 17개와 정확히 일치시킨다.
-# scroll_depth_pct 는 고정값이라 표에서도 모델 입력 제외 → 여기서도 메타.
 MODEL_FEATURES = SELECTION_FEATURES + [
     "viewport_fixed_duration", "pause_count",
     "horizontal_ratio", "horizontal_ratio_trend", "xdist",
@@ -108,371 +80,522 @@ MODEL_FEATURES = SELECTION_FEATURES + [
     "cursorfreq", "cursor_conc",
     "scroll_speed_z", "scroll_speed_std", "scrlfreq", "scrlfreq_trend",
     "entry_scrlspeed",
+    "revisit_count",
 ]
 
-# CSV에는 남지만 모델 입력이 아닌 컬럼(메타).
-#   dwell_normalized / visit_count 는 명세 17개에 없다.
-#   (0-3: "재방문 횟수 = 별도 신호"). 참고용으로 계산만 해서 남긴다.
-META_COLUMNS = [
-    "session_id", "url", "paragraph_id", "unit_order", "char_len", "text",
-    "highlight_text", "copy_text", "scroll_depth_pct", "dwell_sec",
-    "dwell_viewport_sec", "dwell_normalized", "visit_count",
-    "n_center_ticks", "n_cursor_ticks", "rule_label", "z_is_weak",
-    "trend_low_sample",
-    "session_has_disruptive_rescan", "session_hidden_gaps",
+# 검색 결과 페이지: (호스트에 포함된 문자열, 검색어 파라미터)
+SEARCH_HOSTS = [
+    ("google.", "q"), ("search.naver.com", "query"), ("m.search.naver.com", "query"),
+    ("search.daum.net", "q"), ("bing.com", "q"), ("duckduckgo.com", "q"),
 ]
 
 
 # =============================================================================
-# 작은 헬퍼들
+# 작은 헬퍼
 # =============================================================================
-def _slope_sign(values):
-    """시계열 기울기 부호. 샘플 부족하면 (0, low_sample=True)."""
+def _phi(z):
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _gmass(a, b):
+    """화면 높이 비율 a..b 의 가우시안 질량."""
+    mu, sg = CFG["GVAM_MU"], CFG["GVAM_SIGMA"]
+    return _phi((b - mu) / sg) - _phi((a - mu) / sg)
+
+
+def _slope_sign(values, weights=None):
     n = len(values)
     if n < CFG["MIN_SAMPLES_TREND"]:
         return 0, True
     x = np.arange(n, dtype=float)
     y = np.asarray(values, dtype=float)
-    slope = np.polyfit(x, y, 1)[0]
+    w = None if weights is None else np.sqrt(np.asarray(weights, dtype=float))
+    if w is not None and (w <= 0).all():
+        return 0, True
+    slope = np.polyfit(x, y, 1, w=w)[0]
     if not np.isfinite(slope) or abs(slope) < EPS:
         return 0, False
     return int(np.sign(slope)), False
 
 
+def _wmean_std(values, weights):
+    """가중 평균 · 가중 std. 표본(가중치 > 0) 부족하면 std = 0, low = True."""
+    v = np.asarray(values, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    sw = w.sum()
+    if len(v) == 0 or sw <= 0:
+        return 0.0, 0.0, True
+    m = float((w * v).sum() / sw)
+    if len(v) < CFG["MIN_SAMPLES_TREND"]:
+        return m, 0.0, True
+    return m, float(math.sqrt((w * (v - m) ** 2).sum() / sw)), False
+
+
 def _std_guarded(values):
-    """샘플 부족하면 (0.0, low_sample=True)."""
     n = len(values)
     if n < CFG["MIN_SAMPLES_TREND"]:
         return 0.0, True
-    return (float(np.std(values, ddof=1)) if n > 1 else 0.0), False
-
-
-def _count_runs(mask, gap_tol=0):
-    """bool 리스트에서 True 연속 구간(run) 개수. gap_tol 만큼의 False는 메움."""
-    runs, in_run, gap = 0, False, 0
-    for m in mask:
-        if m:
-            if not in_run:
-                runs += 1
-                in_run = True
-            gap = 0
-        else:
-            if in_run:
-                gap += 1
-                if gap > gap_tol:
-                    in_run = False
-    return runs
+    return float(np.std(values, ddof=1)), False
 
 
 def _count_pauses(moved_flags):
-    """커서가 '움직이다가 멈춘' 구간 수 (직전 활동 있을 때만 = 죽은 커서 제외)."""
+    """커서가 움직이다 멈춘 횟수 (직전에 움직임이 있었던 정지만)."""
     pauses, still, seen_move = 0, 0, False
     for moved in moved_flags:
         if moved:
-            still = 0
-            seen_move = True
-        else:
-            if seen_move:           # 직전에 움직임이 있었던 경우만
-                still += 1
-                if still == CFG["PAUSE_MIN_TICKS"]:
-                    pauses += 1     # 정지 구간 진입 시 1회 카운트
+            still, seen_move = 0, True
+        elif seen_move:
+            still += 1
+            if still == CFG["PAUSE_MIN_TICKS"]:
+                pauses += 1
     return pauses
 
 
-# --- [P2] 연속 구간(run) 처리 -------------------------------------------------
-def _run_ids(sub, tick_sec):
-    """
-    유닛별 subset 안에서 '연속으로 관측된 구간'에 id를 매긴다.
-    끊기는 조건 두 가지:
-      (a) 원본 틱 인덱스가 연속이 아님  -> 그 사이에 다른 유닛에 있었음
-      (b) 시간 간격이 tick_sec * RUN_GAP_TOL 초과 -> 탭 이탈 등으로 틱이 비었음
-    """
-    if sub.empty:
-        return pd.Series([], dtype="int64", index=sub.index)
-    idx_break = sub["i"].diff() != 1
-    t_break = sub["t"].diff() > tick_sec * 1000.0 * CFG["RUN_GAP_TOL"]
-    brk = idx_break | t_break
-    brk.iloc[0] = True
-    return brk.cumsum()
+def _z(v, mean, std):
+    return float((v - mean) / (std + EPS))
 
 
-def _prep_runs(sub, tick_sec):
-    """
-    subset에 run id / run 내부 diff / 델타 유효 마스크를 붙여서 돌려준다.
-    _valid=False 인 행은 '직전 틱이 이 유닛이 아니었던 진입 행'이라
-    cursorDist, cursorMoved, dx, dy 같은 델타 파생값을 쓰면 안 된다.
-    """
-    if sub.empty:
-        return sub
-    s = sub.sort_values("t").copy()
-    s["_run"] = _run_ids(s, tick_sec)
-    s["_valid"] = s.groupby("_run").cumcount() > 0     # run의 첫 행 제외
-    s["_dx"] = s.groupby("_run")["cx"].diff().abs()
-    s["_dy"] = s.groupby("_run")["cy"].diff().abs()
-    return s
+def search_query_of(url):
+    try:
+        u = urlparse(url)
+    except Exception:
+        return None
+    host = (u.hostname or "").lower()
+    for frag, key in SEARCH_HOSTS:
+        if frag in host:
+            q = parse_qs(u.query).get(key)
+            if q and q[0].strip():
+                return q[0].strip()
+    return None
 
 
 # =============================================================================
-# 1) 로드 + 정규화된 long-form tick 프레임 만들기
+# 1) 로드
 # =============================================================================
-def load_sessions(paths):
-    sessions = []
-    for p in paths:
-        with open(p, encoding="utf-8") as f:
-            data = json.load(f)
-        meta = data.get("meta", {})
-        tick_sec = meta.get("tickMs", 150) / 1000.0
-        paras = meta.get("paragraphs", [])
-        charlen = {pp["pid"]: pp.get("charLen", 0) for pp in paras}
-        textmap = {pp["pid"]: pp.get("text", "") for pp in paras}
-        ordermap = {pp["pid"]: pp.get("order", -1) for pp in paras}
-        timeline = data.get("timeline", [])
-
-        # 세션 품질 플래그 (content.js v2가 남기는 이벤트)
-        disruptive = any(e.get("type") == "rescan"
-                         and e.get("mode") == "disruptive-skipped" for e in timeline)
-        hidden_gaps = sum(1 for e in timeline
-                          if e.get("type") == "visibility" and e.get("hidden"))
-
-        sessions.append({
-            "path": p, "meta": meta, "tick_sec": tick_sec,
-            "charlen": charlen, "textmap": textmap, "ordermap": ordermap,
-            "timeline": timeline,
-            "session_id": f"{meta.get('url','?')}@{meta.get('startedAt','?')}",
-            "disruptive": disruptive, "hidden_gaps": hidden_gaps,
-        })
-    return sessions
+def load_bundle(path):
+    with open(path, encoding="utf-8") as f:
+        b = json.load(f)
+    if b.get("kind") != "rbc-session":
+        sys.exit(f"{path}: 세션 bundle 이 아님 (kind={b.get('kind')!r}). "
+                 "참여 정보 페이지 / 패널의 JSON 내보내기 파일을 넣을 것.")
+    s = b.get("session", {})
+    pages = b.get("pages", [])
+    for p in pages:
+        v = p.get("meta", {}).get("schemaVersion", 0)
+        if v < 3:
+            sys.exit(f"{path}: schemaVersion {v} — v3 미만은 지원 안 함.")
+    tester = s.get("tester") or {}
+    return {
+        "path": path,
+        "session": s,
+        "pages": pages,
+        "session_id": s.get("sessionId") or path,
+        "tester_id": tester.get("testId") or "unknown",
+        "tick_ms": s.get("tickMs", 150),
+    }
 
 
-def ticks_df(session):
-    rows = [e for e in session["timeline"] if e.get("type") == "tick"]
-    df = pd.DataFrame(rows)
+# =============================================================================
+# 2) 페이지 하나: 틱 전처리
+# =============================================================================
+def prep_ticks(page, tick_ms):
+    """틱 DataFrame + run(리셋 규칙) + 파생값 + 제외 마스크."""
+    tl = page["timeline"]
+    ticks = [e for e in tl if e.get("type") == "tick"]
+    df = pd.DataFrame(ticks)
     if df.empty:
         return df
-    df = df.sort_values("t").reset_index(drop=True)
+    df = df.sort_values("t", kind="stable").reset_index(drop=True)
+    tick_sec = tick_ms / 1000.0
 
-    # [P2] 원본 틱 순서. 유닛별 subset에서 연속성을 판정하는 기준이 된다.
-    df["i"] = np.arange(len(df), dtype="int64")
+    # 리셋 규칙: segId 변경 · 간격 > RESET_GAP_MULT × tickMs · 그 사이 scroller 이벤트
+    sc_times = sorted((e["segId"], e["t"]) for e in tl if e.get("type") == "scroller")
+    brk = np.zeros(len(df), dtype=bool)
+    brk[0] = True
+    t = df["t"].to_numpy()
+    seg = df["segId"].to_numpy()
+    for i in range(1, len(df)):
+        if seg[i] != seg[i - 1] or (t[i] - t[i - 1]) > CFG["RESET_GAP_MULT"] * tick_ms:
+            brk[i] = True
+        else:
+            for sg, st in sc_times:
+                if sg == seg[i] and t[i - 1] < st <= t[i]:
+                    brk[i] = True
+                    break
+    df["run"] = np.cumsum(brk)
+    df["run_first"] = brk
 
-    # [P2] 전역 dx/dy는 만들지 않는다. (v1의 오염 원인)
-    #      dx/dy는 _prep_runs()가 유닛별 run 안에서만 계산한다.
+    # 스크롤 속도 (px/s): 같은 run 안 scrollY 차분 / 실제 간격
+    dy = df.groupby("run")["scrollY"].diff()
+    dt = df.groupby("run")["t"].diff() / 1000.0
+    df["scroll_v"] = (dy / dt).where(~df["run_first"])
+    df["abs_scroll_v"] = df["scroll_v"].abs()
 
-    # cursorDist는 content.js가 '직전 틱 대비'로 준 값이라, 시간 구멍(탭 이탈)을
-    # 사이에 둔 행은 무효다. 전역 연속성 마스크를 미리 붙여둔다(baseline용).
-    gap = df["t"].diff()
-    df["_global_valid"] = gap.le(session["tick_sec"] * 1000.0 * CFG["RUN_GAP_TOL"])
-    df.loc[df.index[0], "_global_valid"] = False
+    # 커서: mdx/mdy = 직전 틱 이후 이동량 (drain 덕에 항상 약 한 틱 분량)
+    df["mpath"] = df["mdx"] + df["mdy"]
+    df["moved"] = df["mpath"] > 0
+    df["cur_speed"] = df["mpath"] / tick_sec      # L1 경로 속도 px/s
 
-    df["cursor_speed_pxps"] = df["cursorDist"] / session["tick_sec"]
-    df["abs_scroll_speed"] = df["scrollSpeed"].abs()
-    if "docH" in df.columns:
-        denom = (df["docH"] - df["vh"]).replace(0, np.nan)
-        df["scroll_depth_pct"] = (df["scrollY"] / denom).clip(0, 1)
-    else:
-        df["scroll_depth_pct"] = np.nan
+    # 제외: 편집 틱, idle 구간
+    df["edit"] = df["edits"] > 0
+    active = (df["mouseEvents"] + df["scrollEvents"] + df["scrollOther"] + df["edits"]) > 0
+    idle = np.zeros(len(df), dtype=bool)
+    need = int(math.ceil(CFG["IDLE_MIN_SEC"] / tick_sec))
+    i = 0
+    act = active.to_numpy()
+    while i < len(df):
+        if act[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(df) and not act[j]:
+            j += 1
+        if j - i >= need:
+            idle[i:j] = True
+        i = j
+    df["idle"] = idle
+    df["use"] = ~df["idle"] & ~df["edit"]
+
+    # A채널 귀속: 커서가 들어 있는 조각 상자(폭 0 제외)의 유닛. 여러 개면 글자 위 판정(cursorPid) 우선,
+    # 없으면 가장 작은 상자. tick.cursorPid(글자 바로 위)는 이 규칙의 부분집합이다.
+    def _apid(r):
+        if r.cx is None or r.cy is None or (isinstance(r.cx, float) and math.isnan(r.cx)):
+            return None
+        hit = [(v[0], (v[3] - v[2]) * (v[5] - v[4])) for v in r.vis
+               if v[5] - v[4] > 0 and v[4] <= r.cx <= v[5] and v[2] <= r.cy <= v[3]]
+        if not hit:
+            return None
+        if isinstance(r.cursorPid, str) and any(p == r.cursorPid for p, _ in hit):
+            return r.cursorPid
+        return min(hit, key=lambda h: h[1])[0]
+    df["apid"] = [_apid(r) for r in df.itertuples(index=False)]
+
+    denom = (df["docH"] - df["vh"]).where(lambda x: x > 0)
+    df["depth"] = (df["scrollY"] / denom).clip(0, 1)
     return df
 
 
 # =============================================================================
-# 2) 사용자 baseline (z-score 용) — 입력 파일 전체 풀링
+# 3) GVAM 가중치 · 읽기 구간 위치 (틱 × 유닛)
 # =============================================================================
-def build_baseline(all_ticks):
-    """커서/스크롤 속도의 사용자 기준 평균·표준편차."""
-    # [P2] 시간 구멍을 사이에 둔 행의 cursorDist는 무효 -> baseline에서 제외
-    ok = all_ticks[all_ticks["_global_valid"] & (all_ticks["cursorMoved"] == True)]  # noqa: E712
-    cur = ok["cursor_speed_pxps"]
-    scr = all_ticks[all_ticks["abs_scroll_speed"] > CFG["SCROLL_STILL_PXPS"]]["abs_scroll_speed"]
-    return {
-        "cursor_mean": float(cur.mean()) if len(cur) else 0.0,
-        "cursor_std": float(cur.std(ddof=1)) if len(cur) > 1 else 1.0,
-        "scroll_mean": float(scr.mean()) if len(scr) else 0.0,
-        "scroll_std": float(scr.std(ddof=1)) if len(scr) > 1 else 1.0,
-    }
+def gvam_tick(vis, vh):
+    """
+    vis 한 틱 → (weights{pid: w}, spans{pid: [(top, bottom), ...] 합집합, 화면 안으로 자름}).
+    - 폭 0 조각(빈 줄 세로선) 제외.
+    - 같은 pid 조각은 세로 구간 합집합.
+    - 화면 높이 각 지점의 가우시안 질량을 그 지점을 덮은 유닛 수로 나눠 가진다.
+    - 분모 = 화면 전체 질량(상수). 글자가 없는 높이(사진 · 여백)의 질량은 어디에도 안 감.
+    """
+    if not vis or not vh:
+        return {}, {}
+    raw = {}
+    for pid, _k, top, bot, left, right in vis:
+        if right - left <= 0:
+            continue
+        a, b = max(top, 0), min(bot, vh)
+        if b <= a:
+            continue
+        raw.setdefault(pid, []).append((a, b))
+    spans = {}
+    for pid, iv in raw.items():
+        iv.sort()
+        out = [list(iv[0])]
+        for a, b in iv[1:]:
+            if a <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], b)
+            else:
+                out.append([a, b])
+        spans[pid] = [tuple(x) for x in out]
+
+    cuts = sorted({y for iv in spans.values() for ab in iv for y in ab})
+    total = _gmass(0.0, 1.0)
+    w = {pid: 0.0 for pid in spans}
+    for a, b in zip(cuts, cuts[1:]):
+        cover = [pid for pid, iv in spans.items() if any(x <= a and b <= y for x, y in iv)]
+        if not cover:
+            continue
+        m = _gmass(a / vh, b / vh) / total / len(cover)
+        for pid in cover:
+            w[pid] += m
+    return w, spans
 
 
-def _z(value, mean, std):
-    return float((value - mean) / (std + EPS))
+def zone_bounds(vh):
+    k = CFG["ZONE_K"]
+    return (CFG["GVAM_MU"] - k * CFG["GVAM_SIGMA"]) * vh, (CFG["GVAM_MU"] + k * CFG["GVAM_SIGMA"]) * vh
+
+
+def gvam_frame(df):
+    """틱마다 GVAM 가중치 · 읽기 구간 겹침 · 이탈 방향을 long-form 으로."""
+    rows = []
+    for i, r in enumerate(df.itertuples(index=False)):
+        w, spans = gvam_tick(r.vis, r.vh)
+        zt, zb = zone_bounds(r.vh)
+        for pid, iv in spans.items():
+            bot = iv[-1][1]
+            inz = any(a < zb and b > zt for a, b in iv)
+            side = None if inz else ("above" if bot <= zt else "below")
+            rows.append((i, pid, w.get(pid, 0.0), inz, side))
+    return pd.DataFrame(rows, columns=["i", "pid", "w", "inzone", "side"])
 
 
 # =============================================================================
-# 3) 유닛별 feature 한 행씩
+# 4) 재방문
 # =============================================================================
-def aggregate(session, df, baseline, n_sessions):
-    tick_sec = session["tick_sec"]
-    timeline = session["timeline"]
+def revisits(g, n_ticks, tick_sec):
+    """
+    유닛 하나의 (틱 index → inzone, side) 로 방문 · 재방문 횟수 · 첫 구간 진입 틱.
+    방문 = 읽기 구간에 VISIT_MIN_SEC 이상 (VISIT_GAP_TOL_TICKS 이하 이탈은 같은 방문).
+    재방문 = 마지막 방문(또는 처음 구간에 들어온 때) 뒤로 **화면 위쪽으로 빠진 적이 있는** 유닛이
+             다시 방문 조건을 채움. 들어오는 방향은 묻지 않는다 — 위로 지나쳐 올라갔다가 다시
+             내려와 읽어도 재방문. 위로 빠진 적이 없으면(앞 글로 갔다 이어 읽기) 안 셈.
+    화면에 없는 틱은 위치 정보 없음으로 보고 상태를 유지한다.
+    """
+    by_i = {r.i: (r.inzone, r.side) for r in g.itertuples(index=False)}
+    need = max(1, int(math.ceil(CFG["VISIT_MIN_SEC"] / tick_sec - 1e-9)))
+    visits = revisit = 0
+    first_entry = None
+    seen_zone = went_above = False
+    in_visit = counted = False
+    vlen = gap = 0
+    last_side = None
+    for i in range(n_ticks):
+        inz, side = by_i.get(i, (False, None))
+        if inz:
+            seen_zone = True
+            if first_entry is None:
+                first_entry = i
+            if not in_visit:
+                in_visit, counted, vlen = True, False, 0
+            vlen += 1
+            gap = 0
+            if not counted and vlen >= need:
+                counted = True
+                if went_above:
+                    revisit += 1
+                went_above = False
+                visits += 1
+        else:
+            if side is not None:
+                last_side = side
+            if in_visit:
+                gap += 1
+                if gap > CFG["VISIT_GAP_TOL_TICKS"]:
+                    in_visit = False
+                    if last_side == "above":
+                        went_above = True
+            elif seen_zone and side == "above":
+                went_above = True
+    return visits, revisit, first_entry
 
-    # 이벤트(하이라이트/복사) -> 유닛별 텍스트 모으기.
-    # content.js v2.2 부터 pids(선택이 걸친 유닛 전부)를 준다.
-    # 명세: "여러 문단 걸치면 모두 1". 구버전 로그는 pid 하나로 폴백.
-    def _pids(e):
-        p = e.get("pids")
-        if isinstance(p, list) and p:
-            return [x for x in p if x]
-        return [e["pid"]] if e.get("pid") else []
 
+# =============================================================================
+# 5) 기준선 (참가자별, z-score 용)
+# =============================================================================
+def build_baselines(page_frames):
+    """tester_id → 스크롤 · 커서 속도 평균 · std. 유효(리셋 아님) · 사용 틱 전체."""
+    acc = {}
+    for tid, df in page_frames:
+        if df.empty:
+            continue
+        ok = df[df["use"] & ~df["run_first"]]
+        a = acc.setdefault(tid, {"s": [], "c": []})
+        a["s"].extend(ok["abs_scroll_v"].dropna().tolist())
+        a["c"].extend(ok["cur_speed"].tolist())
+    out = {}
+    for tid, a in acc.items():
+        s, c = np.asarray(a["s"]), np.asarray(a["c"])
+        out[tid] = {
+            "scroll_mean": float(s.mean()) if len(s) else 0.0,
+            "scroll_std": float(s.std(ddof=1)) if len(s) > 1 else 1.0,
+            "cursor_mean": float(c.mean()) if len(c) else 0.0,
+            "cursor_std": float(c.std(ddof=1)) if len(c) > 1 else 1.0,
+        }
+    return out
+
+
+# =============================================================================
+# 6) 페이지 → 유닛 행
+# =============================================================================
+def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
+    tick_ms = bundle["tick_ms"]
+    tick_sec = tick_ms / 1000.0
+    meta = page["meta"]
+    tl = page["timeline"]
+    paras = meta.get("paragraphs", [])
+    page_id = meta.get("pageId")
+
+    # 하이라이트 · 복사 (ranges)
     hl, cp = {}, {}
-    for e in timeline:
-        if e.get("type") == "highlight":
-            for p in _pids(e):
-                hl.setdefault(p, []).append(e.get("text", ""))
-        elif e.get("type") == "copy":
-            for p in _pids(e):
-                cp.setdefault(p, []).append(e.get("text", ""))
+    for e in tl:
+        if e.get("type") in ("highlight", "copy"):
+            tgt = hl if e["type"] == "highlight" else cp
+            for rg in e.get("ranges") or []:
+                if rg and rg[0]:
+                    tgt.setdefault(rg[0], []).append(e.get("text", ""))
 
-    # [C1] 뷰포트 노출 누적 시간 — visTop/visBot 사이 유닛은 그 틱에 화면에 있었다.
-    #      명세 0-3의 "체류시간: 블록이 뷰포트에 들어와 있던 누적 시간".
-    vis_ticks = {}
-    for e in timeline:
-        if e.get("type") != "tick":
-            continue
-        a, b = e.get("visTop"), e.get("visBot")
-        if a is None or b is None:
-            continue
-        lo, hi = (a, b) if a <= b else (b, a)
-        for o in range(lo, hi + 1):
-            vis_ticks[o] = vis_ticks.get(o, 0) + 1
+    # 품질 플래그
+    disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
+    seg_ids = {g["segId"] for g in meta.get("segments", [])}
+    missing = sum(len(c.get("missing", [])) for c in bundle["session"].get("chunkReport", [])
+                  if c.get("segId") in seg_ids)
 
-    # 중앙선(B) 시퀀스 -> visit_count 용.
-    # [P2] 탭 이탈로 틱이 비어 있던 구간에는 강제 브레이크를 넣어
-    #      "나갔다 돌아온 것"이 한 번의 방문으로 뭉치지 않게 한다.
-    ticks_sorted = sorted([e for e in timeline if e.get("type") == "tick"],
-                          key=lambda e: e["t"])
-    center_seq = []
-    prev_t = None
-    for e in ticks_sorted:
-        if prev_t is not None and (e["t"] - prev_t) > tick_sec * 1000.0 * CFG["RUN_GAP_TOL"]:
-            center_seq.extend([None] * (CFG["VISIT_GAP_TOL_TICKS"] + 1))
-        center_seq.append(e.get("centerPid"))
-        prev_t = e["t"]
+    G = gvam_frame(df) if not df.empty else pd.DataFrame(columns=["i", "pid", "w", "inzone", "side"])
+    use = df["use"].to_numpy() if not df.empty else np.array([], dtype=bool)
+    n = len(df)
+
+    noise_set = None
+    if noise is not None:
+        noise_set = set(noise.get(page_id, []) or noise.get(meta.get("url"), []) or [])
 
     rows = []
-    pids = [p for p in pd.unique(df["centerPid"].dropna())]
-    for pid in pids:
-        B = df[df["centerPid"] == pid].sort_values("t")
-        n_b = len(B)
-        dwell_sec = n_b * tick_sec
-        if dwell_sec < CFG["MIN_DWELL_SEC_KEEP"]:
-            continue                              # 스쳐간 유닛은 행 안 만듦
+    for para in paras:
+        pid = para["pid"]
+        g = G[G["pid"] == pid]
+        visits, revisit, first_entry = revisits(g, n, tick_sec) if n else (0, 0, None)
 
-        # [P2] A채널은 run 단위로 델타를 다시 계산한 프레임을 쓴다.
-        A = _prep_runs(df[df["cursorPid"] == pid], tick_sec)
-        n_a = len(A)
-        Av = A[A["_valid"]] if n_a else A          # 델타가 유효한 행만
+        # ---- B채널: GVAM 가중 (사용 틱만) ----
+        gu = g[use[g["i"].to_numpy()]] if len(g) else g
+        idx = gu["i"].to_numpy()
+        w = gu["w"].to_numpy()
+        B = df.iloc[idx] if len(idx) else df.iloc[0:0]
+        sw = float(w.sum())
+        dwell_gvam = sw * tick_sec
+        dwell_view = len(idx) * tick_sec
 
-        charlen = session["charlen"].get(pid, 0)
-
-        # ---- 체류/스크롤 (B채널) ----
-        vfd = int((B["abs_scroll_speed"] <= CFG["SCROLL_STILL_PXPS"]).sum()) * tick_sec
-        expected = (charlen / CFG["CHARS_PER_SEC"]) if charlen else np.nan
-        dwell_norm = dwell_sec / expected if expected and expected > 0 else np.nan
-
-        scroll_vals = B["abs_scroll_speed"].tolist()
-        scroll_mean = float(np.mean(scroll_vals)) if scroll_vals else 0.0
-        scroll_std, sstd_low = _std_guarded(scroll_vals)
-        scroll_z = _z(scroll_mean, baseline["scroll_mean"], baseline["scroll_std"])
-        scrlfreq = (B["scrollEvents"].sum() / dwell_sec) if dwell_sec else 0.0
-        scrl_trend, scrl_low = _slope_sign(B["scrollEvents"].tolist())
-
-        # entry_scrlspeed: 이 유닛에 처음 중앙선이 진입한 시점의 스크롤 속도 (원본)
-        entry_speed = float(B["abs_scroll_speed"].iloc[0]) if n_b else 0.0
-
-        # ---- 커서 (A채널) — [P2] 전부 run 내부 값만 사용 ----
-        cur_vals = Av["cursor_speed_pxps"].tolist()
-        cur_mean = float(np.mean(cur_vals)) if cur_vals else 0.0
-        cur_std, cstd_low = _std_guarded(cur_vals)
-        cur_z = _z(cur_mean, baseline["cursor_mean"], baseline["cursor_std"])
-        cur_trend, ctr_low = _slope_sign(cur_vals)
-
-        n_valid = len(Av)
-        moved_sum = int(Av["cursorMoved"].sum()) if n_valid else 0
-        moved_frac = (moved_sum / n_valid) if n_valid else 0.0
-        # cursorfreq = 커서이벤트수 ÷ 활성시간 (명세).
-        # content.js v2.2 부터 틱당 실제 mousemove 이벤트 수를 준다.
-        # 구버전 로그에는 없으므로 "움직임이 감지된 틱 수"로 폴백.
-        if n_a and "mouseEvents" in A.columns and A["mouseEvents"].notna().any():
-            cursorfreq = float(A["mouseEvents"].sum()) / (n_a * tick_sec)
+        if len(idx):
+            v = B["abs_scroll_v"].to_numpy()
+            valid = ~np.isnan(v)
+            still = np.where(valid, v <= CFG["SCROLL_STILL_PXPS"], B["scrollEvents"].to_numpy() == 0)
+            vfd = float((w * still).sum()) * tick_sec
+            wpos = w > 0
+            sm, sstd, _ = _wmean_std(v[valid & wpos], w[valid & wpos])
+            scrlfreq = float((w * B["scrollEvents"].to_numpy()).sum()) / (sw * tick_sec) if sw > 0 else 0.0
+            s_tr, s_tr_low = _slope_sign(B["scrollEvents"].to_numpy()[wpos].tolist(), w[wpos].tolist())
+            dep = B["depth"].to_numpy()
+            dok = ~np.isnan(dep) & wpos
+            depth = float((w[dok] * dep[dok]).sum() / w[dok].sum()) if dok.any() and w[dok].sum() > 0 else np.nan
         else:
-            cursorfreq = (moved_sum / (n_valid * tick_sec)) if n_valid else 0.0
-        cursor_conc = float(A["cy"].std(ddof=1)) if n_a > 1 else 0.0
+            vfd, sm, sstd, scrlfreq, s_tr, s_tr_low, depth = 0.0, 0.0, 0.0, 0.0, 0, True, np.nan
 
-        # pause도 run 단위로 세고 합산 (구간을 가로질러 이어붙이면 가짜 pause 발생)
-        pause_count = 0
+        # entry_scrlspeed: 읽기 구간 첫 진입 틱부터 첫 유효 속도
+        entry = 0.0
+        if first_entry is not None:
+            zi = g[g["inzone"]]["i"].to_numpy()
+            for i in zi:
+                sv = df.at[i, "abs_scroll_v"]
+                if not np.isnan(sv):
+                    entry = float(sv)
+                    break
+
+        # ---- A채널: 커서가 이 유닛의 조각 상자 안 (apid == pid), 사용 틱만 ----
+        A = df[(df["apid"] == pid) & df["use"]] if n else df
+        n_a = len(A)
         if n_a:
-            for _, g in A.groupby("_run"):
-                pause_count += _count_pauses(g["cursorMoved"].tolist())
-        # 명세는 pause_count(Sum) 원본. 길이 정규화는 BE 담당이라 여기선 안 한다.
-        # (유닛이 ~200자로 균일해져서 길이 보정 필요성 자체가 줄었다)
+            ai = A.index.to_numpy()
+            # A-run: 원래 틱 순서에서 연속 + 같은 리셋 run
+            a_brk = np.r_[True, (np.diff(ai) != 1) | (A["run"].to_numpy()[1:] != A["run"].to_numpy()[:-1])]
+            a_run = np.cumsum(a_brk)
+            Av = A[~a_brk]                       # 크기 계산은 A-run 첫 틱 제외
+            cur_vals = Av["cur_speed"].tolist()
+            cm = float(np.mean(cur_vals)) if cur_vals else 0.0
+            cstd, _ = _std_guarded(cur_vals)
+            c_tr, c_tr_low = _slope_sign(cur_vals)
+            cursorfreq = float(A["mouseEvents"].sum()) / (n_a * tick_sec)
+            cursor_conc = float(A["cy"].std(ddof=1)) if n_a > 1 else 0.0
+            pause = sum(_count_pauses(A["moved"].to_numpy()[a_run == r].tolist()) for r in np.unique(a_run))
+            xpix, ypix = float(Av["mdx"].sum()), float(Av["mdy"].sum())
+            vw = float(A["vw"].median())
+            xdist = xpix / (vw + EPS)
+            hr = xpix / (xpix + ypix + EPS)
+            mv = Av[Av["moved"]]
+            hr_tr, hr_low = _slope_sign((mv["mdx"] / (mv["mdx"] + mv["mdy"])).tolist())
+        else:
+            cm = cstd = cursorfreq = cursor_conc = xdist = hr = 0.0
+            c_tr_low = hr_low = True
+            c_tr = hr_tr = pause = 0
 
-        # xdist / horizontal_ratio — run 내부 diff만 (진입 행은 NaN이라 자동 제외)
-        xpix = float(Av["_dx"].sum()) if n_valid else 0.0
-        ypix = float(Av["_dy"].sum()) if n_valid else 0.0
-        vw = float(A["vw"].median()) if n_a else float(df["vw"].median())
-        xdist = xpix / (vw + EPS)
-        hr = xpix / (xpix + ypix + EPS)
-        hr_series = (Av["_dx"] / (Av["_dx"] + Av["_dy"] + EPS)).dropna().tolist() \
-            if n_valid else []
-        hr_trend, hr_low = _slope_sign(hr_series)
-
-        # ---- 선택/복사 이벤트 (모델 feature) ----
-        has_hl = 1 if pid in hl else 0
-        has_cp = 1 if pid in cp else 0
-
-        # ---- visit_count (재방문) ----
-        visit_count = _count_runs([c == pid for c in center_seq],
-                                  gap_tol=CFG["VISIT_GAP_TOL_TICKS"])
-
-        # ---- idle 룰 컷 (설계 2번): 명백한 AFK만 ----
-        rule_label = None
-        if (dwell_sec >= CFG["IDLE_MIN_DWELL_SEC"]
-                and moved_frac <= CFG["IDLE_MAX_CURSOR_MOVE_FRAC"]
-                and B["scrollEvents"].sum() <= CFG["IDLE_MAX_SCRL_EVENTS"]):
-            rule_label = "idle"
+        b = base.get(bundle["tester_id"], {"scroll_mean": 0, "scroll_std": 1, "cursor_mean": 0, "cursor_std": 1})
+        charlen = para.get("charLen", 0)
+        expected = charlen / CFG["CHARS_PER_SEC"] if charlen else np.nan
 
         rows.append({
-            # --- 메타데이터(모델 입력 아님) ---
-            "session_id": session["session_id"],
-            "url": session["meta"].get("url"),
+            # --- 메타 ---
+            "tester_id": bundle["tester_id"],
+            "session_id": bundle["session_id"],
+            "page_id": page_id,
+            "url": meta.get("url"),
             "paragraph_id": pid,
-            "unit_order": session["ordermap"].get(pid, -1),
+            "unit_order": para.get("order", -1),
             "char_len": charlen,
-            "text": session["textmap"].get(pid, "")[:120],
+            "text": (para.get("text") or "")[:120],
             "highlight_text": " || ".join(hl.get(pid, []))[:500],
             "copy_text": " || ".join(cp.get(pid, []))[:500],
-            "scroll_depth_pct": float(B["scroll_depth_pct"].median())
-                                if B["scroll_depth_pct"].notna().any() else np.nan,
-            "dwell_sec": round(dwell_sec, 2),
-            "dwell_viewport_sec": round(
-                vis_ticks.get(session["ordermap"].get(pid, -1), 0) * tick_sec, 2),
-            "dwell_normalized": round(dwell_norm, 3) if dwell_norm == dwell_norm else np.nan,
-            "visit_count": visit_count,
-            "n_center_ticks": n_b,
+            "query": query_info[0],
+            "query_source": query_info[1],
+            "is_noise": (pid in noise_set) if noise_set is not None else np.nan,
+            "scroll_depth_pct": round(depth, 4) if depth == depth else np.nan,
+            "dwell_gvam_sec": round(dwell_gvam, 3),
+            "dwell_viewport_sec": round(dwell_view, 2),
+            "dwell_normalized": round(dwell_gvam / expected, 3) if expected and expected > 0 else np.nan,
+            "visit_count": visits,
+            "n_vis_ticks": len(idx),
             "n_cursor_ticks": n_a,
-            "rule_label": rule_label,
-            "z_is_weak": n_sessions < CFG["MIN_SESSIONS_FOR_Z"],
-            "trend_low_sample": any([scrl_low, ctr_low, hr_low]),
-            "session_has_disruptive_rescan": session["disruptive"],
-            "session_hidden_gaps": session["hidden_gaps"],
+            "z_is_weak": n_sess_tester < CFG["MIN_SESSIONS_FOR_Z"],
+            "trend_low_sample": bool(s_tr_low or c_tr_low or hr_low),
+            "page_disruptive_rescan": disruptive,
+            "page_missing_chunks": missing,
+            "page_idle_sec": round(float(df["idle"].sum()) * tick_sec, 1) if n else 0.0,
+            "page_edit_ticks": int(df["edit"].sum()) if n else 0,
 
             # --- 모델 feature ---
-            "has_highlight": has_hl,
-            "has_copy": has_cp,
-            "viewport_fixed_duration": round(vfd, 2),
-            "pause_count": pause_count,
+            "has_highlight": int(pid in hl),
+            "has_copy": int(pid in cp),
+            "viewport_fixed_duration": round(vfd, 3),
+            "pause_count": int(pause),
             "horizontal_ratio": round(hr, 3),
-            "horizontal_ratio_trend": hr_trend,
+            "horizontal_ratio_trend": hr_tr,
             "xdist": round(xdist, 3),
-            "cursor_speed_z": round(cur_z, 3),
-            "cursor_speed_std": round(cur_std, 3),
-            "cursor_speed_trend": cur_trend,
+            "cursor_speed_z": round(_z(cm, b["cursor_mean"], b["cursor_std"]), 3) if n_a else 0.0,
+            "cursor_speed_std": round(cstd, 3),
+            "cursor_speed_trend": c_tr,
             "cursorfreq": round(cursorfreq, 3),
             "cursor_conc": round(cursor_conc, 2),
-            "scroll_speed_z": round(scroll_z, 3),
-            "scroll_speed_std": round(scroll_std, 3),
+            "scroll_speed_z": round(_z(sm, b["scroll_mean"], b["scroll_std"]), 3) if sw > 0 else 0.0,
+            "scroll_speed_std": round(sstd, 3),
             "scrlfreq": round(scrlfreq, 3),
-            "scrlfreq_trend": scrl_trend,
-            "entry_scrlspeed": round(entry_speed, 2),
+            "scrlfreq_trend": s_tr,
+            "entry_scrlspeed": round(entry, 2),
+            "revisit_count": revisit,
         })
-    return rows
+    return rows, G
+
+
+# =============================================================================
+# 7) 검색어: 세션 안 검색 결과 페이지 → 그 뒤에 연 글
+# =============================================================================
+def page_queries(bundle):
+    """pageId → (query, source). 직전 검색 결과 페이지 URL > 팝업 수동 입력."""
+    starts = []
+    for p in bundle["pages"]:
+        m = p["meta"]
+        t0 = min((g.get("t", 0) for g in m.get("segments", [])), default=0)
+        starts.append((t0, m.get("pageId"), m.get("url")))
+    starts.sort()
+    out, last = {}, None
+    manual = bundle["session"].get("searchQuery")
+    for _t, pid, url in starts:
+        q = search_query_of(url or "")
+        if q:
+            last = q
+            out[pid] = (q, "search_page")
+        elif last:
+            out[pid] = (last, "search_page")
+        elif manual:
+            out[pid] = (manual, "manual")
+        else:
+            out[pid] = (None, None)
+    return out
 
 
 # =============================================================================
@@ -480,73 +603,77 @@ def aggregate(session, df, baseline, n_sessions):
 # =============================================================================
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("inputs", nargs="+", help="content.js가 내보낸 raw JSON 파일(들)")
+    ap.add_argument("inputs", nargs="+", help="세션 bundle JSON (rbc_*.json)")
     ap.add_argument("-o", "--output", default="features.csv")
+    ap.add_argument("--noise", help="본문 아닌 유닛 파일 {pageId|url: [pid, ...]}")
     ap.add_argument("--no-selection-features", action="store_true",
-                    help="has_highlight / has_copy 를 모델 feature에서 제외. "
-                         "기본은 포함(평가 정답은 별도 '관심 문단 선택' UI로 받음).")
+                    help="has_highlight / has_copy 를 모델 feature 목록에서 뺌 (컬럼은 남음)")
     args = ap.parse_args()
 
-    feature_list = [f for f in MODEL_FEATURES
-                    if not (args.no_selection_features and f in SELECTION_FEATURES)]
+    noise = json.load(open(args.noise, encoding="utf-8")) if args.noise else None
+    bundles = [load_bundle(p) for p in args.inputs]
 
-    sessions = load_sessions(args.inputs)
-    n_sessions = len(sessions)
+    frames = []                       # (bundle, page, df)
+    for bd in bundles:
+        for pg in bd["pages"]:
+            frames.append((bd, pg, prep_ticks(pg, bd["tick_ms"])))
+    base = build_baselines([(bd["tester_id"], df) for bd, _pg, df in frames])
+    n_sess = {}
+    for bd in bundles:
+        n_sess[bd["tester_id"]] = n_sess.get(bd["tester_id"], 0) + 1
 
-    dfs = {s["path"]: ticks_df(s) for s in sessions}
-    nonempty = [d for d in dfs.values() if not d.empty]
-    if not nonempty:
-        print("틱 데이터가 없음. 기록을 시작(● 기록)한 뒤 스크롤하며 읽고 내보냈는지 확인.",
-              file=sys.stderr)
-        sys.exit(1)
-    all_ticks = pd.concat(nonempty, ignore_index=True)
-    baseline = build_baseline(all_ticks)
-
-    all_rows = []
-    for s in sessions:
-        df = dfs[s["path"]]
-        if df.empty:
-            continue
-        all_rows += aggregate(s, df, baseline, n_sessions)
+    all_rows, checks = [], []
+    for bd in bundles:
+        qmap = page_queries(bd)
+        for pg in bd["pages"]:
+            df = next(d for b2, p2, d in frames if p2 is pg)
+            rows, G = page_rows(bd, pg, df, base, n_sess[bd["tester_id"]],
+                                qmap.get(pg["meta"].get("pageId"), (None, None)), noise)
+            all_rows += rows
+            checks.append((bd, pg, df, G, rows))
 
     out = pd.DataFrame(all_rows)
     if out.empty:
-        print("유닛 행이 0개. (사이트 매핑 실패거나 dwell 임계값 미달)", file=sys.stderr)
-        sys.exit(1)
-
+        sys.exit("유닛 행이 0개.")
     out.to_csv(args.output, index=False)
 
-    # ---- 요약 ----
-    print(f"세션 {n_sessions}개 → 유닛 행 {len(out)}개  (→ {args.output})")
-    idle_n = int((out["rule_label"] == "idle").sum())
-    print(f"  · 룰 컷 idle: {idle_n}행  · z_is_weak: {bool(out['z_is_weak'].iloc[0])} "
-          f"(세션 {n_sessions} < {CFG['MIN_SESSIONS_FOR_Z']})")
-    print(f"  · 모델 feature {len(feature_list)}개: {', '.join(feature_list)}")
+    feats = [f for f in MODEL_FEATURES if not (args.no_selection_features and f in SELECTION_FEATURES)]
+    print(f"세션 {len(bundles)}개 · 페이지 {len(checks)}개 → 유닛 행 {len(out)}개  (→ {args.output})")
+    print(f"  · 모델 feature {len(feats)}개")
 
-    n_hl = int(out["has_highlight"].sum())
-    n_cp = int(out["has_copy"].sum())
-    if args.no_selection_features:
-        print(f"  · has_highlight·has_copy 는 모델 feature에서 제외됨 "
-              f"(컬럼은 CSV에 남음: {n_hl}행 / {n_cp}행).")
-    else:
-        print(f"  · 선택 feature 포함 — has_highlight {n_hl}행, has_copy {n_cp}행.")
-        print("    (평가 정답은 별도 '관심 문단 선택' UI로 받으므로 라벨 누수 아님. "
-              "그 UI가 붙으면 라벨 컬럼을 따로 추가할 것.)")
-
-    bad = out[out["session_has_disruptive_rescan"]]
-    if len(bad):
-        n_bad_sess = bad["session_id"].nunique()
-        print(f"  ⚠ 본문이 교체된 세션 {n_bad_sess}개 ({len(bad)}행). "
-              f"pid 정합성이 깨졌을 수 있으니 학습 전에 확인/제외 권장.")
-    gaps = int(out.groupby('session_id')['session_hidden_gaps'].first().sum())
-    if gaps:
-        print(f"  · 탭 이탈 구간 {gaps}회 (해당 시간은 dwell에서 제외됨).")
-
-    with pd.option_context("display.max_columns", None, "display.width", 170):
-        cols = ["paragraph_id", "unit_order", "dwell_sec", "dwell_viewport_sec",
-                "visit_count", "viewport_fixed_duration", "pause_count",
-                "cursorfreq", "horizontal_ratio", "has_highlight", "rule_label"]
-        print(out[cols].head(12).to_string(index=False))
+    # ---- 검산 (판정 아님, 사람이 보는 용) ----
+    for bd, pg, df, G, rows in checks:
+        m = pg["meta"]
+        if df.empty:
+            print(f"\n[{m.get('url','')[:70]}] 틱 없음")
+            continue
+        tick_sec = bd["tick_ms"] / 1000.0
+        sw_tick = G.groupby("i")["w"].sum() if len(G) else pd.Series(dtype=float)
+        cmap = df["centerPid"].to_dict()
+        gc = G[[cmap.get(i) == p for i, p in zip(G["i"], G["pid"])]] if len(G) else G
+        n_center = int(df["centerPid"].notna().sum())
+        c_ok = float(((gc["w"] > 0) & gc["inzone"]).sum()) / n_center if n_center else float("nan")
+        used = float(df["use"].sum()) * tick_sec
+        r = pd.DataFrame(rows)
+        print(f"\n[{m.get('url','')[:70]}]")
+        print(f"  틱 {len(df)} · run {df['run'].nunique()} · 사용 {used:.1f}s "
+              f"(idle {df['idle'].sum()} · 편집 {df['edit'].sum()} 틱 제외)")
+        print(f"  Σw/틱  평균 {sw_tick.mean():.3f} · 최대 {sw_tick.max():.3f}  (≤ 1 이어야 함)")
+        print(f"  Σ dwell_gvam {r['dwell_gvam_sec'].sum():.1f}s ≤ 사용 {used:.1f}s · "
+              f"centerPid 가 w>0 · 읽기 구간 안 {c_ok*100:.0f}%  (100% 근처여야 함)")
+        print(f"  커서 귀속 틱: 글자 위 {df['cursorPid'].notna().mean()*100:.0f}% → 조각 상자 {df['apid'].notna().mean()*100:.0f}%")
+        print(f"  유닛 {len(r)} · 화면에 나온 유닛 {(r['n_vis_ticks']>0).sum()} · "
+              f"방문 ≥1 {(r['visit_count']>0).sum()} · 재방문 ≥1 {(r['revisit_count']>0).sum()} · "
+              f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()}")
+        if r["page_disruptive_rescan"].any():
+            print("  ⚠ 본문 교체(disruptive) 페이지 — pid 정합성 확인 전 학습 제외 권장")
+        if r["page_missing_chunks"].iloc[0]:
+            print(f"  ⚠ 유실 조각 {r['page_missing_chunks'].iloc[0]}개")
+        with pd.option_context("display.max_columns", None, "display.width", 200):
+            cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
+                    "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
+                    "cursorfreq", "has_highlight"]
+            print(r[cols].to_string(index=False))
 
 
 if __name__ == "__main__":
