@@ -26,6 +26,17 @@
  *   청킹 루프가 글자 단위로 sig[i] 를 수만 번 읽기 때문에
  *   접근자 함수로 감싸지 않고 배열을 그대로 노출한다.
  *
+ * --- 숨은 글자도 넣는다 (2026-10-05, 팀 결정) ------------------------------
+ *   display:none 등으로 크기가 0 인 텍스트 노드도 스트림에 넣는다. 전에는 build() 가
+ *   노드마다 사각형을 재서 크기 0 을 뺐는데, 그러면 창 폭 · 확대에 따라 반응형 레이아웃이
+ *   숨기는 글이 달라져 같은 글의 pid 가 참가자마다 달라졌다 (인수인계 §5). 이제 스트림은
+ *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
+ *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
+ *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫.
+ *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
+ *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
+ *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
  *            role="searchbox|combobox|spinbutton" 인 검색·선택 위젯.
@@ -122,8 +133,7 @@
   //            후보를 싸게 걸러내는 데만 쓴다 (textLen < 문턱 이면 measure 도 < 문턱).
   //   measure: 스트림과 같은 잣대 — elementFilter 로 거르고 앞뒤 공백을 뺀 글자 수와,
   //            그중 <a> 안에 있는 글자 수. 판정은 이걸로 한다.
-  //            build() 와 다른 점은 크기 0 노드(display:none)를 빼지 않는 것 하나.
-  //            그걸 하려면 노드마다 레이아웃을 읽어야 해서 후보 수백 개에는 못 쓴다.
+  //            build() 와 같은 잣대다 — 둘 다 숨은(크기 0) 노드를 뺀다 · 안 뺀다 구분이 없다 (2026-10-05).
   function textLen(el) {
     let n = (el.textContent || '').length;
     el.querySelectorAll('script,style,noscript').forEach(s => {
@@ -246,11 +256,6 @@
       const blk = nearestBlock(n);
       if (blk !== lastBlock) pendingBreak = true;
       lastBlock = blk;
-
-      const r = document.createRange();
-      r.selectNodeContents(n);
-      const rect = r.getBoundingClientRect();
-      if (!rect.width && !rect.height) continue;   // display:none / 0px
 
       if (pendingBreak) newBreaks.add(len);
       newSegs.push({
