@@ -1,7 +1,7 @@
 /* =============================================================================
  * 3-hittest.js — 좌표 → 유닛
  *
- * 소유: rootBox (본문 영역의 가로 범위 캐시)
+ * 소유: rootBox (본문 영역의 가로 범위 캐시), pieceRanges (조각 Range 캐시), sampleMs (측정 시간)
  * 의존(직접 호출): 0-core, 1-stream, 2-units
  * 발행: 없음
  * 구독: units:changed
@@ -30,6 +30,15 @@
  *   이 차이 때문에 한 틱만 보면 centerPid 가 visTop..visBot 밖으로 나갈 수 있다.
  *   정상이다. 누적하면 노출시간 >= 체류시간이 성립한다 (check_session.py [8]).
  *
+ * --- vis (v3, 감사 §8-1) -----------------------------------------------------
+ *   그 틱에 뷰포트와 겹친 유닛 조각 [pid, k, top, bottom, left, right] (자기 프레임 뷰포트 CSS px,
+ *   반올림, 자르지 않음). 조각마다 Range 하나의 getBoundingClientRect(). 유닛 외곽을 안 쓰는 이유:
+ *   "짧은 문단 + 캡션 + 다음 문단" 유닛이면 사이의 사진까지 덮어 노출이 부풀려진다.
+ *   order 가 세로 순서가 아니라서(사이드바) 매 틱 전 조각을 본다.
+ *   Range 객체는 units:changed 때 만들고 재사용한다 (live Range 라 DOM 변화를 따라간다).
+ *   크기 0 인 조각(숨김 · DOM 에서 빠짐)은 bottom > 0 조건에서 자동으로 빠진다.
+ *   sample() 전체 시간을 최근 SAMPLE_WINDOW 틱 보관 → 패널 p95 (> 10ms 면 캐시 방식 검토).
+ *
  * --- 성능 주의 (PERF-1) ------------------------------------------------------
  *   최악의 경우 한 틱에 caretRangeFromPoint 가 37회 불린다
  *   (visibleRange 위/아래 각 EDGE_STEPS(8) × nx(2) = 32, 중앙선 5).
@@ -49,6 +58,10 @@
   // 틱마다 강제 레이아웃이 수십 번 일어나므로 캐시한다.
   // 스크롤·리사이즈·재청킹 때 무효화된다.
   let rootBox = null;
+  let pieceRanges = null;          // [{ pid, k, r: Range }] — units:changed 때 버림
+  const SAMPLE_WINDOW = 200;
+  const sampleMs = [];
+  const visMs = [];                // 그중 vis(조각 사각형) 몫 — 탐침이 먼저 레이아웃을 확정하므로 순수 측정 비용
 
   // ==========================================================================
   // 기본 조회
@@ -96,6 +109,15 @@
     return !!(el && el.closest && el.closest('#' + CFG.PANEL_ID));
   }
 
+  // caret 이 텍스트 노드 끝(offset = 길이)에 오면 — 줄 끝 오른쪽 여백을 찔렀을 때 —
+  // 실제로 맞은 글자는 마지막 글자다. 사각형도 유닛도 그 글자로 판정해야 한다.
+  // 전에는 사각형은 마지막 글자로 보고 유닛은 seg.start + 길이 로 찾아서, 노드가 유닛의
+  // 마지막 글자로 끝나면 **다음 유닛**이 잡혔다 (2026-10-03, vis 교차검사 [14] 로 발견).
+  function hitOffset(node, offset) {
+    const L = node.data.length;
+    return offset >= L ? Math.max(0, L - 1) : Math.max(0, offset);
+  }
+
   function charRectAt(node, offset) {
     const L = node.data.length;
     if (!L) return null;
@@ -132,14 +154,71 @@
       if (n.nodeType !== 3 || inPanel(n)) continue;
       const seg = RBC.stream.segFor(n);
       if (!seg) continue;
-      const rect = charRectAt(n, r.startOffset);
+      const off = hitOffset(n, r.startOffset);
+      const rect = charRectAt(n, off);
       if (!rect) continue;
       const dy = y < rect.top ? rect.top - y : (y > rect.bottom ? y - rect.bottom : 0);
       if (dy > tol) continue;
-      const u = RBC.units.at(seg.start + r.startOffset);
+      const u = RBC.units.at(seg.start + off);
       if (u) return u;
     }
     return null;
+  }
+
+  // ==========================================================================
+  // vis — 뷰포트와 겹친 조각
+  // ==========================================================================
+  // 조각 끝 위치는 "마지막 글자의 뒤"로 잡는다. locate(b) 는 b 가 seg 경계면 다음 노드의
+  // offset 0 을 주는데, 그러면 Range 가 다음 DOM 블록에 닿아 사각형이 늘어날 수 있다.
+  function locateEnd(p) {
+    const L = locate(p - 1);
+    return L ? { node: L.node, offset: Math.min(L.offset + 1, L.node.data.length) } : null;
+  }
+
+  function buildPieceRanges() {
+    const out = [];
+    for (const u of RBC.units.all()) {
+      const spans = u.spans || [];
+      for (let k = 0; k < spans.length; k++) {
+        const a = locate(spans[k][0]);
+        const b = locateEnd(spans[k][1]);
+        if (!a || !b) continue;
+        const r = document.createRange();
+        try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); } catch (e) { continue; }
+        out.push({ pid: u.pid, k, r });
+      }
+    }
+    return out;
+  }
+
+  function visPieces() {
+    if (!pieceRanges) pieceRanges = buildPieceRanges();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const out = [];
+    for (const p of pieceRanges) {
+      const b = p.r.getBoundingClientRect();
+      if (b.bottom > 0 && b.top < vh && b.right > 0 && b.left < vw) {
+        out.push([p.pid, p.k, Math.round(b.top), Math.round(b.bottom),
+          Math.round(b.left), Math.round(b.right)]);
+      }
+    }
+    return out;
+  }
+
+  // 최근 SAMPLE_WINDOW 틱의 sample() 시간. 패널 표시용.
+  function stats() {
+    const n = sampleMs.length;
+    if (!n) return { p95: 0, max: 0, n: 0, visP95: 0, pieces: 0 };
+    const r1 = v => Math.round(v * 10) / 10;
+    const p95 = (arr) => {
+      const a = arr.slice().sort((x, y) => x - y);
+      return a[Math.min(a.length - 1, Math.floor(a.length * 0.95))];
+    };
+    return {
+      p95: r1(p95(sampleMs)), max: r1(Math.max(...sampleMs)), n,
+      visP95: r1(p95(visMs)),                       // vis 몫만
+      pieces: pieceRanges ? pieceRanges.length : 0, // 매 틱 재는 조각 수
+    };
   }
 
   // B채널: GVAM 중앙선
@@ -170,16 +249,20 @@
     if (n.nodeType !== 3 || inPanel(n)) return null;
     const seg = RBC.stream.segFor(n);
     if (!seg) return null;
-    const rect = charRectAt(n, r.startOffset);
+    const off = hitOffset(n, r.startOffset);
+    const rect = charRectAt(n, off);
     if (!rect) return null;
     const T = CFG.CURSOR_TOL;
     if (x < rect.left - T || x > rect.right + T || y < rect.top - T || y > rect.bottom + T)
       return null;
-    return RBC.units.at(seg.start + r.startOffset);
+    return RBC.units.at(seg.start + off);
   }
 
-  // [C4] 선택 범위가 걸친 유닛 전부. 명세: "여러 문단 걸치면 모두 1".
-  function unitsFromSelection(sel) {
+  // [C4] 선택 범위가 걸친 유닛 전부 + 유닛마다 자기 text 안 범위 (v3 ranges, 감사 §8-5).
+  //   명세: "여러 문단 걸치면 모두 1". → [[pid, lo, hi], …] (유닛 order 순, lo < hi).
+  //   lo/hi 는 유닛 text(공백 정리 뒤, UTF-16) 오프셋 — pieces 와 같은 변환(RBC.units.textOff).
+  //   정리 뒤 0글자가 되는 걸침(앞 유닛의 끝 공백만 잡힌 경우, 빈 선택)은 뺀다.
+  function rangesFromSelection(sel) {
     if (!sel || sel.rangeCount === 0) return [];
     let r;
     try { r = sel.getRangeAt(0); } catch (e) { return []; }
@@ -191,8 +274,10 @@
     const lo = Math.min(a, b), hi = Math.max(a, b);
     const out = [];
     for (const u of RBC.units.all()) {
-      if (u.start < hi && u.end > lo) out.push(u.pid);
-      else if (lo === hi && u.start <= lo && lo < u.end) out.push(u.pid);
+      if (!(u.start < hi && u.end > lo)) continue;
+      const tl = RBC.units.textOff(u, Math.max(lo, u.start));
+      const th = RBC.units.textOff(u, Math.min(hi, u.end));
+      if (th > tl) out.push([u.pid, tl, th]);
     }
     return out;
   }
@@ -203,11 +288,18 @@
   //   받아 쓰고 DOM 을 직접 읽지 않는다 — 측정과 기록을 갈라놓기 위해서다.
   // ==========================================================================
   function sample(cursor) {
+    const t0 = performance.now();
     ensureRootBox();
     const centerU = atCenterLine();
     const [visTop, visBot] = visibleRange();
     const cursorU = cursor ? atCursor(cursor.x, cursor.y) : null;
-    return { centerU, visTop, visBot, cursorU };
+    const t1 = performance.now();
+    const vis = visPieces();
+    const t2 = performance.now();
+    sampleMs.push(t2 - t0);
+    visMs.push(t2 - t1);
+    if (sampleMs.length > SAMPLE_WINDOW) { sampleMs.shift(); visMs.shift(); }
+    return { centerU, visTop, visBot, cursorU, vis };
   }
 
   // ==========================================================================
@@ -217,17 +309,20 @@
   // ==========================================================================
   function invalidate() { rootBox = null; }
 
-  bus.on('units:changed', invalidate);
+  // 4-input 은 스크롤마다 invalidate() 를 부르므로 조각 Range 는 여기서만 버린다.
+  bus.on('units:changed', () => { rootBox = null; pieceRanges = null; });
 
   // ==========================================================================
   // 공개
   // ==========================================================================
   RBC.hittest = {
     sample,
-    unitsFromSelection,
+    rangesFromSelection,
     streamPosOf,
     locate,                 // 8-overlay 의 rangeForUnit 이 쓴다
     invalidate,
+    stats,                  // { p95, max, n } — sample() ms, 패널 표시
+    visPieces,
     // 개별 조회 — 디버깅·추후 사용
     atCenterLine,
     atCursor,

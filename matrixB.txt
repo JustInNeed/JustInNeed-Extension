@@ -1,0 +1,256 @@
+
+=== siteB_ads1.json [세션 bef26418] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 57600
+
+=== siteB_ads1.json [p0] https://star.ohmynews.com/NWS_Web/OhmyStar/at_pg.aspx?CNTN_CD=A0003271 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:09:46.316Z
+  ok [PASS] pid 정합성 — 선언 15개 / 사용 15개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 57600ms = 틱 384개
+  !! [WARN] 히트테스트 정합성 — 1/72 (1.4%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 14개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 445 / scroll 1117
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..14 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 37쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 15개 · 2676자 · 문서 11.0화면 · 스크롤 8102px/1117회 · 중앙선 적중 72/384
+  ok [PASS] 조각 연결 — 유닛 15개 전부 연결 · vis 틱 384개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 72/72 (100%) · visTop..visBot⊂vis 229/229 (100%)
+  -- 유닛 15개 · 틱 384개 · 이벤트 385개 · schema v3
+  -- 조각 31 · 여러 조각 유닛 6 · 링크 글자 있는 조각 9 · pathCut 5 · 루트 article.article (semantic)
+  -- vis 평균 3.3조각/틱 (최대 12) · 틱 평균 419B (최대 698B)
+
+=== siteB_ads2.json [세션 d0b11bec] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 64500
+
+=== siteB_ads2.json [p0] https://www.kyeonggi.com/article/20260930580112 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:11:46.600Z
+  ok [PASS] pid 정합성 — 선언 16개 / 사용 13개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 64500ms = 틱 430개
+  !! [WARN] 히트테스트 정합성 — 8/183 (4.4%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 12개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 390 / scroll 1105
+  ok [PASS] 본문 교체 — append 재스캔 1회 (정상)
+  ok [PASS] 유닛 order — 0..15 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 70쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 16개 · 3166자 · 문서 8.8화면 · 스크롤 6301px/1105회 · 중앙선 적중 185/430
+  ok [PASS] 조각 연결 — 유닛 16개 전부 연결 · vis 틱 430개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 185/185 (100%) · visTop..visBot⊂vis 398/398 (100%)
+  -- 유닛 16개 · 틱 430개 · 이벤트 432개 · schema v3
+  -- 조각 102 · 여러 조각 유닛 13 · 링크 글자 있는 조각 55 · pathCut 56 · 루트 div#wrapper (fallback)
+  -- vis 평균 11.6조각/틱 (최대 35) · 틱 평균 676B (최대 1402B)
+
+=== siteB_ads3.json [세션 93c011fc] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 66450
+
+=== siteB_ads3.json [p0] https://biz.heraldcorp.com/article/10888955 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:13:19.405Z
+  ok [PASS] pid 정합성 — 선언 12개 / 사용 11개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 66450ms = 틱 443개
+  !! [WARN] 히트테스트 정합성 — 1/176 (0.6%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 11개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 398 / scroll 584
+  ok [PASS] 본문 교체 — append 재스캔 2회 (정상)
+  ok [PASS] 유닛 order — 0..11 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 31쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 12개 · 2279자 · 문서 8.0화면 · 스크롤 5652px/584회 · 중앙선 적중 193/443
+  ok [PASS] 조각 연결 — 유닛 12개 전부 연결 · vis 틱 443개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 193/193 (100%) · visTop..visBot⊂vis 350/350 (100%)
+  -- 유닛 12개 · 틱 443개 · 이벤트 446개 · schema v3
+  -- 조각 33 · 여러 조각 유닛 8 · 링크 글자 있는 조각 15 · pathCut 8 · 루트 main.div_layout (fallback)
+  -- vis 평균 4.4조각/틱 (최대 13) · 틱 평균 448B (최대 720B)
+
+=== siteB_ads4.json [세션 0cc2a02b] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 58200
+
+=== siteB_ads4.json [p0] https://www.wowtv.co.kr/NewsCenter/News/Read?articleId=A202609300077 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:15:05.621Z
+  ok [PASS] pid 정합성 — 선언 9개 / 사용 9개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 58200ms = 틱 388개
+  !! [WARN] 히트테스트 정합성 — 8/95 (8.4%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  !! [WARN] 노출 ≥ 체류(원본) — 3/9개 유닛에서 노출 < 체류 (#6(0.5s>0.0s), #7(0.8s>0.0s), #8(0.1s>0.0s)), 부족분 합 1.4s — 가장자리 탐색(H/8)의 한계. v3 tick.vis 로 대체 예정
+  ok [PASS] 이벤트 카운터 — mouse 211 / scroll 1016
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..8 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 40쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 9개 · 1775자 · 문서 8.4화면 · 스크롤 6036px/1016회 · 중앙선 적중 103/388
+  ok [PASS] 조각 연결 — 유닛 9개 전부 연결 · vis 틱 388개 전부 정합
+  !! [WARN] vis 교차검사 — centerPid∈vis 103/103 (100%) · visTop..visBot⊂vis 243/247 (98%) (예: t=0.6s [0,5] 빠짐 [1, 2, 3]; t=27.2s [0,5] 빠짐 [1, 2, 3])
+  -- 유닛 9개 · 틱 388개 · 이벤트 389개 · schema v3
+  -- 조각 61 · 여러 조각 유닛 7 · 링크 글자 있는 조각 26 · pathCut 47 · 루트 div#whole-wrap (fallback)
+  -- vis 평균 10.3조각/틱 (최대 29) · 틱 평균 640B (최대 1241B)
+
+=== siteB_close.json [세션 8b54ce88] ===
+  ok [PASS] 조각 유실 — 구간 2개 전부 연속
+  ok [PASS] 구간 종료 — closed 1 · unloaded 1
+  -- 페이지 2개 · 방문 3건 · focusMs 31500
+
+=== siteB_close.json [p0] https://n.news.naver.com/mnews/article/002/0002456290?sid=110%20https: ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:16:42.654Z
+  ok [PASS] pid 정합성 — 선언 22개 / 사용 6개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 7650ms = 틱 51개
+  !! [WARN] 히트테스트 정합성 — 5/35 (14.3%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 6개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 92 / scroll 139
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..21 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 12쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 22개 · 4173자 · 문서 14.3화면 · 스크롤 1521px/139회 · 중앙선 적중 35/51
+  ok [PASS] 조각 연결 — 유닛 22개 전부 연결 · vis 틱 51개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 35/35 (100%) · visTop..visBot⊂vis 50/50 (100%)
+  -- 유닛 22개 · 틱 51개 · 이벤트 54개 · schema v3
+  -- 조각 24 · 여러 조각 유닛 2 · 링크 글자 있는 조각 0 · pathCut 0 · 루트 article#dic_area.go_trans (semantic)
+  -- vis 평균 4.7조각/틱 (최대 7) · 틱 평균 457B (최대 523B)
+
+=== siteB_close.json [p1] https://m.blog.naver.com/sispdy/224170003594 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:16:42.654Z
+  ok [PASS] pid 정합성 — 선언 16개 / 사용 5개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 23850ms = 틱 159개
+  ok [PASS] 히트테스트 정합성 — 41개 틱 전부 일관
+  ok [PASS] 노출 ≥ 체류(원본) — 5개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 188 / scroll 286
+  ok [PASS] 본문 교체 — append 재스캔 1회 (정상)
+  ok [PASS] 유닛 order — 0..15 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 7쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 16개 · 2981자 · 문서 16.8화면 · 스크롤 3637px/286회 · 중앙선 적중 41/159
+  ok [PASS] 조각 연결 — 유닛 16개 전부 연결 · vis 틱 159개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 41/41 (100%) · visTop..visBot⊂vis 115/115 (100%)
+  -- 유닛 16개 · 틱 159개 · 이벤트 161개 · schema v3
+  -- 조각 173 · 여러 조각 유닛 15 · 링크 글자 있는 조각 36 · pathCut 162 · 루트 div#ct.end (semantic)
+  -- vis 평균 8.7조각/틱 (최대 26) · 틱 평균 581B (최대 1122B)
+
+=== siteB_feed.json [세션 0c85b26f] ===
+  ok [PASS] 조각 유실 — 구간 2개 전부 연속
+  ok [PASS] 구간 종료 — closed 2
+  -- 페이지 2개 · 방문 2건 · focusMs 110700
+
+=== siteB_feed.json [p0] https://brunch.co.kr/search?q=%EC%83%81%ED%95%98%EC%9D%B4&type=article ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:18:30.486Z
+  ok [PASS] pid 정합성 — 선언 20개 / 사용 15개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 44250ms = 틱 295개
+  !! [WARN] 히트테스트 정합성 — 6/191 (3.1%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 15개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 288 / scroll 445
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..19 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 48쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 20개 · 4715자 · 문서 5.2화면 · 스크롤 3025px/445회 · 중앙선 적중 204/295
+  ok [PASS] 조각 연결 — 유닛 20개 전부 연결 · vis 틱 295개 전부 정합
+  !! [WARN] vis 교차검사 — centerPid∈vis 204/204 (100%) · visTop..visBot⊂vis 275/281 (98%) (예: t=17.6s [11,12] 빠짐 [12]; t=17.7s [11,12] 빠짐 [12])
+  -- 유닛 20개 · 틱 295개 · 이벤트 296개 · schema v3
+  -- 조각 65 · 여러 조각 유닛 19 · 링크 글자 있는 조각 62 · pathCut 61 · 루트 div#daumContent.cont_search (semantic)
+  -- vis 평균 13.3조각/틱 (최대 22) · 틱 평균 719B (최대 993B)
+
+=== siteB_feed.json [p1] https://brunch.co.kr/search?q=%EC%83%81%ED%95%98%EC%9D%B4&type=article ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:18:30.486Z
+  ok [PASS] pid 정합성 — 선언 28개 / 사용 9개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 66450ms = 틱 443개
+  !! [WARN] 히트테스트 정합성 — 5/109 (4.6%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 9개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 491 / scroll 904
+  XX [FAIL] 본문 교체 — disruptive-skipped 2회 — 학습에서 제외. 첫 번째(t=51.0s): 유닛 #26 · 위치 7807 · 7992→11358자 · …댓글1Feb 21. 2025by케이케이데이 KKday ⟨추천작가상하이 빵변 HJP글 35구독자 191상하이 김글 37구독자 15⟩ → ⟨중국 상하이, 요즘 뜨는 여행지 & 호텔⟩
+  ok [PASS] 유닛 order — 0..27 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 27쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 28개 · 6725자 · 문서 13.6화면 · 스크롤 5862px/904회 · 중앙선 적중 111/443
+  ok [PASS] 조각 연결 — 유닛 28개 전부 연결 · vis 틱 443개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 111/111 (100%) · visTop..visBot⊂vis 137/137 (100%)
+  -- 유닛 28개 · 틱 443개 · 이벤트 446개 · schema v3
+  -- 조각 89 · 여러 조각 유닛 27 · 링크 글자 있는 조각 86 · pathCut 85 · 루트 div#daumContent.cont_search (semantic)
+  -- vis 평균 3.8조각/틱 (최대 14) · 틱 평균 434B (최대 747B)
+
+=== siteB_iframe.json [세션 7ea2b9c1] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 82200
+
+=== siteB_iframe.json [p0] https://blog.naver.com/PostView.naver?blogId=sispdy&logNo=224170003594 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:20:51.298Z
+  ok [PASS] pid 정합성 — 선언 18개 / 사용 8개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 82200ms = 틱 548개
+  !! [WARN] 히트테스트 정합성 — 9/156 (5.8%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 8개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 461 / scroll 1195
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..17 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 17쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 18개 · 3511자 · 문서 19.2화면 · 스크롤 7540px/1195회 · 중앙선 적중 157/548
+  ok [PASS] 조각 연결 — 유닛 18개 전부 연결 · vis 틱 548개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 157/157 (100%) · visTop..visBot⊂vis 338/338 (100%)
+  -- 유닛 18개 · 틱 548개 · 이벤트 549개 · schema v3
+  -- 조각 207 · 여러 조각 유닛 18 · 링크 글자 있는 조각 59 · pathCut 203 · 루트 div#head-skin (fallback)
+  -- vis 평균 7.5조각/틱 (최대 26) · 틱 평균 548B (최대 1110B)
+
+=== siteB_inner.json [세션 fcf7deca] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 71550
+
+=== siteB_inner.json [p0] https://app.notion.com/p/2-2-2909c478d69580f39cecda1e76e8ffa8 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:22:43.458Z
+  ok [PASS] pid 정합성 — 선언 26개 / 사용 19개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 71550ms = 틱 477개
+  !! [WARN] 히트테스트 정합성 — 1/277 (0.4%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 19개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 605 / scroll 0
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..25 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  XX [FAIL] 스크롤 포착 — 화면이 바뀐 63쌍 중 63쌍(100%)에 스크롤 기록 없음 (t=1.8s [0,1]→[0,2]; t=3.8s [0,2]→[0,1]; t=5.1s [0,1]→[0,2]) — 내부 스크롤 컨테이너 의심
+  ok [PASS] 본문 추출 — 유닛 26개 · 4965자 · 문서 1.0화면 · 스크롤 0px/0회 · 중앙선 적중 277/477
+  ok [PASS] 조각 연결 — 유닛 26개 전부 연결 · vis 틱 477개 전부 정합
+  !! [WARN] vis 교차검사 — centerPid∈vis 277/277 (100%) · visTop..visBot⊂vis 469/471 (100%) (예: t=26.9s [4,8] 빠짐 [8]; t=32.0s [6,9] 빠짐 [9])
+  -- 유닛 26개 · 틱 477개 · 이벤트 478개 · schema v3
+  -- 조각 108 · 여러 조각 유닛 24 · 링크 글자 있는 조각 0 · pathCut 108 · 루트 main#main.notion-frame (semantic)
+  -- vis 평균 12.8조각/틱 (최대 19) · 틱 평균 703B (최대 898B)
+
+=== siteB_mblog.json [세션 18207d94] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 82950
+
+=== siteB_mblog.json [p0] https://m.blog.naver.com/sispdy/224170003594 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-B · 기록 시작 2026-10-03T10:24:18.574Z
+  ok [PASS] pid 정합성 — 선언 16개 / 사용 11개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 82950ms = 틱 553개
+  !! [WARN] 히트테스트 정합성 — 1/238 (0.4%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 11개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 526 / scroll 1231
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..15 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 33쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 16개 · 2981자 · 문서 19.0화면 · 스크롤 12744px/1231회 · 중앙선 적중 238/553
+  ok [PASS] 조각 연결 — 유닛 16개 전부 연결 · vis 틱 553개 전부 정합
+  ok [PASS] vis 교차검사 — centerPid∈vis 238/238 (100%) · visTop..visBot⊂vis 452/452 (100%)
+  -- 유닛 16개 · 틱 553개 · 이벤트 554개 · schema v3
+  -- 조각 173 · 여러 조각 유닛 15 · 링크 글자 있는 조각 36 · pathCut 162 · 루트 div#ct.end (semantic)
+  -- vis 평균 11.2조각/틱 (최대 27) · 틱 평균 657B (최대 1152B)
+
+FAIL — 보고서 2/20개에서 불변식 위반

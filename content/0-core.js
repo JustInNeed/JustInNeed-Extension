@@ -29,7 +29,7 @@
   //   범위가 넓어지므로 미룬다.
   // ==========================================================================
   const CFG = {
-    SCHEMA_VERSION: 2,        // [C9]
+    SCHEMA_VERSION: 3,        // [C9] v3 = 감사 §8. 3 미만은 check_session · extract_features 가 거부
     TICK_MS: 150,             // 마스터 클럭
     CENTER_RATIO: 0.49,       // GVAM 중앙선 (뷰포트 세로 비율)
 

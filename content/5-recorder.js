@@ -3,7 +3,7 @@
  *
  * 소유: recording, 구간(segId, segPageId, segMeta), timeline 버퍼, tickTimer,
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
- * 의존(직접 호출): 0-core, 2-units, 3-hittest, 4-input
+ * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 3-hittest, 4-input
  * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
@@ -13,6 +13,16 @@
  *   150ms 마스터 클럭을 돌리고, 그 순간의 관측을 timeline 에 원본 그대로 남긴다.
  *   DOM 을 직접 읽지 않는다 — 측정은 3-hittest.sample(), 입력은 4-input.drain().
  *   측정과 기록을 갈라놔야 "패널이 느려서 틱이 밀렸나"를 구분할 수 있다.
+ *   (예외: 스크롤 위치 · 뷰포트 크기 같은 스칼라는 직접 읽는다. 주체 요소는 4-input 이 정한다.)
+ *
+ * --- 스크롤 주체 (v3, 감사 §8-6) ----------------------------------------------
+ *   tick.scrollY / docH = 본문 스크롤 주체(4-input.scroller())의 scrollTop / scrollHeight,
+ *   주체가 window 면 window.scrollY / documentElement.scrollHeight (v2 와 같은 값).
+ *   주체가 바뀔 때와 구간 시작 때 { type:'scroller', t, segId, path:'window'|[tag,id,class,role] }.
+ *
+ * --- drain 을 버리는 때 (v3) ---------------------------------------------------
+ *   틱을 건너뛸 때(숨김 · 포커스 없음)와 구간을 열 때. 안 버리면 그 사이 쌓인 카운터가
+ *   다음 기록 틱에 섞인다.
  *
  * --- 세션은 여기 없다 --------------------------------------------------------
  *   세션(sessionId, epoch)은 background 가 소유한다. 여기서 "기록 중"은
@@ -73,7 +83,6 @@
   let segTicks = 0;                   // 이 구간에서 기록한 틱 수 (패널 표시용)
   let segEvents = 0;                  // 이 구간에서 기록한 이벤트 수 (패널 표시용)
 
-  let prevTickCursor = null;
   let prevScrollY = window.scrollY;
   let prevTickTime = null;
 
@@ -86,7 +95,9 @@
   let chunkN = 0;                     // 이 구간의 다음 조각 번호
   let searchQuery = searchQueryFromReferrer();   // [C8]
 
-  let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;
+  let lastScrollerEl;                 // 마지막으로 scroller 이벤트를 낸 주체. undefined = 아직 안 냄
+  let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;   // 스크롤 속도는 패널 표시용 내부 값
+  let lastVisN = 0;                     // 패널 표시용 — 마지막 틱 vis 조각 수
 
   // --- 미러 (읽기 전용) ---
   let isPrimary = IS_TOP;
@@ -99,13 +110,33 @@
     segEvents++;
   }
 
+  // 본문 스크롤 주체의 위치 · 높이. el = null 이면 window.
+  function scrollState() {
+    const el = RBC.input.scroller();
+    return el
+      ? { el, y: el.scrollTop, h: el.scrollHeight }
+      : { el: null, y: window.scrollY, h: document.documentElement.scrollHeight };
+  }
+
+  // 주체가 바뀌었으면 scroller 이벤트. 기록 중에만 부른다.
+  function noteScroller(el) {
+    if (el === lastScrollerEl) return;
+    lastScrollerEl = el;
+    push({ type: 'scroller', t: tNow(), segId, path: el ? RBC.stream.attrs(el) : 'window' });
+    prevTickTime = null;                       // 패널 속도: 다른 주체끼리 차분하지 않는다
+  }
+
   // ==========================================================================
   // 마스터 틱
   // ==========================================================================
   function tick() {
     // [C2] 탭이 숨겨졌거나 브라우저 창이 포커스를 잃은 동안은 기록하지 않는다.
     //      비활성 탭에서 틱이 안 도는 것도 이 줄 덕분이다.
-    if (recording && (document.hidden || !RBC.input.focused())) { prevTickTime = null; return; }
+    if (recording && (document.hidden || !RBC.input.focused())) {
+      RBC.input.drain();                       // v3: 공백 동안 쌓인 카운터는 버린다
+      prevTickTime = null;
+      return;
+    }
 
     // [C5] 30분 무동작 → 자동 종료 (세션 종료는 11-session 이 background 로 올린다)
     if (recording && RBC.input.idleMs() > CFG.IDLE_TIMEOUT_MS) {
@@ -115,7 +146,9 @@
     }
 
     const now = performance.now();
-    const scrollY = window.scrollY;
+    const sc = scrollState();
+    if (recording) noteScroller(sc.el);
+    const scrollY = sc.y;
     const dt = prevTickTime != null ? (now - prevTickTime) / 1000 : 0;
     const cursor = RBC.input.cursor();
     const ev = RBC.input.drain();          // 틱당 정확히 한 번. 읽으면서 리셋.
@@ -123,36 +156,35 @@
     const s = RBC.hittest.sample(cursor);  // 이 틱의 DOM 조회는 전부 여기서
     const centerU = s.centerU;
     const centerPid = centerU ? centerU.pid : null;
-    const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;
+    const scrollSpeed = dt > 0 ? (scrollY - prevScrollY) / dt : 0;   // 패널 표시용 (로그에 안 넣음)
 
-    let cursorPid = null, cx = null, cy = null, cursorDist = 0, cursorMoved = false;
+    let cursorPid = null, cx = null, cy = null;
     if (cursor) {
       cx = cursor.x; cy = cursor.y;
       cursorPid = s.cursorU ? s.cursorU.pid : null;
-      if (prevTickCursor) {
-        cursorDist = Math.round(Math.hypot(cx - prevTickCursor.x, cy - prevTickCursor.y));
-        cursorMoved = cursorDist > 0;
-      }
     }
 
     if (recording) {
+      // 필드 순서 = 감사 §8 "v3 tick 최종 필드". media(세트 E) · fo(세트 D) 는 아직 없다.
       push({
         type: 'tick',
         t: tNow(),
         segId,
-        scrollY,
-        scrollSpeed: Math.round(scrollSpeed),   // 부호 = 방향. 감속은 오프라인에서 미분
-        scrollEvents: ev.scrollEvents,
+        scrollY,                                // v3: 본문 스크롤 주체 기준
+        scrollEvents: ev.scrollEvents,          // 본문을 움직인 스크롤 이벤트
+        scrollOther: ev.scrollOther,            // v3: 나머지 스크롤 (캐러셀 · 코드 블록 등)
         mouseEvents: ev.mouseEvents,            // [C3]
-        centerPid,                              // B채널 귀속
-        visTop: s.visTop, visBot: s.visBot,     // [C1] 이 사이 유닛은 화면에 노출됨
+        mdx: ev.mdx, mdy: ev.mdy,               // v3: 직전 틱 이후 Σ|dx| · Σ|dy| (px)
         cursorPid,                              // A채널 귀속 (여백이면 null)
         cx, cy,
-        cursorDist,
-        cursorMoved,
+        centerPid,                              // B채널 귀속
+        visTop: s.visTop, visBot: s.visBot,     // [C1] caret 탐침 — vis 교차검증용
+        vis: s.vis,                             // v3: 뷰포트와 겹친 조각 [pid,k,top,bottom,left,right]
+        edits: ev.edits,                        // v3: input 이벤트 개수 (0 이냐 아니냐로만)
         vw: window.innerWidth,
         vh: window.innerHeight,
-        docH: document.documentElement.scrollHeight,
+        docH: sc.h,                             // v3: 본문 스크롤 주체 기준
+        dpr: window.devicePixelRatio,           // v3: 기록 중 확대/축소
       });
       segTicks++;
       if (!pageSent) { pageSent = true; emitPage(); }   // 첫 틱 = 이 탭을 실제로 봤다
@@ -160,17 +192,17 @@
 
     prevTickTime = now;
     prevScrollY = scrollY;
-    if (cursor) prevTickCursor = { x: cursor.x, y: cursor.y };
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
-    bus.emit('tick:done', { centerU, cursorPid });
+    lastVisN = s.vis.length;
+    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis });
     if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
   }
 
   function ensureTicking() {
     const want = recording || overlayOn;
     if (want && !tickTimer) {
-      prevTickTime = null; prevScrollY = window.scrollY; prevTickCursor = null;
+      prevTickTime = null; prevScrollY = scrollState().y;
       tickTimer = setInterval(tick, CFG.TICK_MS);
     } else if (!want && tickTimer) {
       clearInterval(tickTimer); tickTimer = null;
@@ -183,6 +215,7 @@
   function paragraphs() {
     return RBC.units.all().map(u => ({
       pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
+      pieces: u.pieces || [],                      // v3 조각 (감사 §8-4)
     }));
   }
 
@@ -208,16 +241,17 @@
   // 이 모양은 extract_features.py 와의 계약이다 — 바꾸려면 schemaVersion 을
   // 올리고 양쪽을 같이 고칠 것.
   function buildMeta() {
+    const ri = RBC.stream.rootInfo();
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
-      collector: 'rbc-v2.3-session',
+      // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체. 세트가 끝날 때마다 올린다.
+      collector: 'rbc-v3-C',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
       title: document.title,
       referrer: document.referrer || null,
       enteredAt: new Date().toISOString(),
-      leftAt: null,
       devicePixelRatio: window.devicePixelRatio,
       userAgent: navigator.userAgent,
 
@@ -232,12 +266,21 @@
       frameTag: TAG,
       isTopFrame: IS_TOP,
       chunking: RBC.units.opts(),
+      root: ri ? { el: ri.el, how: ri.how } : null,  // 본문 루트 [tag,id,class,role] · semantic|fallback|body
       idleTimeoutMs: CFG.IDLE_TIMEOUT_MS,
 
       notes: [
         '원본 값만 수집. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.',
         '유닛 = 본문 텍스트 스트림의 글자 오프셋 구간. DOM 문단이 아님.',
         'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid.',
+        'pieces = 유닛을 DOM 블록 경계로 나눈 조각. 배열 순서 = 조각 번호 k. off/chars 는 ' +
+        '유닛 text(공백 정리 뒤, UTF-16) 기준이며 빈틈·겹침 없이 text 를 나눈다. linkChars = <a> 안 글자 수.',
+        'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
+        'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
+        '이탈 시각은 segend 이벤트 · session.chunkReport.end 로 본다 (meta.leftAt 없음).',
+        'tick.vis = 그 틱에 뷰포트와 겹친 조각 [pid, k, top, bottom, left, right]. 자기 프레임 뷰포트 기준 CSS px, ' +
+        '자르지 않음(음수 · vh 초과 허용). 조각마다 Range 외곽 상자. 같은 pid 의 조각은 세로 구간 합집합으로 합칠 것(단순 합 금지). ' +
+        '보이는 조각이 없으면 []. tick.dpr = devicePixelRatio.',
         'visTop/visBot = 그 틱에 뷰포트에 보이던 유닛 order 범위(양끝 포함). ' +
         '체류시간(뷰포트 노출 누적)은 이걸로 오프라인 계산.',
         'centerPid = 뷰포트 49% 중앙선 유닛. GVAM 캐비엣: 중앙선=focus 가정은 ' +
@@ -245,9 +288,17 @@
         'cursorPid=null 은 커서가 여백/이미지/sticky 위 (A채널 결측).',
         '탭이 숨겨졌거나 창이 포커스를 잃은 동안의 틱은 기록하지 않음. ' +
         'focusMs = 기록된 틱 수 × tickMs.',
-        'highlight/copy 의 pids = 선택이 걸친 유닛 전부. pid는 첫 유닛(하위호환).',
-        'scrollSpeed 부호 = 스크롤 방향. 감속은 속도 시계열을 미분해서 얻을 것.',
-        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션.',
+        'highlight/copy 의 ranges = [[pid, lo, hi], …] 선택이 걸친 유닛마다 그 유닛 text 안 범위' +
+        '(pieces 와 같은 좌표, 유닛 order 순). text = 선택 문자열(trim).',
+        'tick.scrollY / docH = 본문 스크롤 주체의 scrollTop / scrollHeight (주체가 window 면 window.scrollY / ' +
+        '문서 높이). 주체는 scroller 이벤트(path = window | [tag,id,class,role])로 바뀔 때만 남는다.',
+        'tick.scrollEvents = 본문을 움직인 스크롤 이벤트 수(대상이 document 이거나 본문 루트를 품은 요소), ' +
+        'scrollOther = 나머지 스크롤 이벤트 수.',
+        'tick.mdx / mdy = 직전 틱 이후 mousemove 이동량 Σ|dx| · Σ|dy| (px). ' +
+        'tick.edits = 직전 틱 이후 input 이벤트 수(내용 안 남김, 한글 IME 로 부풀므로 0 이냐 아니냐로만).',
+        '차분값(스크롤 속도 · 커서 이동 거리)은 로그에 없다. 아래 리셋 규칙으로 백엔드가 계산.',
+        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션. ' +
+        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. 원인은 첫 이벤트.',
         '기사 제목은 유닛에 포함되지 않는다(본문 루트 밖). 제목 텍스트는 meta.title.',
         '한 페이지 = 같은 글(pageId)의 모든 구간(segId)을 합친 것. 탭 전환은 ' +
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
@@ -276,9 +327,13 @@
     segMeta = buildMeta();
     pageSent = false;
     chunkN = 0;
+    RBC.input.drain();                                  // v3: 기록 전 쌓인 카운터는 버린다
+    lastScrollerEl = undefined;
+    RBC.input.seedScroller();                           // 첫 스크롤 전 주체
 
     RBC.input.bump();                                   // idle 타이머 초기화
     recording = true;
+    noteScroller(RBC.input.scroller());                 // 구간 시작 때 첫 값
     ensureTicking();
     // seg:page 는 여기서 보내지 않는다 — 첫 틱에서 보낸다
     flushTimer = setInterval(flush, CFG.FLUSH_MS);
@@ -312,6 +367,7 @@
       scrollSpeed: Math.round(lastScrollSpeed),
       centerText: u ? (u.order + ' · ' + u.text.slice(0, 26)) : '',
       query: searchQuery || '',
+      sampleMs: RBC.hittest.stats(), visN: lastVisN,   // 패널: sample() p95 · 이번 틱 vis 조각 수
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
     });
@@ -352,12 +408,12 @@
   // ==========================================================================
   bus.on('sel:highlight', (d) => {
     if (!recording) return;
-    push({ type: 'highlight', t: tNow(), segId, pids: d.pids, pid: d.pids[0] || null, text: d.text });
+    push({ type: 'highlight', t: tNow(), segId, ranges: d.ranges, text: d.text });
   });
 
   bus.on('sel:copy', (d) => {
     if (!recording) return;
-    push({ type: 'copy', t: tNow(), segId, pids: d.pids, pid: d.pids[0] || null, text: d.text });
+    push({ type: 'copy', t: tNow(), segId, ranges: d.ranges, text: d.text });
   });
 
   // 탭을 떠나는 순간 바로 넘긴다. 떠난 탭은 틱이 멈추니 다음 flush 까지 기다릴 이유가 없다.
@@ -387,7 +443,9 @@
   // timeline 에만 있고 meta.paragraphs 에는 없어서 pid 정합성이 깨진다.
   bus.on('units:rescanned', (d) => {
     if (!recording) return;
-    push({ type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count });
+    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count };
+    if (d.diff) e.diff = d.diff;                      // disruptive-skipped 진단
+    push(e);
     if (d.mode !== 'disruptive-skipped' && pageSent) emitPage();   // 첫 틱 전이면 첫 틱 때 최신 목록이 나간다
   });
 

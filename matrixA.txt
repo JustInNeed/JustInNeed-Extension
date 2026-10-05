@@ -1,0 +1,217 @@
+
+=== siteA_ads1.json [세션 6f0b69b5] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 63750
+
+=== siteA_ads1.json [p0] https://star.ohmynews.com/NWS_Web/OhmyStar/at_pg.aspx?CNTN_CD=A0003271 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:05:34.283Z
+  ok [PASS] pid 정합성 — 선언 15개 / 사용 15개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 63750ms = 틱 425개
+  !! [WARN] 히트테스트 정합성 — 1/137 (0.7%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 15개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 633 / scroll 1062
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..14 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 48쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 15개 · 2676자 · 문서 11.0화면 · 스크롤 8102px/1062회 · 중앙선 적중 142/425
+  ok [PASS] 조각 연결 — 유닛 15개 전부 연결
+  -- 유닛 15개 · 틱 425개 · 이벤트 426개 · schema v3
+  -- 조각 31 · 여러 조각 유닛 6 · 링크 글자 있는 조각 9 · pathCut 5 · 루트 article.article (semantic)
+
+=== siteA_ads2.json [세션 532149d7] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 66600
+
+=== siteA_ads2.json [p0] https://www.kyeonggi.com/article/20260930580112 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:08:06.593Z
+  ok [PASS] pid 정합성 — 선언 16개 / 사용 13개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 66600ms = 틱 444개
+  !! [WARN] 히트테스트 정합성 — 20/140 (14.3%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 13개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 491 / scroll 1004
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..15 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 72쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 16개 · 3135자 · 문서 8.8화면 · 스크롤 6290px/1004회 · 중앙선 적중 148/444
+  ok [PASS] 조각 연결 — 유닛 16개 전부 연결
+  -- 유닛 16개 · 틱 444개 · 이벤트 445개 · schema v3
+  -- 조각 102 · 여러 조각 유닛 13 · 링크 글자 있는 조각 55 · pathCut 56 · 루트 div#wrapper (fallback)
+
+=== siteA_ads3.json [세션 6c2dfbaa] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 66600
+
+=== siteA_ads3.json [p0] https://biz.heraldcorp.com/article/10888955 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:09:39.926Z
+  ok [PASS] pid 정합성 — 선언 13개 / 사용 12개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 66600ms = 틱 444개
+  !! [WARN] 히트테스트 정합성 — 10/214 (4.7%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 12개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 473 / scroll 904
+  ok [PASS] 본문 교체 — append 재스캔 1회 (정상)
+  ok [PASS] 유닛 order — 0..12 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 48쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 13개 · 2358자 · 문서 8.0화면 · 스크롤 5652px/904회 · 중앙선 적중 214/444
+  ok [PASS] 조각 연결 — 유닛 13개 전부 연결
+  -- 유닛 13개 · 틱 444개 · 이벤트 446개 · schema v3
+  -- 조각 33 · 여러 조각 유닛 7 · 링크 글자 있는 조각 15 · pathCut 8 · 루트 main.div_layout (fallback)
+
+=== siteA_ads4.json [세션 5fa030f8] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 74400
+
+=== siteA_ads4.json [p0] https://www.wowtv.co.kr/NewsCenter/News/Read?articleId=A202609300077 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:11:19.720Z
+  ok [PASS] pid 정합성 — 선언 9개 / 사용 9개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 74400ms = 틱 496개
+  !! [WARN] 히트테스트 정합성 — 45/197 (22.8%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  !! [WARN] 노출 ≥ 체류(원본) — 3/9개 유닛에서 노출 < 체류 (#6(4.2s>0.0s), #7(0.9s>0.0s), #8(0.3s>0.0s)), 부족분 합 5.4s — 가장자리 탐색(H/8)의 한계. v3 tick.vis 로 대체 예정
+  ok [PASS] 이벤트 카운터 — mouse 374 / scroll 1326
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..8 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 42쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 9개 · 1763자 · 문서 8.4화면 · 스크롤 6036px/1326회 · 중앙선 적중 241/496
+  ok [PASS] 조각 연결 — 유닛 9개 전부 연결
+  -- 유닛 9개 · 틱 496개 · 이벤트 497개 · schema v3
+  -- 조각 58 · 여러 조각 유닛 7 · 링크 글자 있는 조각 26 · pathCut 44 · 루트 div#whole-wrap (fallback)
+
+=== siteA_close.json [세션 25e9dc2b] ===
+  ok [PASS] 조각 유실 — 구간 2개 전부 연속
+  ok [PASS] 구간 종료 — closed 1 · unloaded 1
+  -- 페이지 2개 · 방문 3건 · focusMs 24150
+
+=== siteA_close.json [p0] https://n.news.naver.com/mnews/article/002/0002456290?sid=110%20https: ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:22:31.473Z
+  ok [PASS] pid 정합성 — 선언 22개 / 사용 15개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 17400ms = 틱 116개
+  !! [WARN] 히트테스트 정합성 — 4/96 (4.2%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 14개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 277 / scroll 356
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..21 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 35쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 22개 · 4173자 · 문서 14.3화면 · 스크롤 2979px/356회 · 중앙선 적중 96/116
+  ok [PASS] 조각 연결 — 유닛 22개 전부 연결
+  -- 유닛 22개 · 틱 116개 · 이벤트 119개 · schema v3
+  -- 조각 24 · 여러 조각 유닛 2 · 링크 글자 있는 조각 0 · pathCut 0 · 루트 article#dic_area.go_trans (semantic)
+
+=== siteA_close.json [p1] https://n.news.naver.com/mnews/ranking/article/002/0002459456?ntype=RA ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:22:31.473Z
+  ok [PASS] pid 정합성 — 선언 3개 / 사용 2개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 6750ms = 틱 45개
+  ok [PASS] 히트테스트 정합성 — 6개 틱 전부 일관
+  !! [WARN] 노출 ≥ 체류(원본) — 1/2개 유닛에서 노출 < 체류 (#2(1.9s>0.1s)), 부족분 합 1.8s — 가장자리 탐색(H/8)의 한계. v3 tick.vis 로 대체 예정
+  ok [PASS] 이벤트 카운터 — mouse 84 / scroll 72
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..2 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 3쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 3개 · 422자 · 문서 10.9화면 · 스크롤 1595px/72회 · 중앙선 적중 19/45
+  ok [PASS] 조각 연결 — 유닛 3개 전부 연결
+  -- 유닛 3개 · 틱 45개 · 이벤트 48개 · schema v3
+  -- 조각 3 · 여러 조각 유닛 0 · 링크 글자 있는 조각 0 · pathCut 0 · 루트 article#dic_area.go_trans (semantic)
+
+=== siteA_feed.json [세션 cf49ba36] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 82350
+
+=== siteA_feed.json [p0] https://brunch.co.kr/search?q=%EC%83%81%ED%95%98%EC%9D%B4&type=article ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:13:36.895Z
+  ok [PASS] pid 정합성 — 선언 20개 / 사용 18개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 82350ms = 틱 549개
+  !! [WARN] 히트테스트 정합성 — 21/91 (23.1%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  !! [WARN] 노출 ≥ 체류(원본) — 1/18개 유닛에서 노출 < 체류 (#19(2.5s>0.0s)), 부족분 합 2.5s — 가장자리 탐색(H/8)의 한계. v3 tick.vis 로 대체 예정
+  ok [PASS] 이벤트 카운터 — mouse 837 / scroll 1470
+  XX [FAIL] 본문 교체 — disruptive-skipped 발생 — 이 세션은 학습에서 제외
+  ok [PASS] 유닛 order — 0..19 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 46쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 20개 · 4715자 · 문서 22.9화면 · 스크롤 14528px/1470회 · 중앙선 적중 96/549
+  ok [PASS] 조각 연결 — 유닛 20개 전부 연결
+  -- 유닛 20개 · 틱 549개 · 이벤트 553개 · schema v3
+  -- 조각 65 · 여러 조각 유닛 19 · 링크 글자 있는 조각 62 · pathCut 61 · 루트 div#daumContent.cont_search (semantic)
+
+=== siteA_iframe.json [세션 c5583244] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 99300
+
+=== siteA_iframe.json [p0] https://blog.naver.com/PostView.naver?blogId=sispdy&logNo=224170003594 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:15:31.732Z
+  ok [PASS] pid 정합성 — 선언 18개 / 사용 12개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 99300ms = 틱 662개
+  !! [WARN] 히트테스트 정합성 — 9/247 (3.6%)에서 중앙선이 노출 범위 밖. 페이지 최상단 정지 구간이면 정상 — diag_hittest.py 로 확인
+  ok [PASS] 노출 ≥ 체류(원본) — 12개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 689 / scroll 1502
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..17 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 51쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 18개 · 3511자 · 문서 19.1화면 · 스크롤 14485px/1502회 · 중앙선 적중 249/662
+  ok [PASS] 조각 연결 — 유닛 18개 전부 연결
+  -- 유닛 18개 · 틱 662개 · 이벤트 663개 · schema v3
+  -- 조각 207 · 여러 조각 유닛 18 · 링크 글자 있는 조각 59 · pathCut 203 · 루트 div#head-skin (fallback)
+
+=== siteA_inner.json [세션 266c5d36] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 88950
+
+=== siteA_inner.json [p0] https://app.notion.com/p/2-2-2909c478d69580f39cecda1e76e8ffa8 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:17:41.367Z
+  ok [PASS] pid 정합성 — 선언 24개 / 사용 20개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 88950ms = 틱 593개
+  ok [PASS] 히트테스트 정합성 — 388개 틱 전부 일관
+  ok [PASS] 노출 ≥ 체류(원본) — 20개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 593 / scroll 0
+  XX [FAIL] 본문 교체 — disruptive-skipped 발생 — 이 세션은 학습에서 제외
+  ok [PASS] 유닛 order — 0..23 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  XX [FAIL] 스크롤 포착 — 화면이 바뀐 75쌍 중 75쌍(100%)에 스크롤 기록 없음 (t=2.0s [0,1]→[0,2]; t=2.9s [0,2]→[0,1]; t=4.5s [0,1]→[0,2]) — 내부 스크롤 컨테이너 의심
+  ok [PASS] 본문 추출 — 유닛 24개 · 4483자 · 문서 1.0화면 · 스크롤 0px/0회 · 중앙선 적중 394/593
+  ok [PASS] 조각 연결 — 유닛 24개 전부 연결
+  -- 유닛 24개 · 틱 593개 · 이벤트 595개 · schema v3
+  -- 조각 102 · 여러 조각 유닛 23 · 링크 글자 있는 조각 0 · pathCut 102 · 루트 main#main.notion-frame (semantic)
+
+=== siteA_mblog.json [세션 6789144b] ===
+  ok [PASS] 조각 유실 — 구간 1개 전부 연속
+  ok [PASS] 구간 종료 — closed 1
+  -- 페이지 1개 · 방문 1건 · focusMs 82050
+
+=== siteA_mblog.json [p0] https://m.blog.naver.com/sispdy/224170003594 ===
+  ok [PASS] 스키마 버전 — v3 · rbc-v3-A · 기록 시작 2026-10-03T05:19:38.036Z
+  ok [PASS] pid 정합성 — 선언 16개 / 사용 16개
+  ok [PASS] 틱 간격 — 중앙값 150ms (설정 150ms)
+  ok [PASS] focusMs — 82050ms = 틱 547개
+  ok [PASS] 히트테스트 정합성 — 231개 틱 전부 일관
+  ok [PASS] 노출 ≥ 체류(원본) — 16개 유닛 전부 성립
+  ok [PASS] 이벤트 카운터 — mouse 529 / scroll 1551
+  ok [PASS] 본문 교체 — 없음
+  ok [PASS] 유닛 order — 0..15 연속
+  ok [PASS] 구간 정합성 — 구간 1개 · 탭 1개
+  ok [PASS] 스크롤 포착 — 화면이 바뀐 41쌍 전부 스크롤 기록 있음
+  ok [PASS] 본문 추출 — 유닛 16개 · 2981자 · 문서 23.2화면 · 스크롤 17192px/1551회 · 중앙선 적중 232/547
+  ok [PASS] 조각 연결 — 유닛 16개 전부 연결
+  -- 유닛 16개 · 틱 547개 · 이벤트 548개 · schema v3
+  -- 조각 173 · 여러 조각 유닛 15 · 링크 글자 있는 조각 36 · pathCut 162 · 루트 div#ct.end (semantic)
+
+FAIL — 보고서 2/19개에서 불변식 위반

@@ -1,7 +1,7 @@
 /* =============================================================================
  * 8-overlay.js — 유닛 경계 오버레이 (디버그 전용)
  *
- * 소유: overlayOn, CSS Custom Highlight 객체, 폴백 레이어, 중앙선 엘리먼트
+ * 소유: overlayOn, CSS Custom Highlight 객체, 폴백 레이어, 중앙선 엘리먼트, vis 상자 레이어
  * 의존(직접 호출): 0-core, RBC.units, RBC.hittest   ← 전부 자기보다 낮은 번호
  * 발행: overlay:changed
  * 구독: cmd:overlay, units:changed, tick:done, viewport:resized
@@ -10,6 +10,12 @@
  *   유닛이 DOM 요소가 아니라 글자 범위라서 outline을 못 쓴다.
  *   CSS Custom Highlight API로 글자 범위에 직접 색을 칠한다.
  *   미지원 브라우저는 절대배치 박스로 폴백.
+ *
+ * --- vis 상자 (v3) ----------------------------------------------------------
+ *   오버레이를 켜면 매 틱(tick:done) 기록되는 vis 조각 사각형을 테두리 상자로 그린다.
+ *   글자 칠하기와 따로 — 상자는 "로그에 남는 좌표 그 자체"라서, 사진 칸이 비고 글자만
+ *   덮이는지를 눈으로 확인하는 장치다. 라벨 = #order·k. 갱신이 틱 단위(150ms)라 빠른
+ *   스크롤에서는 상자가 살짝 늦게 따라온다 (표시만의 한계, 기록과 무관).
  *
  * --- 판정 기준 --------------------------------------------------------------
  *   manifest의 js 배열에서 이 파일을 빼도 스캔·기록·정지·JSON이 전부 정상이어야
@@ -38,6 +44,8 @@
   let hlA = null, hlB = null, hlC = null, hlU = null;
   let fallbackLayer = null, centerLineEl = null;
   let fbRaf = 0;
+  let visLayer = null;
+  const visPool = [];
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 오버레이 몫만 떼어왔다.
@@ -58,6 +66,14 @@
       .rbc-fb-box{ position:absolute; pointer-events:none; }
       .rbc-fb-box.a{ background:rgba(59,130,246,.13); }
       .rbc-fb-box.b{ background:rgba(245,158,11,.17); }
+      #rbc-vis{ position:fixed; left:0; top:0; width:0; height:0; overflow:visible;
+        z-index:2147483645; pointer-events:none; }
+      .rbc-vis-box{ position:absolute; box-sizing:border-box; pointer-events:none;
+        border:1.5px solid rgba(37,99,235,.9); }
+      .rbc-vis-box.b{ border-color:rgba(217,119,6,.95); }
+      .rbc-vis-box > span{ position:absolute; left:-1px; top:-15px; font:10px/14px monospace;
+        padding:0 3px; color:#fff; background:rgba(37,99,235,.9); white-space:nowrap; }
+      .rbc-vis-box.b > span{ background:rgba(217,119,6,.95); }
     `;
     document.documentElement.appendChild(s);
   }
@@ -128,6 +144,39 @@
   }
 
   // ==========================================================================
+  // vis 상자 — tick:done 의 vis 를 그대로 그린다 (좌표 = 뷰포트 기준 = fixed 기준)
+  // ==========================================================================
+  function drawVis(vis) {
+    if (!visLayer) {
+      visLayer = document.createElement('div');
+      visLayer.id = 'rbc-vis';
+      document.documentElement.appendChild(visLayer);
+    }
+    visLayer.style.display = 'block';
+    const list = vis || [];
+    while (visPool.length < list.length) {
+      const d = document.createElement('div');
+      d.appendChild(document.createElement('span'));
+      visLayer.appendChild(d);
+      visPool.push(d);
+    }
+    for (let i = 0; i < visPool.length; i++) {
+      const d = visPool[i];
+      const v = list[i];
+      if (!v) { d.style.display = 'none'; continue; }
+      const [pid, k, top, bottom, left, right] = v;
+      const u = RBC.units.byPid(pid);
+      const order = u ? u.order : '?';
+      d.className = 'rbc-vis-box' + (typeof order === 'number' && order % 2 ? ' b' : '');
+      d.style.cssText = `display:block;left:${left}px;top:${top}px;` +
+        `width:${right - left}px;height:${bottom - top}px;`;
+      d.firstChild.textContent = '#' + order + '·' + k;
+    }
+  }
+
+  function hideVis() { if (visLayer) visLayer.style.display = 'none'; }
+
+  // ==========================================================================
   // 폴백 — CSS Custom Highlight 미지원 브라우저
   // ==========================================================================
   function paintFallback(on) {
@@ -168,6 +217,7 @@
   function setOverlay(on) {
     overlayOn = !!on;
     paint(overlayOn);
+    if (!overlayOn) hideVis();
     // content.js 의 미러를 갱신시킨다. 거기서 ensureTicking() 이 다시 불린다.
     bus.emit('overlay:changed', { on: overlayOn });
   }
@@ -184,7 +234,11 @@
   bus.on('units:changed', () => { if (overlayOn) paint(true); });
 
   // [R5] 전: tick() 안에서 if (overlayOn) markCurrent(centerU, cursorPid);
-  bus.on('tick:done', (d) => { if (overlayOn && d) markCurrent(d.centerU, d.cursorPid); });
+  bus.on('tick:done', (d) => {
+    if (!overlayOn || !d) return;
+    markCurrent(d.centerU, d.cursorPid);
+    drawVis(d.vis);
+  });
 
   // 전: onResize() 안에서 if (overlayOn) paintOverlay(true);
   bus.on('viewport:resized', () => { if (overlayOn) paint(true); });

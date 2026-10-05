@@ -5,6 +5,12 @@
  * 의존(직접 호출): 0-core
  * 발행: 없음   구독: 없음
  *
+ * --- seg 하나 = 텍스트 노드 하나 (v3) -----------------------------------------
+ *   { node, start, len, blk, link }
+ *     blk  = 가장 가까운 DOM 블록 (nearestBlock). 2-units 가 이 값이 바뀌는 지점에서
+ *            유닛을 조각으로 나눈다 (감사 §8-4). <br> 은 조각 경계가 아니다.
+ *     link = <a> 안 텍스트인가. 스캔 때 한 번만 본다 (틱 비용 0).
+ *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   TreeWalker로 본문 영역의 텍스트 노드를 DOM 순서대로 전부 모아
  *   하나의 긴 문자열(raw)과 [노드, 시작오프셋] 인덱스(segs)를 만든다.
@@ -19,6 +25,17 @@
  *   연속 공백을 1글자로 세므로, 공백투성이 마크업에서도 청킹이 일정해진다.
  *   청킹 루프가 글자 단위로 sig[i] 를 수만 번 읽기 때문에
  *   접근자 함수로 감싸지 않고 배열을 그대로 노출한다.
+ *
+ * --- 숨은 글자도 넣는다 (2026-10-05, 팀 결정) ------------------------------
+ *   display:none 등으로 크기가 0 인 텍스트 노드도 스트림에 넣는다. 전에는 build() 가
+ *   노드마다 사각형을 재서 크기 0 을 뺐는데, 그러면 창 폭 · 확대에 따라 반응형 레이아웃이
+ *   숨기는 글이 달라져 같은 글의 pid 가 참가자마다 달라졌다 (인수인계 §5). 이제 스트림은
+ *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
+ *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
+ *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫.
+ *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
+ *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
  *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
@@ -59,7 +76,7 @@
   let nodeIndex = new Map();
   let breaks = new Set();
   let contentRoot = null;
-  let rootInfo = null;       // 루트를 왜 골랐나 — 패널 표시용 { how, sel, len, link }
+  let rootInfo = null;       // 루트를 왜 골랐나 — { how, sel, len, link, el }. 패널 · meta.root
 
   // ==========================================================================
   // 태그 분류
@@ -116,8 +133,7 @@
   //            후보를 싸게 걸러내는 데만 쓴다 (textLen < 문턱 이면 measure 도 < 문턱).
   //   measure: 스트림과 같은 잣대 — elementFilter 로 거르고 앞뒤 공백을 뺀 글자 수와,
   //            그중 <a> 안에 있는 글자 수. 판정은 이걸로 한다.
-  //            build() 와 다른 점은 크기 0 노드(display:none)를 빼지 않는 것 하나.
-  //            그걸 하려면 노드마다 레이아웃을 읽어야 해서 후보 수백 개에는 못 쓴다.
+  //            build() 와 같은 잣대다 — 둘 다 숨은(크기 0) 노드를 뺀다 · 안 뺀다 구분이 없다 (2026-10-05).
   function textLen(el) {
     let n = (el.textContent || '').length;
     el.querySelectorAll('script,style,noscript').forEach(s => {
@@ -140,6 +156,16 @@
     return { len, link };
   }
 
+  // [tag, id, class, role] — 조각 path(2-units) 와 meta.root 가 같이 쓴다 (감사 §8-4).
+  //   class 는 getAttribute 로 읽는다 (SVG 의 className 은 문자열이 아님).
+  //   해시 클래스명도 그대로 남긴다. 해석은 백엔드.
+  function attrs(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const cls = (el.getAttribute('class') || '').replace(/\s+/g, ' ').trim();
+    return [el.tagName, (el.id || '').slice(0, 40), cls.slice(0, 80),
+      (el.getAttribute('role') || '').trim()];
+  }
+
   function describe(el) {
     const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
     return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
@@ -156,7 +182,7 @@
       if (!el || textLen(el) <= CFG.MIN_ROOT_TEXT) continue;
       const m = measure(el);
       if (m.len > CFG.MIN_ROOT_TEXT) {
-        rootInfo = { how: 'semantic', sel: describe(el), len: m.len, link: m.link };
+        rootInfo = { how: 'semantic', sel: describe(el), len: m.len, link: m.link, el: attrs(el) };
         return el;
       }
     }
@@ -176,8 +202,8 @@
       if (score > bestScore) { bestScore = score; best = el; bestM = m; }
     });
     rootInfo = bestM
-      ? { how: 'fallback', sel: describe(best), len: bestM.len, link: bestM.link }
-      : { how: 'body', sel: describe(best), len: 0, link: 0 };
+      ? { how: 'fallback', sel: describe(best), len: bestM.len, link: bestM.link, el: attrs(best) }
+      : { how: 'body', sel: describe(best), len: 0, link: 0, el: attrs(best) };
     return best;
   }
 
@@ -231,13 +257,12 @@
       if (blk !== lastBlock) pendingBreak = true;
       lastBlock = blk;
 
-      const r = document.createRange();
-      r.selectNodeContents(n);
-      const rect = r.getBoundingClientRect();
-      if (!rect.width && !rect.height) continue;   // display:none / 0px
-
       if (pendingBreak) newBreaks.add(len);
-      newSegs.push({ node: n, start: len, len: n.data.length });
+      newSegs.push({
+        node: n, start: len, len: n.data.length,
+        blk,                                                     // 조각 경계 (v3)
+        link: !!(n.parentElement && n.parentElement.closest('a')),  // linkChars (v3)
+      });
       parts.push(n.data);
       len += n.data.length;
       pendingBreak = false;
@@ -280,6 +305,7 @@
     segs: () => segs,
     segFor: (node) => nodeIndex.get(node),
     root: () => contentRoot,
-    rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link }
+    rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link, el }
+    attrs,                              // el → [tag, id, class, role]
   };
 })();

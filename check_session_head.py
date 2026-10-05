@@ -13,10 +13,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
   실제로 깨지는 종류의 버그(상태 소유권 이관 실패, pid 오염, 틱 지연)는
   전부 여기 걸린다.
 
-스키마 v3 전용 (감사 §8). schemaVersion 이 3 미만이면 "지원 안 함"으로 그 페이지 검사를 멈춘다.
-
-세션 bundle (background 가 만든 것):
-  { kind: 'rbc-session', session: {...}, pages: [ 페이지 payload, ... ] }
+세션 bundle (v2.3~, background 가 만든 것):
+  { kind: 'rbc-session', session: {...}, pages: [ v2 payload, ... ] }
   pages 의 각 원소에 기존 검사를 그대로 돌리고, 세션 단위 검사를 추가로 돌린다.
     [S1] 조각 유실 (chunkReport.missing)       FAIL
     [S2] page 기록 없는 조각 (orphan)           FAIL
@@ -27,28 +25,10 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
     [10] 이벤트의 segId 가 meta.segments 에 있는가   FAIL
     [11] 포착 못 한 스크롤 (감사 §6-D)                 FAIL / WARN
          화면에 보이는 유닛이 바뀌었는데 scrollY 도 그대로, scrollEvents 도 0 인 틱 쌍.
-         v2 는 스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤이 이렇게 나타났다.
-         v3 세트 C 부터 scrollY · scrollEvents 는 본문 스크롤 주체 기준 (감사 §8-6).
+         스크롤 리스너가 window 에만 있어서 내부 컨테이너 스크롤은 이렇게 나타난다.
     [12] 본문 추출 의심 (감사 §6-F)                    FAIL
          긴 페이지를 스크롤했는데 유닛 글자가 거의 없으면 루트를 잘못 고른 것.
          [11] 은 유닛이 없으면 '판정 대상 없음'으로 통과하므로 이게 따로 필요하다.
-    [13] 조각 연결 (감사 §8-4)                        FAIL
-         유닛마다 pieces 가 text 를 빈틈 · 겹침 없이 나누는가. 첫 off = 0,
-         다음 off = 앞 off + chars, 마지막 끝 = charLen, 0 < chars, 0 <= linkChars <= chars,
-         path 칸 4개 · 최대 6단계, pathCut 이면 정확히 6단계.
-         + 모든 틱에 vis 키, vis 칸 6개, pid 가 paragraphs 에 있고 k < pieces 개수, top ≤ bottom, left ≤ right.
-    [14] vis 교차검사 (감사 §8 검증 장치)
-         caret 탐침(centerPid · visTop/visBot)과 Range 사각형(vis)은 따로 잰 값이다.
-         centerPid ∉ vis 틱이 하나라도 있으면 FAIL — 중앙선 ±44px 의 글자는 반드시 화면 안이다.
-         visTop..visBot ⊄ vis 는 WARN — 가장자리 탐침이 화면 밖 8px 까지 받아주는 설계 차이.
-    [15] 스크롤 교차검사 (감사 §8 검증 장치)            WARN
-         같은 구간의 연속 두 틱에서 둘 다 보인 조각 (pid,k) 의 top 이동량 중앙값 vs scrollY 변화량.
-         2px 넘게 어긋난 쌍이 하나라도 있으면 WARN — 스크롤 주체 판정이나 vis 가 틀렸을 수 있다.
-         비교 대상 = 무언가 움직인 쌍. [11] 과 같이 간격 끊김 · docH/vh/vw/dpr 변화 · rescan 사이 쌍은 뺀다.
-    [16] v3 필드 (감사 §8 "v3 tick 최종 필드" · §8-5)  FAIL
-         틱 필수 필드 누락 · 삭제 필드(scrollSpeed · cursorDist · cursorMoved) 잔존,
-         highlight/copy 의 ranges 누락 · 형식(0 ≤ lo < hi ≤ charLen) · pids/pid 잔존,
-         틱이 있는데 scroller 이벤트 없음. 세트 B 이전 파일은 FAIL — 정상.
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -99,31 +79,34 @@ def all_pids_used(timeline):
     """timeline이 참조하는 모든 pid."""
     used = set()
     for e in timeline:
-        for k in ("centerPid", "cursorPid"):
+        for k in ("centerPid", "cursorPid", "pid"):
             v = e.get(k)
             if v:
                 used.add(v)
-        r = e.get("ranges")                      # v3 highlight / copy
-        if isinstance(r, list):
-            used.update(x[0] for x in r if isinstance(x, list) and x and x[0])
+        p = e.get("pids")
+        if isinstance(p, list):
+            used.update(x for x in p if x)
     return used
 
 
 # --- 개별 검사 -------------------------------------------------------------
 def check_schema(rep, meta):
-    """[0] 스키마 v3 파일인가. 아니면 False — 나머지 검사를 돌리지 않는다.
+    """[0] 현재 수집기(v2.2+)가 만든 파일인가.
 
-    가장 흔한 사고는 `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을
-    집는 것 — 새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
+    이게 아니면 나머지 검사가 전부 무의미하다. 가장 흔한 사고는
+    `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을 집는 것 —
+    새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
     """
     v = meta.get("schemaVersion")
-    if not isinstance(v, int) or v < 3:
+    if v is None:
         rep.add(FAIL, "스키마 버전",
-                f"v{v} — 지원 안 함 (v3 전용). 나머지 검사 생략. 새로 기록해서 내보낼 것")
-        return False
-    rep.add(OK, "스키마 버전",
-            f"v{v} · {meta.get('collector', '?')} · 기록 시작 {meta.get('startedAt', '?')}")
-    return True
+                "schemaVersion 없음 — v2.2 이전 파일이다. 현재 수집기가 만든 게 아니므로 "
+                "나머지 결과를 믿지 말 것. 패널에서 JSON 을 다시 내보낼 것")
+    elif v != 2:
+        rep.add(FAIL, "스키마 버전", f"v{v} — 이 검사기는 v2 용이다")
+    else:
+        started = meta.get("startedAt", "?")
+        rep.add(OK, "스키마 버전", f"v2 · 기록 시작 {started}")
 
 
 def check_pid_integrity(rep, meta, timeline):
@@ -271,12 +254,12 @@ def check_counters(rep, ticks):
         return
     mouse = sum(e.get("mouseEvents", 0) or 0 for e in ticks)
     scroll = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
-    moved = sum(1 for e in ticks if (e.get("mdx", 0) or 0) + (e.get("mdy", 0) or 0) > 0)
+    moved = sum(1 for e in ticks if e.get("cursorMoved"))
     if "mouseEvents" not in ticks[0]:
         rep.add(WARN, "이벤트 카운터", "mouseEvents 필드 없음 (v2.2 이전 로그)")
     elif mouse == 0 and moved > 0:
         rep.add(FAIL, "이벤트 카운터",
-                f"mdx+mdy>0 틱이 {moved}개인데 mouseEvents 합이 0 "
+                f"cursorMoved 틱이 {moved}개인데 mouseEvents 합이 0 "
                 f"— input.drain() 이관 실패")
     else:
         rep.add(OK, "이벤트 카운터", f"mouse {mouse} / scroll {scroll}")
@@ -286,18 +269,7 @@ def check_rescan(rep, timeline):
     """[6] 본문 교체가 일어났는가."""
     modes = [e.get("mode") for e in timeline if e.get("type") == "rescan"]
     if "disruptive-skipped" in modes:
-        first = next(e for e in timeline
-                     if e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped")
-        d = first.get("diff")
-        if d:
-            where = f"유닛 #{d['unit']}" if d.get("unit") is not None else "유닛 밖"
-            why = (f" 첫 번째(t={first.get('t', 0) / 1000:.1f}s): {where} · 위치 {d.get('at')} · "
-                   f"{d.get('oldLen')}→{d.get('newLen')}자 · "
-                   f"…{d.get('ctx', '')} ⟨{d.get('old', '')}⟩ → ⟨{d.get('new', '')}⟩")
-        else:
-            why = " (diff 없음)"
-        rep.add(FAIL, "본문 교체",
-                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 학습에서 제외.{why}")
+        rep.add(FAIL, "본문 교체", "disruptive-skipped 발생 — 이 세션은 학습에서 제외")
     elif modes:
         rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
     else:
@@ -472,289 +444,6 @@ def check_extraction(rep, meta, ticks):
     else:
         rep.add(OK, "본문 추출", facts)
 
-# [13] 조각 연결 ---------------------------------------------------------------
-PATH_MAX = 6
-
-
-def piece_problem(p):
-    """유닛 하나의 pieces 문제를 한 줄로. 문제없으면 None."""
-    pcs = p.get("pieces")
-    n = p.get("charLen")
-    if not isinstance(pcs, list) or not pcs:
-        return "pieces 없음"
-    end = 0
-    for k, c in enumerate(pcs):
-        off, ch, lk = c.get("off"), c.get("chars"), c.get("linkChars")
-        path, cut = c.get("path"), c.get("pathCut")
-        if off != end:
-            return f"k{k} off {off} ≠ {end} ({'겹침' if isinstance(off, int) and off < end else '빈틈'})"
-        if not isinstance(ch, int) or ch <= 0:
-            return f"k{k} chars {ch}"
-        if not isinstance(lk, int) or not 0 <= lk <= ch:
-            return f"k{k} linkChars {lk} / chars {ch}"
-        if (not isinstance(path, list) or len(path) > PATH_MAX
-                or any(not isinstance(x, list) or len(x) != 4 for x in path)):
-            return f"k{k} path 형식"
-        if not isinstance(cut, bool) or (cut and len(path) != PATH_MAX):
-            return f"k{k} pathCut {cut} · path {len(path)}단계"
-        end = off + ch
-    if end != n:
-        return f"조각 끝 {end} ≠ charLen {n}"
-    return None
-
-
-def vis_problems(meta, ticks):
-    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개)."""
-    npieces = {p["pid"]: len(p.get("pieces") or []) for p in meta.get("paragraphs", [])}
-    bad, ex = 0, []
-
-    def note(t, why):
-        nonlocal bad
-        bad += 1
-        if len(ex) < 3:
-            ex.append(f"t={t / 1000:.1f}s {why}")
-
-    for e in ticks:
-        t = e.get("t", 0)
-        if "vis" not in e:
-            note(t, "vis 키 없음")
-            continue
-        vis = e.get("vis")
-        if not isinstance(vis, list):
-            note(t, f"vis={vis!r}")
-            continue
-        for v in vis:
-            if not isinstance(v, list) or len(v) != 6:
-                note(t, f"칸 {v!r}")
-                break
-            pid, k, top, bot, left, right = v
-            if pid not in npieces:
-                note(t, f"모르는 pid {pid}")
-                break
-            if not isinstance(k, int) or not 0 <= k < npieces[pid]:
-                note(t, f"{pid} k={k} / 조각 {npieces[pid]}")
-                break
-            if top > bot or left > right:
-                note(t, f"{pid}·{k} 사각형 {top},{bot},{left},{right}")
-                break
-    return bad, ex
-
-
-def check_pieces(rep, meta, ticks):
-    """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가 + 틱 vis 가 조각을 제대로 가리키는가.
-
-    오름차순 + 합계만 보면 빈틈과 겹침이 서로 상쇄돼 통과하므로 연결을 본다.
-    원문 → 정리된 text 오프셋 변환이 어긋나도 여기서 끝 ≠ charLen 으로 잡힌다.
-    """
-    paras = meta.get("paragraphs", [])
-    bad = [(p.get("order"), why) for p in paras if (why := piece_problem(p))]
-    vbad, vex = vis_problems(meta, ticks)
-    if bad or vbad:
-        parts = []
-        if bad:
-            parts.append(f"유닛 {len(bad)}/{len(paras)} (" + "; ".join(f"#{o} {w}" for o, w in bad[:3]) + ")")
-        if vbad:
-            parts.append(f"vis 틱 {vbad}/{len(ticks)} (" + "; ".join(vex) + ")")
-        rep.add(FAIL, "조각 연결", " · ".join(parts))
-    else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합")
-
-
-def check_vis_cross(rep, meta, ticks):
-    """[14] caret 탐침과 Range 사각형의 대조 (감사 §8). 등급은 2026-10-03 블로그 PC 실측으로 결정.
-
-    centerPid 는 화면 한가운데라 거의 항상 vis 에 있어야 한다. visTop..visBot 은 order 범위라
-    사이드바가 order 사이에 끼는 사이트(§6-H)에서는 화면에 없는 유닛이 범위에 들어갈 수 있다.
-    """
-    order = {p["pid"]: p.get("order", -1) for p in meta.get("paragraphs", [])}
-    c_n = c_ok = r_n = r_ok = 0
-    c_ex, r_ex = [], []
-    for e in ticks:
-        vis = e.get("vis")
-        if not isinstance(vis, list):
-            continue
-        seen = {v[0] for v in vis if isinstance(v, list) and v}
-        seen_o = {order.get(p) for p in seen}
-        cp = e.get("centerPid")
-        if cp:
-            c_n += 1
-            if cp in seen:
-                c_ok += 1
-            elif len(c_ex) < 2:
-                c_ex.append(f"t={e.get('t', 0) / 1000:.1f}s #{order.get(cp)}")
-        a, b = e.get("visTop"), e.get("visBot")
-        if a is not None and b is not None:
-            lo, hi = (a, b) if a <= b else (b, a)
-            r_n += 1
-            miss = [o for o in range(lo, hi + 1) if o not in seen_o]
-            if not miss:
-                r_ok += 1
-            elif len(r_ex) < 2:
-                r_ex.append(f"t={e.get('t', 0) / 1000:.1f}s [{lo},{hi}] 빠짐 {miss[:3]}")
-    if not c_n and not r_n:
-        rep.add(WARN, "vis 교차검사", "대조할 틱 없음")
-        return
-    pct = lambda ok, n: f"{ok}/{n} ({ok / n:.0%})" if n else "—"
-    detail = f"centerPid∈vis {pct(c_ok, c_n)} · visTop..visBot⊂vis {pct(r_ok, r_n)}"
-    ex = c_ex + r_ex
-    if c_ok < c_n:
-        rep.add(FAIL, "vis 교차검사", detail + f" (예: {'; '.join(c_ex)}) — centerPid 귀속 또는 vis 사각형 오류")
-    elif r_ok < r_n:
-        rep.add(WARN, "vis 교차검사", detail + (f" (예: {'; '.join(r_ex)})" if r_ex else ""))
-    else:
-        rep.add(OK, "vis 교차검사", detail)
-
-
-# [15] 스크롤 교차검사 --------------------------------------------------------
-SCROLL_CROSS_TOL = 2         # px. vis 좌표는 정수 반올림, scrollY 는 소수가 나온다
-
-
-def check_scroll_cross(rep, meta, timeline, ticks):
-    """[15] vis 조각 이동량 ≈ scrollY 변화량 (감사 §8 검증 장치).
-
-    아래로 스크롤하면 scrollY 는 늘고 조각 top 은 같은 만큼 줄어든다.
-    중앙값을 쓰는 이유: sticky 영역 · 늦게 커진 이미지 아래 조각처럼 따로 움직이는 소수를 무시.
-    """
-    tick_ms = meta.get("tickMs", 150)
-    rescans = sorted(e.get("t", 0) for e in timeline if e.get("type") == "rescan")
-    n = bad = 0
-    ex = []
-    ordered = sorted(ticks, key=lambda e: e.get("t", 0))
-    for prev, cur in zip(ordered, ordered[1:]):
-        if prev.get("segId") != cur.get("segId"):
-            continue
-        t0, t1 = prev.get("t", 0), cur.get("t", 0)
-        if t1 - t0 > tick_ms * SCROLL_GAP_TOL:
-            continue
-        if any(prev.get(k) != cur.get(k) for k in ("docH", "vh", "vw", "dpr")):
-            continue
-        if any(t0 < t <= t1 for t in rescans):
-            continue
-        a = {(v[0], v[1]): v[2] for v in (prev.get("vis") or []) if isinstance(v, list) and len(v) == 6}
-        b = {(v[0], v[1]): v[2] for v in (cur.get("vis") or []) if isinstance(v, list) and len(v) == 6}
-        common = a.keys() & b.keys()
-        if not common:
-            continue
-        move = statistics.median(a[k] - b[k] for k in common)
-        dy = (cur.get("scrollY") or 0) - (prev.get("scrollY") or 0)
-        if move == 0 and abs(dy) < 0.5:
-            continue                                   # 아무것도 안 움직인 쌍은 비교 대상 아님
-        n += 1
-        if abs(move - dy) > SCROLL_CROSS_TOL:
-            bad += 1
-            if len(ex) < 3:
-                ex.append(f"t={t1 / 1000:.1f}s 조각 {move:+.0f} vs scrollY {dy:+.1f}")
-    if n == 0:
-        rep.add(OK, "스크롤 교차검사", "움직인 틱 쌍 없음 (판정 대상 없음)")
-    elif bad == 0:
-        rep.add(OK, "스크롤 교차검사", f"움직인 {n}쌍 전부 ±{SCROLL_CROSS_TOL}px 안에서 일치")
-    else:
-        rep.add(WARN, "스크롤 교차검사",
-                f"움직인 {n}쌍 중 {bad}쌍({bad / n:.0%}) 어긋남 ({'; '.join(ex)}) "
-                f"— 스크롤 주체 판정 또는 vis 오류, 소수면 레이아웃 흔들림")
-
-
-# [16] v3 필드 ----------------------------------------------------------------
-# 감사 §8 "v3 tick 최종 필드" 중 세트 C 까지 들어간 것. media(세트 E) · fo(세트 D, iframe primary) 는 그때 추가.
-TICK_REQUIRED = ("type", "t", "segId",
-                 "scrollY", "scrollEvents", "scrollOther",
-                 "mouseEvents", "mdx", "mdy", "cursorPid", "cx", "cy",
-                 "centerPid", "visTop", "visBot",
-                 "vis",
-                 "edits",
-                 "vw", "vh", "docH", "dpr")
-TICK_REMOVED = ("scrollSpeed", "cursorDist", "cursorMoved")
-SEL_REMOVED = ("pids", "pid")
-
-
-def check_v3_fields(rep, meta, timeline, ticks):
-    """[16] 필수 필드 누락 · 삭제 필드 잔존 · ranges 형식 · scroller 이벤트."""
-    probs = []
-    miss = {}
-    left = {}
-    for e in ticks:
-        for k in TICK_REQUIRED:
-            if k not in e:
-                miss[k] = miss.get(k, 0) + 1
-        for k in TICK_REMOVED:
-            if k in e:
-                left[k] = left.get(k, 0) + 1
-    if miss:
-        probs.append("틱 누락 " + ", ".join(f"{k}×{v}" for k, v in miss.items()))
-    if left:
-        probs.append("틱 삭제 필드 잔존 " + ", ".join(f"{k}×{v}" for k, v in left.items()))
-
-    clen = {p["pid"]: p.get("charLen", 0) for p in meta.get("paragraphs", [])}
-    sels = [e for e in timeline if e.get("type") in ("highlight", "copy")]
-    for e in sels:
-        tag = f"{e.get('type')} t={e.get('t', 0) / 1000:.1f}s"
-        if any(k in e for k in SEL_REMOVED):
-            probs.append(f"{tag} pids/pid 잔존")
-            break
-        r = e.get("ranges")
-        if not isinstance(r, list) or not r:
-            probs.append(f"{tag} ranges 없음")
-            break
-        badr = [x for x in r if not (isinstance(x, list) and len(x) == 3 and x[0] in clen
-                                     and isinstance(x[1], int) and isinstance(x[2], int)
-                                     and 0 <= x[1] < x[2] <= clen[x[0]])]
-        if badr:
-            probs.append(f"{tag} ranges 형식 {badr[0]!r}")
-            break
-
-    if ticks and not any(e.get("type") == "scroller" for e in timeline):
-        probs.append("scroller 이벤트 없음")
-
-    if probs:
-        rep.add(FAIL, "v3 필드", " · ".join(probs))
-    else:
-        rep.add(OK, "v3 필드", f"틱 {len(ticks)}개 · 선택/복사 {len(sels)}건 형식 일치")
-
-
-def input_summary(timeline, ticks):
-    """세트 C 입력 · 스크롤 요약 (판정 아님)."""
-    paths = []
-    for e in timeline:
-        if e.get("type") == "scroller":
-            p = e.get("path")
-            if isinstance(p, list) and p:
-                d = str(p[0]).lower() + (f"#{p[1]}" if p[1] else "") + (f".{str(p[2]).split(' ')[0]}" if p[2] else "")
-            else:
-                d = str(p)
-            if not paths or paths[-1] != d:
-                paths.append(d)
-    other = sum(e.get("scrollOther", 0) or 0 for e in ticks)
-    ev = sum(e.get("scrollEvents", 0) or 0 for e in ticks)
-    ed = sum(1 for e in ticks if (e.get("edits", 0) or 0) > 0)
-    ratio = f"{ed}/{len(ticks)} ({ed / len(ticks):.0%})" if ticks else "—"
-    return (f"스크롤 주체 {' → '.join(paths) if paths else '없음'} · scrollEvents {ev} · "
-            f"scrollOther {other} · edits>0 틱 {ratio}")
-
-
-def vis_summary(ticks):
-    """용량 실측용 (판정 아님)."""
-    if not ticks:
-        return "vis — 틱 없음"
-    n = [len(e.get("vis") or []) for e in ticks]
-    size = [len(json.dumps(e, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) for e in ticks]
-    return (f"vis 평균 {statistics.mean(n):.1f}조각/틱 (최대 {max(n)}) · "
-            f"틱 평균 {statistics.mean(size):.0f}B (최대 {max(size)}B)")
-
-
-def pieces_summary(meta):
-    """사람이 보는 요약 (판정 아님)."""
-    paras = meta.get("paragraphs", [])
-    pcs = [c for p in paras for c in (p.get("pieces") or [])]
-    multi = sum(1 for p in paras if len(p.get("pieces") or []) > 1)
-    linked = sum(1 for c in pcs if c.get("linkChars"))
-    cut = sum(1 for c in pcs if c.get("pathCut"))
-    root = meta.get("root") or {}
-    el = root.get("el") or ["?", "", "", ""]
-    rdesc = el[0].lower() + (f"#{el[1]}" if el[1] else "") + (f".{el[2].split(' ')[0]}" if el[2] else "")
-    return (f"조각 {len(pcs)} · 여러 조각 유닛 {multi} · 링크 글자 있는 조각 {linked} · "
-            f"pathCut {cut} · 루트 {rdesc} ({root.get('how', '?')})")
-
-
 def check_bundle_session(rep, session):
     """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
     report = session.get("chunkReport") or []
@@ -803,15 +492,13 @@ def baseline_url(path):
 
 # --- main -----------------------------------------------------------------
 def run_payload(label, data, baseline=None):
-    """페이지 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
+    """v2 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
     timeline = data.get("timeline", [])
     ticks = ticks_of(timeline)
 
     rep = Report(label)
-    if not check_schema(rep, meta):
-        rep.show()
-        return rep
+    check_schema(rep, meta)
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
@@ -823,19 +510,12 @@ def run_payload(label, data, baseline=None):
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
-    check_pieces(rep, meta, ticks)
-    check_vis_cross(rep, meta, ticks)
-    check_scroll_cross(rep, meta, timeline, ticks)
-    check_v3_fields(rep, meta, timeline, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
     rep.show()
     print(f"  -- 유닛 {len(meta.get('paragraphs', []))}개 · 틱 {len(ticks)}개 · "
           f"이벤트 {len(timeline)}개 · schema v{meta.get('schemaVersion', '?')}")
-    print(f"  -- {pieces_summary(meta)}")
-    print(f"  -- {vis_summary(ticks)}")
-    print(f"  -- {input_summary(timeline, ticks)}")
     return rep
 
 
