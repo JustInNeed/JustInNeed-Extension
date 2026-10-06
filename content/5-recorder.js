@@ -7,7 +7,8 @@
  * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
- *       sel:highlight, sel:copy, visibility, focus, pagehide
+ *       sel:highlight, sel:copy, visibility, focus, pagehide,
+ *       label:mode, label:done
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   150ms 마스터 클럭을 돌리고, 그 순간의 관측을 timeline 에 원본 그대로 남긴다.
@@ -63,6 +64,14 @@
  *   원본만 남긴다. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.
  *   여기서 판단을 섞으면 나중에 feature 정의를 바꿀 때 재수집을 해야 한다.
  *
+ * --- 라벨 모드 (12-label) ----------------------------------------------------
+ *   label:mode{on:true} 동안 틱을 찍지 않는다 (숨김 · 포커스 없음과 같은 처리: drain 버림).
+ *   라벨 고르는 시간은 읽기 행동이 아니다 (명세). 선택 · 복사도 기록하지 않는다.
+ *   label:done → { type:'label', t, segId, pids, cancelled, startT, ms } 를 남기고 바로 넘긴다.
+ *     pids = 고른 유닛(유닛 order 순), startT = 라벨 모드 시작 t, ms = t − startT.
+ *     취소면 pids [] · cancelled true — 틱 공백의 이유가 데이터에 남게.
+ *   하이라이트 · 복사와 다른 이벤트다 (행동 feature 와 정답이 섞이지 않게).
+ *
  * --- 미러 두 개 -------------------------------------------------------------
  *   isPrimary(6-frames 소유), overlayOn(8-overlay 소유) 은 읽기 전용 사본이다.
  *   이벤트로만 갱신하고 여기서 직접 대입하지 않는다.
@@ -98,6 +107,8 @@
   let lastScrollerEl;                 // 마지막으로 scroller 이벤트를 낸 주체. undefined = 아직 안 냄
   let lastCenterPid = null, lastCursorPid = null, lastScrollSpeed = 0;   // 스크롤 속도는 패널 표시용 내부 값
   let lastVisN = 0;                     // 패널 표시용 — 마지막 틱 vis 조각 수
+  let labeling = false;                 // 12-label 의 라벨 모드 (label:mode 로만 갱신)
+  let labelStartT = 0;
 
   // --- 미러 (읽기 전용) ---
   let isPrimary = IS_TOP;
@@ -134,6 +145,13 @@
     //      비활성 탭에서 틱이 안 도는 것도 이 줄 덕분이다.
     if (recording && (document.hidden || !RBC.input.focused())) {
       RBC.input.drain();                       // v3: 공백 동안 쌓인 카운터는 버린다
+      prevTickTime = null;
+      return;
+    }
+
+    // 라벨 모드: 틱을 찍지 않는다. 무동작 판정보다 먼저 — 라벨 중에 자동 종료되면 안 된다.
+    if (recording && labeling) {
+      RBC.input.drain();
       prevTickTime = null;
       return;
     }
@@ -244,8 +262,8 @@
     const ri = RBC.stream.rootInfo();
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
-      // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-C',
+      // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체, L = + 라벨. 세트가 끝날 때마다 올린다.
+      collector: 'rbc-v3-L',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
@@ -304,6 +322,8 @@
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
         '연속 틱 간 차분은 segId 가 바뀌거나 두 틱의 t 간격이 2×tickMs 를 넘으면 리셋.',
         'tabId 는 background 가 붙인다(sender.tab.id).',
+        'type=label = 참가자가 고른 중요 유닛 { pids(유닛 order 순), cancelled, startT, ms }. ' +
+        '라벨 모드(startT..t) 동안은 틱을 기록하지 않는다. 여러 번 있으면 마지막 것(취소 아닌)이 정답.',
       ],
     };
   }
@@ -407,13 +427,35 @@
   //   4-input 은 "무슨 일이 있었다"만 알린다. 기록 여부 판단은 전부 여기.
   // ==========================================================================
   bus.on('sel:highlight', (d) => {
-    if (!recording) return;
+    if (!recording || labeling) return;
     push({ type: 'highlight', t: tNow(), segId, ranges: d.ranges, text: d.text });
   });
 
   bus.on('sel:copy', (d) => {
-    if (!recording) return;
+    if (!recording || labeling) return;
     push({ type: 'copy', t: tNow(), segId, ranges: d.ranges, text: d.text });
+  });
+
+  // 라벨 모드 (12-label). 끝나면 공백 동안 쌓인 입력을 버리고 무동작 타이머를 새로 잰다.
+  bus.on('label:mode', (d) => {
+    const on = !!(d && d.on);
+    if (on === labeling) return;
+    labeling = on;
+    if (on) {
+      labelStartT = recording ? tNow() : 0;
+    } else {
+      RBC.input.drain();
+      RBC.input.bump();
+      prevTickTime = null;
+    }
+  });
+
+  bus.on('label:done', (d) => {
+    if (!recording) return;
+    const t = tNow();
+    push({ type: 'label', t, segId, pids: (d && d.pids) || [], cancelled: !!(d && d.cancelled),
+      startT: labelStartT, ms: t - labelStartT });
+    flush();
   });
 
   // 탭을 떠나는 순간 바로 넘긴다. 떠난 탭은 틱이 멈추니 다음 flush 까지 기다릴 이유가 없다.

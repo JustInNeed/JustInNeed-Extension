@@ -157,7 +157,7 @@
   async function exportFile() {
     const bundle = await bg({ rbc: 'export' });
     if (!bundle || bundle.kind !== 'rbc-session') throw new Error('내보낼 기록을 만들지 못했습니다. (export: 형식 불일치)');
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(bundle)], { type: 'application/json' });   // 한 줄 (팀 결정, 용량)
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);

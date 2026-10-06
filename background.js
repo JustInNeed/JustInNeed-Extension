@@ -54,6 +54,12 @@
  *   session.tester 도 assemble() 이 로그만 보고 만든다(순수 함수 유지).
  *   철회(withdraw) = 정지 + 로그 삭제 + 동의 삭제. 다시 동의하면 새 testId.
  *
+ * --- 테스트 모드: 읽는 목적 · 라벨 ---------------------------------------------
+ *   읽는 목적(scenario)은 기록 시작 전에 팝업에서 받아 start 기록에 싣는다 → session.scenario.
+ *   라벨은 팝업 "다 읽었어요" → label 명령 → 지금 보고 있는 탭으로 전달. 라벨 데이터 자체는
+ *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
+ *   라벨 [완료] → 그 탭이 stop(reason 'labeled') 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 글 = 한 기록).
+ *
  * --- service worker 라서 지키는 것 --------------------------------------------
  *   1) 유휴 30초면 종료된다. 메모리 상태는 캐시, 원본은 storage.
  *   2) 리스너는 최상위에서 동기적으로 등록해야 깨어날 때 이벤트를 받는다.
@@ -77,6 +83,7 @@ function emptyState() {
     epoch: 0,
     recording: false,
     query: null,
+    scenario: null,       // 읽는 목적 (테스트 모드, 기록 시작 전 팝업에서)
     seq: 0,              // 기록 로그 번호. 도착 순서 = 저장 순서
     tabPage: {},         // tabId → pageId (지금 그 탭이 보여주는 글)
     tabSeg: {},          // tabId → segId  (지금 그 탭에서 열린 구간)
@@ -296,6 +303,7 @@ function assemble(log) {
       stopReason: stopRec ? stopRec.reason : null,
       focusMs: total,
       searchQuery: query,
+      scenario: (startRec && startRec.scenario) || null,   // 읽는 목적 (테스트 모드)
       tickMs: TICK_MS,
       records: log.length,
       visits,
@@ -346,17 +354,24 @@ const handlers = {
     S.epoch = Date.now();
     S.recording = true;
     S.query = (m && m.query) || null;
-    await put({ k: 'start', t: 0, query: S.query, mode: MODE, tester: testerInfo() });
+    S.scenario = cleanField(m && m.scenario, 200) || null;
+    await put({ k: 'start', t: 0, query: S.query, scenario: S.scenario, mode: MODE, tester: testerInfo() });
     await broadcast(sessionMsg());
     return sessionMsg();
   },
 
   async stop(m) {
     if (!S.recording) return sessionMsg();
-    await put({ k: 'stop', t: tNow(), reason: (m && m.reason) || 'user' });
+    const reason = (m && m.reason) || 'user';
+    await put({ k: 'stop', t: tNow(), reason });
     S.recording = false;
     await saveState();
     await broadcast(sessionMsg());
+    // 테스트 모드: 라벨 [완료]로 끝났으면 바로 파일로 저장한다. 다음 "기록 시작"이 로그를 지우므로
+    //   내보내기를 잊으면 데이터가 사라진다. 1.5초 = 정지 방송 뒤 마지막 조각(segend)이 도착할 시간.
+    if (reason === 'labeled') {
+      setTimeout(() => chrome.tabs.create({ url: chrome.runtime.getURL('consent.html#export') }), 1500);
+    }
     return sessionMsg();
   },
 
@@ -393,6 +408,20 @@ const handlers = {
     return { ok: true };
   },
 
+  // 팝업 "다 읽었어요": 지금 보고 있는 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
+  //   탭이 기록 중인지는 그 탭이 판단한다(아니면 안내 문구). 여기서는 세션만 본다.
+  async label() {
+    if (!S.recording) return { ok: false, why: 'not-recording' };
+    const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!t) return { ok: false, why: 'no-tab' };
+    try {
+      await chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 });
+    } catch (e) {
+      return { ok: false, why: 'no-content' };      // content script 없음(새로고침 전 · chrome:// 등)
+    }
+    return { ok: true };
+  },
+
   async export() {
     if (MODE !== 'download') return { ok: false, why: 'not-download-mode' };
     return assemble(await readLog());
@@ -409,6 +438,7 @@ const handlers = {
       sessionId: S.sessionId,
       startedAt: S.epoch || null,
       query: S.query,
+      scenario: S.scenario,
       pages: pids.length,
       units: pids.reduce((n, a) => n + a.length, 0),
       records: S.seq,

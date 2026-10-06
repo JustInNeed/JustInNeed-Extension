@@ -19,6 +19,8 @@ v2 → v3
   - 하이라이트 · 복사 = ranges 의 pid.
   - 재방문 = 방문 뒤 화면 위로 빠진 적이 있는 유닛이 다시 읽기 구간(μ±σ)에 1초 머문 횟수 (revisit_count, 모델 입력).
   - idle(120초 이상 입력 없음) · 편집(edits>0) 틱은 모든 feature 계산에서 제외.
+  - 라벨(테스트 모드): label 열 = 참가자가 고른 유닛 1 / 안 고른 유닛 0 / 라벨 없는 페이지 빈 값.
+    scenario 열 = 읽는 목적. 둘 다 모델 입력 아님 (정답 · 조건).
 
 사용법:
   python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
@@ -434,6 +436,11 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
                 if rg and rg[0]:
                     tgt.setdefault(rg[0], []).append(e.get("text", ""))
 
+    # 라벨 (테스트 모드): 취소 아닌 마지막 label 이벤트가 정답. 없으면 이 페이지는 라벨 없음.
+    labs = [e for e in tl if e.get("type") == "label" and not e.get("cancelled")]
+    lab_set = set(labs[-1].get("pids") or []) if labs else None
+    lab_ms = labs[-1].get("ms") if labs else None
+
     # 품질 플래그
     disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
     seg_ids = {g["segId"] for g in meta.get("segments", [])}
@@ -533,6 +540,10 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "copy_text": " || ".join(cp.get(pid, []))[:500],
             "query": query_info[0],
             "query_source": query_info[1],
+            "scenario": bundle["session"].get("scenario"),
+            "label": (int(pid in lab_set) if lab_set is not None else np.nan),
+            "page_labeled": lab_set is not None,
+            "page_label_ms": lab_ms,
             "is_noise": (pid in noise_set) if noise_set is not None else np.nan,
             "scroll_depth_pct": round(depth, 4) if depth == depth else np.nan,
             "dwell_gvam_sec": round(dwell_gvam, 3),
@@ -664,7 +675,8 @@ def main():
         print(f"  커서 귀속 틱: 글자 위 {df['cursorPid'].notna().mean()*100:.0f}% → 조각 상자 {df['apid'].notna().mean()*100:.0f}%")
         print(f"  유닛 {len(r)} · 화면에 나온 유닛 {(r['n_vis_ticks']>0).sum()} · "
               f"방문 ≥1 {(r['visit_count']>0).sum()} · 재방문 ≥1 {(r['revisit_count']>0).sum()} · "
-              f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()}")
+              f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()} · "
+              f"라벨 {int(r['label'].sum()) if r['page_labeled'].iloc[0] else '없음'}")
         if r["page_disruptive_rescan"].any():
             print("  ⚠ 본문 교체(disruptive) 페이지 — pid 정합성 확인 전 학습 제외 권장")
         if r["page_missing_chunks"].iloc[0]:
@@ -672,7 +684,7 @@ def main():
         with pd.option_context("display.max_columns", None, "display.width", 200):
             cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
                     "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
-                    "cursorfreq", "has_highlight"]
+                    "cursorfreq", "has_highlight", "label"]
             print(r[cols].to_string(index=False))
 
 

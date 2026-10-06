@@ -8,3 +8,4 @@ site_*.json
 diag_*.json
 site*.json
 step*.json
+*.csv

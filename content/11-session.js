@@ -4,7 +4,7 @@
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
  * 발행: session:changed, session:link, export:ready
- * 구독: seg:page, seg:chunk, record:stopped, scan:done,
+ * 구독: seg:page, seg:chunk, record:stopped, scan:done, label:done,
  *       ui:rec, ui:export, ui:query
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
@@ -112,6 +112,14 @@
     if (d && d.reason === 'idle') toBg({ rbc: 'stop', reason: 'idle' });
   });
 
+  // 테스트 모드: 라벨 [완료] = 이 글을 다 읽음 → 세션을 끝낸다 (한 글 = 한 기록).
+  //   라벨을 고른 프레임(primary, iframe 일 수도 있음)이 직접 알린다. 5-recorder 가 같은 label:done 에서
+  //   label 이벤트를 먼저 넘기므로(파일 순서상 먼저 구독) 정지 요청보다 라벨 조각이 먼저 도착한다.
+  //   취소는 정지하지 않는다 — 계속 읽는다.
+  bus.on('label:done', (d) => {
+    if (d && !d.cancelled) toBg({ rbc: 'stop', reason: 'labeled' });
+  });
+
   if (!IS_TOP) return;          // 이하 전부 최상위 전용
 
   // ==========================================================================
@@ -136,10 +144,13 @@
   }
 
   // background → 이 탭 (최상위 프레임에만 온다: frameId 0)
-  chrome.runtime.onMessage.addListener((m) => {
+  //   label: 팝업 "다 읽었어요". primary 에서 12-label 이 켜진다. 받았다는 답만 바로 한다 —
+  //          답이 없으면 background 의 sendMessage 가 실패로 끝날 수 있다.
+  chrome.runtime.onMessage.addListener((m, _sender, reply) => {
     if (!m || !m.rbc) return false;
     if (m.rbc === 'start') { applySession(m); joinIfRecording(); }
     else if (m.rbc === 'stop') { applySession(m); RBC.frames.send('stop', { reason: 'user' }); }
+    else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
     return false;
   });
 

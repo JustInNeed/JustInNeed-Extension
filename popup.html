@@ -59,6 +59,7 @@
   button.armed { background: var(--red-ink); border-color: var(--red-ink); color: #fff; }
   button:disabled { color: var(--faint); background: #fff; border-color: var(--line); cursor: not-allowed; }
   #btn-rec { margin-top: 14px; }
+  #btn-label { margin-top: 8px; }
   .stop-mark { display: inline-block; width: 9px; height: 9px; background: currentColor; border-radius: 2px; margin-right: 8px; vertical-align: 1px; }
 
   .warn { margin-top: 8px; font-size: 12.5px; color: #7a5b0c; }
@@ -111,9 +112,15 @@
         <input type="text" id="q" maxlength="80" autocomplete="off" placeholder="이번에 찾아보려는 주제">
       </label>
       <div class="qshow" id="q-show" hidden>검색어 <b id="q-val"></b></div>
+      <label class="q" id="s-edit">
+        <span>읽는 목적 (선택)</span>
+        <input type="text" id="s" maxlength="200" autocomplete="off" placeholder="예: 내 상황에 필요한 정보 찾기">
+      </label>
+      <div class="qshow" id="s-show" hidden>읽는 목적 <b id="s-val"></b></div>
 
       <button id="btn-rec" type="button">기록 시작</button>
       <div class="warn" id="warn" hidden></div>
+      <button class="primary" id="btn-label" type="button" hidden>다 읽었어요 · 중요한 부분 고르기</button>
     </div>
 
     <div class="foot">

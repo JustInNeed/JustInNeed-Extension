@@ -11,6 +11,9 @@
  * 새 기록 시작은 이전 기록을 지운다 (background start). 쌓인 기록이 있으면
  * 경고를 띄우고 두 번 눌러야 시작한다.
  *
+ * 읽는 목적도 검색어와 같은 규칙 — 기록 시작 전에만 받는다.
+ * "다 읽었어요"(기록 중에만): 지금 보고 있는 탭에 라벨 모드를 켜고 팝업을 닫는다.
+ *
  * 내보내기 · 참여 정보는 consent.html 탭을 연다 (#export 면 그 탭이 바로 내보낸다).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
@@ -23,6 +26,9 @@
 
   const WHY = {
     'no-consent': '동의가 없어 기록을 시작할 수 없습니다.',
+    'not-recording': '기록 중일 때만 중요한 부분을 고를 수 있습니다.',
+    'no-tab': '지금 보고 있는 탭을 찾지 못했습니다.',
+    'no-content': '이 탭에서는 고를 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요.',
   };
 
   async function bg(msg) {
@@ -58,6 +64,7 @@
   // ---------------------------------------------------------------------------
   let st = null;
   let qTouched = false;       // 사용자가 검색어 칸을 건드렸으면 status 로 덮어쓰지 않는다
+  let sTouched = false;       // 읽는 목적 칸도 같은 규칙
 
   function render() {
     $('loading').hidden = true;
@@ -82,6 +89,11 @@
     $('q-show').hidden = !rec || !st.query;
     $('q-val').textContent = st.query || '';
     if (!rec && !qTouched) $('q').value = st.query || '';
+    $('s-edit').hidden = rec;
+    $('s-show').hidden = !rec || !st.scenario;
+    $('s-val').textContent = st.scenario || '';
+    if (!rec && !sTouched) $('s').value = st.scenario || '';
+    $('btn-label').hidden = !rec;
 
     const btn = $('btn-rec');
     if (!btn.classList.contains('armed')) {
@@ -134,8 +146,10 @@
         }
         disarm();
         const q = $('q').value.replace(/\s+/g, ' ').trim();
-        await bg({ rbc: 'start', query: q || null });
+        const sc = $('s').value.replace(/\s+/g, ' ').trim();
+        await bg({ rbc: 'start', query: q || null, scenario: sc || null });
         qTouched = false;
+        sTouched = false;
       }
     } catch (e) {
       show(e.message);
@@ -144,6 +158,17 @@
   });
 
   $('q').addEventListener('input', () => { qTouched = true; });
+  $('s').addEventListener('input', () => { sTouched = true; });
+
+  $('btn-label').addEventListener('click', async () => {
+    show(null);
+    try {
+      await bg({ rbc: 'label' });
+      window.close();                     // 페이지로 돌아가서 고른다
+    } catch (e) {
+      show(e.message);
+    }
+  });
   $('btn-consent').addEventListener('click', () => openPage(''));
   $('btn-info').addEventListener('click', () => openPage(''));
   $('btn-export').addEventListener('click', () => openPage('#export'));

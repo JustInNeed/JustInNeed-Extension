@@ -250,6 +250,7 @@
     isOn() { return overlayOn; },
     set: setOverlay,
     repaint() { if (overlayOn) paint(true); },
+    rangeForUnit,           // 12-label 이 선택한 유닛을 칠할 때 쓴다
   };
 
   injectStyle();

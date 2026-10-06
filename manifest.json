@@ -23,7 +23,8 @@
         "content/8-overlay.js",
         "content/9-panel.js",
         "content/10-boot.js",
-        "content/11-session.js"
+        "content/11-session.js",
+        "content/12-label.js"
       ],
       "run_at": "document_idle"
     }

@@ -98,6 +98,7 @@
       case 'stop':    if (isPrimary) bus.emit('cmd:stop', m); break;
       case 'overlay': if (isPrimary) bus.emit('cmd:overlay', m); break;
       case 'list':    if (isPrimary) bus.emit('cmd:list'); break;
+      case 'label':   if (isPrimary) bus.emit('cmd:label'); break;   // 12-label (팝업 "다 읽었어요")
     }
   }
 
@@ -175,7 +176,7 @@
   //   최상위 프레임에서만 실제로 파일이 떨어진다.
   // ==========================================================================
   function download(payload) {
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });   // 한 줄 (팀 결정, 용량)
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     // bundle 은 session.sessionId, 옛 단일 payload 는 meta.sessionId
