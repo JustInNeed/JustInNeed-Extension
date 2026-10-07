@@ -147,7 +147,7 @@
     <p>읽기 행동 수집 테스트 버전입니다. 기록은 이 브라우저 안에만 저장됩니다.</p>
   </aside>
 
-  <main id="main" data-consent-version="1">
+  <main id="main" data-consent-version="2">
     <div id="msg" class="banner" role="status" hidden></div>
 
     <!-- consent.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
@@ -160,10 +160,11 @@
 
       <div class="card">
         <div class="who">
-          <dl><dt>참여 번호</dt><dd class="id" id="j-id"></dd></dl>
+          <dl><dt>참여 번호</dt><dd class="id" id="j-no"></dd></dl>
           <dl><dt>이름</dt><dd id="j-name"></dd></dl>
           <dl><dt>조건 태그</dt><dd id="j-tag"></dd></dl>
           <dl><dt>동의한 날</dt><dd id="j-at"></dd></dl>
+          <dl><dt>설치 ID</dt><dd id="j-id"></dd></dl>
         </div>
         <div class="status">
           <i class="dot" id="s-dot"></i>
@@ -182,7 +183,7 @@
           <button id="btn-clear" type="button">기록 삭제</button>
         </div>
         <div class="action">
-          <p><b>동의 철회</b>기록을 멈추고, 이 브라우저의 기록과 참여 정보를 모두 지웁니다. 다시 참여하면 새 참여 번호를 받습니다.</p>
+          <p><b>동의 철회</b>기록을 멈추고, 이 브라우저의 기록과 참여 정보를 모두 지웁니다. 다시 참여하려면 참여 번호를 다시 입력하고 동의하세요.</p>
           <button id="btn-withdraw" class="danger" type="button">동의 철회</button>
         </div>
       </div>
@@ -209,7 +210,8 @@
             <li>스크롤 위치와 속도, 마우스 커서 위치, 글의 각 부분이 화면에 머문 시간</li>
             <li>탭 전환 순서, 화면 크기</li>
             <li>본문에서 선택하거나 복사한 텍스트</li>
-            <li>직접 입력한 검색어, 이 페이지에 입력한 이름과 조건 태그</li>
+            <li>직접 입력한 검색어와 읽는 목적, 중요하다고 고른 부분</li>
+            <li>이 페이지에 입력한 참여 번호, 이름, 조건 태그</li>
           </ul>
           <p class="note">검색 결과 페이지도 기록 중에 열면 글과 같은 방식으로 수집됩니다.</p>
         </div>
@@ -242,6 +244,11 @@
       </div>
 
       <form class="card" id="form" novalidate>
+        <label class="field">
+          <span>참여 번호</span>
+          <input type="text" id="f-no" maxlength="20" autocomplete="off" placeholder="예: P01">
+          <small class="hint">연구 담당자에게 받은 번호를 그대로 입력하세요.</small>
+        </label>
         <label class="field">
           <span>이름</span>
           <input type="text" id="f-name" maxlength="40" autocomplete="off" placeholder="예: 홍길동">

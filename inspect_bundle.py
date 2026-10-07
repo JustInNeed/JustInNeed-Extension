@@ -29,6 +29,9 @@ def main(path):
     alias = {p['meta']['pageId']: f'P{i}' for i, p in enumerate(b['pages'])}
 
     print(f'세션 {s["sessionId"][:8]} · focus {s["focusMs"] / 1000:.1f}s · 정지 사유 {s.get("stopReason")}')
+    t = s.get('tester') or {}
+    print(f'참여 번호 {t.get("participantNo") or "—"} · 설치 ID {t.get("testId") or "—"} · 태그 {t.get("tag") or "—"}'
+          f' · 동의 v{t.get("consentVersion", "?")}')
 
     print('\n[방문 순서]')
     for v in s.get('visits', []):

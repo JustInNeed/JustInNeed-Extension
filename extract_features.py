@@ -192,7 +192,9 @@ def load_bundle(path):
         "session": s,
         "pages": pages,
         "session_id": s.get("sessionId") or path,
-        "tester_id": tester.get("testId") or "unknown",
+        # 사람 키 = 연구자가 준 참여 번호. 옛 파일(동의 v1)은 설치 ID(testId)로 대신한다
+        "tester_id": tester.get("participantNo") or tester.get("testId") or "unknown",
+        "install_id": tester.get("testId") or "",
         "tick_ms": s.get("tickMs", 150),
     }
 
@@ -529,6 +531,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
         rows.append({
             # --- 메타 ---
             "tester_id": bundle["tester_id"],
+            "install_id": bundle["install_id"],
             "session_id": bundle["session_id"],
             "page_id": page_id,
             "url": meta.get("url"),

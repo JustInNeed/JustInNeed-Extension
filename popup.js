@@ -74,7 +74,7 @@
     $('v-joined').hidden = !joined;
     if (!joined) {
       $('consent-text').textContent = c
-        ? '안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호는 그대로 유지됩니다.'
+        ? '안내 내용이 바뀌어 다시 동의가 필요합니다. 동의 페이지에서 참여 번호를 확인해 주세요.'
         : '기록을 시작하려면 먼저 테스트 참여에 동의해야 합니다.';
       return;
     }
@@ -107,7 +107,10 @@
 
     $('btn-export').disabled = rec || !st.records;
     $('btn-export').title = rec ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
-    $('tid').textContent = c.testId;
+    $('hint').textContent = rec
+      ? '이 창을 닫고 글을 읽으세요. 다 읽으면 다시 열어 [다 읽었어요]를 누르세요.'
+      : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
+    $('tid').textContent = c.participantNo || '';
   }
 
   async function refresh() {
@@ -150,6 +153,8 @@
         await bg({ rbc: 'start', query: q || null, scenario: sc || null });
         qTouched = false;
         sTouched = false;
+        window.close();                   // 팝업이 열린 채로 읽기 시작하는 혼란 방지 — 시작 = 페이지로 돌아감
+        return;
       }
     } catch (e) {
       show(e.message);

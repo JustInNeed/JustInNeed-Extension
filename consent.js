@@ -3,7 +3,8 @@
  *
  * background 에 요청만 한다. 동의 여부 판정·저장·게이트는 전부 background 소유다.
  *   status   → 어느 화면을 보여줄지 (동의 없음 / 안내 변경 / 참여 중)
- *   consent  → { version, name, tag }. version 은 이 페이지 고지문의 버전
+ *   consent  → { version, participantNo, name, tag }. version 은 이 페이지 고지문의 버전
+ *              참여 번호 = 연구자가 준 번호(필수). testId 는 화면에서 '설치 ID' 로 부른다
  *   clear    → 기록만 삭제 (기록 중이면 거절)
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
  *   export   → bundle 을 받아 JSON 파일로 저장 (6-frames download() 와 같은 파일명)
@@ -23,6 +24,7 @@
   // 알려진 거절 사유 → 사용자 문장. 모르는 사유는 원문 그대로 보여준다.
   const WHY = {
     'no-consent': '동의가 없어 처리할 수 없습니다.',
+    'no-participant': '참여 번호를 입력하세요.',
     'no-name': '이름을 입력하세요.',
     'consent-version': '안내 내용이 바뀌었습니다. 이 페이지를 새로고침한 뒤 다시 동의하세요.',
     'recording': '기록 중에는 삭제할 수 없습니다. 먼저 기록을 정지하세요.',
@@ -86,17 +88,19 @@
     const c = st.consent;
     if (!c || !c.valid) {
       setView('consent');
-      // 안내 버전이 바뀐 재동의: 이름 · 태그를 채워두고 참여 번호가 유지된다고 알린다
+      // 안내 버전이 바뀐 재동의: 아는 값을 채워둔다 (설치 ID 는 background 가 유지)
       if (c && !c.valid && !$('f-name').value) {
+        $('f-no').value = c.participantNo || '';
         $('f-name').value = c.name || '';
         $('f-tag').value = c.tag || '';
-        show('안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호는 그대로 유지됩니다.', 'warn');
+        show('안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호를 확인하고 다시 동의하세요.', 'warn');
       }
       syncAgree();
       return;
     }
 
     setView('joined');
+    $('j-no').textContent = c.participantNo;
     $('j-id').textContent = c.testId;
     $('j-name').textContent = c.name;
     $('j-tag').textContent = c.tag || '없음';
@@ -131,8 +135,9 @@
   // 동의 폼
   // ---------------------------------------------------------------------------
   function syncAgree() {
-    $('btn-agree').disabled = !($('f-name').value.trim() && $('f-agree').checked);
+    $('btn-agree').disabled = !($('f-no').value.trim() && $('f-name').value.trim() && $('f-agree').checked);
   }
+  $('f-no').addEventListener('input', syncAgree);
   $('f-name').addEventListener('input', syncAgree);
   $('f-agree').addEventListener('change', syncAgree);
 
@@ -141,8 +146,9 @@
     if ($('btn-agree').disabled) return;
     $('btn-agree').disabled = true;
     try {
-      const r = await bg({ rbc: 'consent', version: VERSION, name: $('f-name').value, tag: $('f-tag').value });
-      show(`참여 번호가 발급됐습니다: ${r.consent.testId}. 이제 기록을 시작할 수 있습니다.`);
+      const r = await bg({ rbc: 'consent', version: VERSION, participantNo: $('f-no').value,
+                           name: $('f-name').value, tag: $('f-tag').value });
+      show(`참여 번호 ${r.consent.participantNo} 로 동의했습니다. 이제 기록을 시작할 수 있습니다.`);
       await refresh();
       window.scrollTo(0, 0);
     } catch (e) {
@@ -202,7 +208,7 @@
 
   twoStep($('btn-withdraw'), '한 번 더 누르면 철회', async () => {
     await bg({ rbc: 'withdraw' });
-    $('f-name').value = ''; $('f-tag').value = ''; $('f-agree').checked = false;
+    $('f-no').value = ''; $('f-name').value = ''; $('f-tag').value = ''; $('f-agree').checked = false;
     show('동의를 철회했습니다. 이 브라우저의 기록과 참여 정보를 모두 지웠습니다.');
   });
 

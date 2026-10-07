@@ -50,8 +50,11 @@
  *   로그를 지워도 남는다. version 이 CONSENT_VERSION 과 다르면 없는 것으로 본다
  *   (고지문을 바꾸면 다시 받는다). 동의 페이지는 자기가 보여준 고지문의 version 을
  *   보내고, 여기서 다르면 거절한다 — 옛 페이지로 새 동의가 들어오는 것을 막는다.
- *   참가자 정보(testId·이름·조건 태그)는 start 기록에 복사된다. 그래서 bundle 의
+ *   참가자 정보(참여 번호·testId·이름·조건 태그)는 start 기록에 복사된다. 그래서 bundle 의
  *   session.tester 도 assemble() 이 로그만 보고 만든다(순수 함수 유지).
+ *   참여 번호(participantNo) = 연구자가 정해 준 사람 식별자 (필수, 공백 정리 · 대문자 · 20자).
+ *   testId = 이 설치의 난수 ID. 같은 사람이 재설치 · 철회 뒤 재동의하면 testId 는 바뀌고
+ *   참여 번호는 같다 → 분석의 사람 키는 참여 번호.
  *   철회(withdraw) = 정지 + 로그 삭제 + 동의 삭제. 다시 동의하면 새 testId.
  *
  * --- 테스트 모드: 읽는 목적 · 라벨 ---------------------------------------------
@@ -72,7 +75,7 @@ const TICK_MS = 150;          // 0-core CFG.TICK_MS 와 같아야 한다
 const K_SESS = 'sess:cur';    // 세션 상태 (작은 것만)
 const REC = 'rec:';           // 기록 로그. 키 = 'rec:' + seq 8자리
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
-const CONSENT_VERSION = 1;    // consent.html 고지문 버전과 같아야 한다
+const CONSENT_VERSION = 2;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가)
 
 // ============================================================================
 // 세션 상태
@@ -93,7 +96,7 @@ function emptyState() {
 }
 
 let S = emptyState();
-let C = null;                 // 동의 기록 { version, testId, name, tag, at } | null
+let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
 const ready = chrome.storage.local.get([K_SESS, K_CONSENT]).then((r) => {
   if (r[K_SESS]) S = Object.assign(emptyState(), r[K_SESS]);   // 필드가 늘어난 뒤의 옛 상태 대비
   C = r[K_CONSENT] || null;
@@ -152,7 +155,7 @@ const SINK = SINKS[MODE];
 // ============================================================================
 // 동의
 // ============================================================================
-function consentValid() { return !!(C && C.version === CONSENT_VERSION && C.testId); }
+function consentValid() { return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo); }
 
 // 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
 const ID_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
@@ -162,7 +165,8 @@ function newTestId() {
 }
 
 function testerInfo() {
-  return { testId: C.testId, name: C.name, tag: C.tag, consentVersion: C.version, consentAt: C.at };
+  return { participantNo: C.participantNo, testId: C.testId, name: C.name, tag: C.tag,
+           consentVersion: C.version, consentAt: C.at };
 }
 
 function cleanField(v, max) {
@@ -449,11 +453,14 @@ const handlers = {
   //   재동의(고지문 버전 변경)는 testId 를 유지한다. 철회 뒤 동의는 새 testId.
   async consent(m) {
     if (!m || m.version !== CONSENT_VERSION) return { ok: false, why: 'consent-version' };
+    const participantNo = cleanField(m.participantNo, 20).toUpperCase();   // p01 과 P01 이 갈리지 않게
+    if (!participantNo) return { ok: false, why: 'no-participant' };
     const name = cleanField(m.name, 40);
     if (!name) return { ok: false, why: 'no-name' };
     C = {
       version: CONSENT_VERSION,
       testId: (C && C.testId) || newTestId(),
+      participantNo,
       name,
       tag: cleanField(m.tag, 40) || null,
       at: new Date().toISOString(),
