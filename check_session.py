@@ -296,8 +296,20 @@ def check_counters(rep, ticks):
         rep.add(OK, "이벤트 카운터", f"mouse {mouse} / scroll {scroll}")
 
 
-def check_rescan(rep, timeline):
-    """[6] 본문 교체가 일어났는가."""
+def tick_pids(e):
+    """틱 하나가 참조하는 pid 들."""
+    out = set()
+    for k in ("centerPid", "cursorPid"):          # visTop/visBot 은 order(정수)라 pid 가 아님
+        if e.get(k):
+            out.add(e[k])
+    for p in e.get("vis") or []:
+        if p and p[0]:
+            out.add(p[0])
+    return out
+
+
+def check_rescan(rep, timeline, meta=None):
+    """[6] 기록 중 본문 변경. splice(0-B) 는 처리된 것 — 규모만 본다. disruptive-skipped(옛 확장)는 학습 제외."""
     modes = [e.get("mode") for e in timeline if e.get("type") == "rescan"]
     if "disruptive-skipped" in modes:
         first = next(e for e in timeline
@@ -311,11 +323,71 @@ def check_rescan(rep, timeline):
         else:
             why = " (diff 없음)"
         rep.add(FAIL, "본문 교체",
-                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 학습에서 제외.{why}")
-    elif modes:
-        rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
+                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 옛 확장 기록, 학습에서 제외.{why}")
+        return
+    sps = [e for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    if not sps:
+        if modes:
+            rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
+        else:
+            rep.add(OK, "본문 교체", "없음")
+        return
+    probs, warns = [], []
+    roots = [e for e in sps if e.get("rootChanged")]
+    if roots:
+        r0 = roots[0]
+        probs.append(f"기록 중 본문 루트가 바뀜 {len(roots)}회 (t={r0.get('t', 0) / 1000:.1f}s "
+                     f"{r0.get('rootFrom')} → {r0.get('rootTo')}) — 그 전 구간은 다른 영역을 기록한 것")
+    bads = [e for e in sps if (e.get("check") or [0, 0])[0] > 0]
+    if bads:
+        probs.append(f"splice 자체 검증 실패 {len(bads)}회 (유닛 글 ≠ 원문 · 겹침 · pid 중복 {bads[0]['check'][0]}개)")
+    unc = max(((e.get("check") or [0, 0])[1] for e in sps), default=0)
+    if unc > 30:
+        warns.append(f"어느 유닛에도 안 든 글자 최대 {unc}자")
+    # 큰 변경(유닛 절반 넘게 사라짐)은 정보로만: 노션 큰 토글을 닫으면 정상적으로 생긴다(2026-10-08 실측 4회).
+    #   다른 글로 바뀌는 경우는 주소가 바뀌어 구간이 닫히고, 같은 영역 밖으로 가면 rootChanged 가 FAIL 로 잡는다.
+    big = [e for e in sps if (e.get("retired") or 0) >= 5
+           and (e.get("retired") or 0) > 0.5 * ((e.get("kept") or 0) + (e.get("retired") or 0))]
+    retired = {p["pid"] for p in (meta or {}).get("paragraphs", []) if p.get("retired")}
+    last_t = max(e.get("t", 0) for e in sps)
+    stale = [e for e in timeline if e.get("type") == "tick" and e.get("t", 0) > last_t
+             and tick_pids(e) & retired]
+    if stale:
+        probs.append(f"마지막 splice 뒤 틱 {len(stale)}개가 사라진 유닛을 가리킴")
+    tot = (sum(e.get("kept") or 0 for e in sps[-1:]), sum(e.get("added") or 0 for e in sps),
+           sum(e.get("retired") or 0 for e in sps))
+    d = sps[0].get("diff") or {}
+    chk = "자체 검증 " + ("전부 [0,0]" if all((e.get("check") or [0, 0]) == [0, 0] for e in sps)
+                         else "/".join(str(e.get("check")) for e in sps[:5]))
+    detail = (f"splice {len(sps)}회 (큰 변경 {len(big)}) · 새 유닛 {tot[1]} · 사라진 유닛 {tot[2]}(retired) · 마지막 유지 {tot[0]} · {chk} · "
+              f"루트 {sps[-1].get('root')} · 첫 변경 t={sps[0].get('t', 0) / 1000:.1f}s 유닛 #{d.get('unit')} ⟨{d.get('new', '')}⟩")
+    if probs:
+        rep.add(FAIL, "본문 교체", " · ".join(probs) + " — " + detail)
+    elif warns:
+        rep.add(WARN, "본문 교체", " · ".join(warns) + " — " + detail)
     else:
-        rep.add(OK, "본문 교체", "없음")
+        rep.add(OK, "본문 교체", detail)
+
+
+def check_rescan_cost(rep, timeline):
+    """재스캔 비용 (0-B 성능). 기록 중 재스캔 간격을 1.5초로 줄였으므로 실제 비용을 본다. 정보성(WARN까지만).
+    글이 바뀐 재스캔은 rescan 이벤트의 ms, 글이 그대로인 재스캔(mode same)은 다음 이벤트에 얹힌 same=[횟수, 합 ms, 최대 ms]."""
+    ev = [e for e in timeline if e.get("type") == "rescan" and isinstance(e.get("ms"), (int, float))]
+    same = [e["same"] for e in timeline if isinstance(e.get("same"), list) and len(e["same"]) == 3]
+    if not ev and not same:
+        rep.add(OK, "재스캔 비용", "기록 중 재스캔 없음 (또는 측정 이전 확장)")
+        return
+    ms = sorted(e["ms"] for e in ev)
+    s_n = sum(x[0] for x in same)
+    s_tot = sum(x[1] for x in same)
+    s_max = max((x[2] for x in same), default=0)
+    worst = max(ms[-1] if ms else 0, s_max)
+    dur = (max(e.get("t", 0) for e in timeline) - min(e.get("t", 0) for e in timeline)) / 1000 or 1
+    load = (sum(ms) + s_tot) / 1000 / dur
+    detail = (f"글 변경 {len(ms)}회 (중앙 {ms[len(ms) // 2] if ms else 0}ms · 최대 {ms[-1] if ms else 0}ms) · "
+              f"글 그대로 {s_n}회 (최대 {s_max}ms) · 기록 시간 대비 {load:.2%}")
+    rep.add(WARN if worst > 100 or load > 0.02 else OK, "재스캔 비용",
+            detail + (" — 한 번에 100ms 넘거나 전체의 2% 넘음, 틱이 흔들릴 수 있음" if worst > 100 or load > 0.02 else ""))
 
 
 def check_order_continuity(rep, meta):
@@ -335,7 +407,7 @@ def check_units_baseline(rep, meta, baseline_path):
     with open(baseline_path, encoding="utf-8") as f:
         base = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
     now = [f"{p.get('order')}\t{p['pid']}\t{p.get('charLen')}"
-           for p in meta.get("paragraphs", [])]
+           for p in meta.get("paragraphs", []) if not p.get("retired")]
     if base == now:
         rep.add(OK, "유닛 기준선", f"{len(now)}개 유닛 완전 일치")
         return
@@ -769,7 +841,7 @@ def check_label(rep, meta, timeline, ticks):
         rep.add(FAIL, name, " · ".join(probs))
         return
 
-    allp = [p["pid"] for p in meta.get("paragraphs", [])]
+    allp = [p["pid"] for p in meta.get("paragraphs", []) if not p.get("retired")]   # splice 로 사라진 유닛 제외
     rat, exc, marks = lab["ratings"], lab["excluded"], lab["marks"]
     both = set(rat) & set(exc)
     if both:
@@ -936,16 +1008,23 @@ def run_payload(label, data, baseline=None):
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
-    check_visible_range(rep, meta, ticks)
-    check_viewport_covers_dwell(rep, meta, ticks)
+    # visTop/visBot 은 틱 당시의 order 다. splice 뒤 order 가 바뀌므로 order 로 비교하는 [4] · [8] · [14] 는
+    #   마지막 splice 뒤 틱만 본다 (feature 는 pid 기반 vis 를 써서 영향 없음, 감사 §8-13).
+    sp_t = [e.get("t", 0) for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    oticks = [e for e in ticks if e.get("t", 0) > max(sp_t)] if sp_t else ticks
+    if sp_t:
+        rep.add(OK, "order 기반 검사 범위", f"splice 뒤 틱 {len(oticks)}/{len(ticks)}개만 ([4] · [8] · [14])")
+    check_visible_range(rep, meta, oticks)
+    check_viewport_covers_dwell(rep, meta, oticks)
     check_counters(rep, ticks)
-    check_rescan(rep, timeline)
+    check_rescan(rep, timeline, meta)
+    check_rescan_cost(rep, timeline)
     check_order_continuity(rep, meta)
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
     check_pieces(rep, meta, ticks)
-    check_vis_cross(rep, meta, ticks)
+    check_vis_cross(rep, meta, oticks)
     check_scroll_cross(rep, meta, timeline, ticks)
     check_v3_fields(rep, meta, timeline, ticks)
     check_label(rep, meta, timeline, ticks)

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>splice 시험 글</title>
+<style>
+  body{font:17px/1.75 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;margin:0;color:#222;background:#fafaf7}
+  article{max-width:640px;margin:40px auto 60vh 60px;padding:0 20px}
+  h1{font-size:26px}
+  p{margin:0 0 18px}
+  .ins{background:#fff3b0;padding:6px 8px;border-radius:6px}
+  .ad{background:#ffd6d6;padding:0 4px;border-radius:4px}
+  aside{position:fixed;right:20px;top:20px;width:300px;background:#fff;border:1px solid #ddd;border-radius:10px;
+        padding:14px;font-size:13.5px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.08)}
+  aside button{font:inherit;padding:7px 10px;margin:8px 0 4px;border-radius:8px;border:1px solid #4caf3f;background:#4caf3f;color:#fff;cursor:pointer}
+  aside button:disabled{opacity:.4;cursor:default}
+  aside .done{color:#2e7d24}
+  aside ol{padding-left:18px;margin:6px 0}
+</style></head>
+<body>
+<!-- 본문은 article 안. 조작 상자(aside)는 article 밖이라 유닛에 안 들어간다. -->
+<article>
+  <h1>splice 시험 글</h1>
+      <p id="p1">[P1] 이 페이지는 확장 프로그램의 중간 변경 처리(splice)를 눈으로 확인하기 위한 시험용 글입니다.</p>
+      <p id="p2">[P2] 문단들은 일부러 짧게 썼습니다. 짧은 문단 여러 개가 200자 언저리로 합쳐져 한 유닛이 됩니다.</p>
+      <p id="p3">[P3] 세 번째 문단입니다. 이 문단 바로 뒤에 노란 문단이 끼어듭니다.</p>
+      <p id="p4">[P4] 네 번째 문단입니다. 노란 문단이 끼면 앞 문단과 이 문단이 묶여 있던 유닛이 바뀝니다.</p>
+      <p id="p5">[P5] 다섯 번째 문단은 변하지 않습니다. 끼어든 곳 뒤의 유닛이 pid 를 그대로 유지하는지 봅니다.</p>
+      <p id="p6">[P6] 여섯 번째 문단입니다. 스크롤을 내리며 평소처럼 읽으면 됩니다. 특별히 할 일은 없습니다.</p>
+      <p id="p7">[P7] 일곱 번째 문단입니다. 다음 문단 안에는 나중에 광고 문구가 한 줄 끼어듭니다.</p>
+      <p id="p8">[P8] 여덟 번째 문단입니다. 이 문장 중간에 광고가 끼면 이 문단이 든 유닛만 바뀌어야 합니다.</p>
+      <p id="p9">[P9] 아홉 번째 문단입니다. 광고 뒤의 유닛도 pid 를 유지해야 합니다.</p>
+      <p id="p10">[P10] 열 번째 문단입니다. 글의 끝 쪽입니다. 마지막 단계에서 이 아래에 문단이 덧붙습니다.</p>
+      <p id="p11">[P11] 열한 번째 문단입니다. 덧붙는 것은 끝에 붙는 경우라 append 로 처리됩니다.</p>
+      <p id="p12">[P12] 마지막 문단입니다. 끝까지 읽은 뒤 평가를 하고 파일을 저장하세요.</p>
+</article>
+<aside>
+  <b>splice 시험 — 진행</b>
+  <ol>
+    <li>확장 팝업에서 <b>기록 시작</b> (패널 · 오버레이 켜 두면 재스캔 줄이 보임)</li>
+    <li>아래 버튼을 하나씩 누름. 누른 뒤 <b>3초 이상</b> 기다렸다 다음 단계</li>
+    <li>끝까지 읽고 평가 완료 → 파일 저장 → <code>verify_splice.py</code></li>
+  </ol>
+  <div id="step">단계 1 준비</div>
+  <button id="go">단계 1: 노란 문단 끼우기</button>
+  <div id="say" style="margin-top:6px;color:#555"></div>
+</aside>
+<script>
+const steps = [
+  ["단계 1: 노란 문단 끼우기", "P3 와 P4 사이에 노란 문단이 끼었습니다. <b>노란 문단을 화면 가운데에 두고 3초 이상</b> 보세요.", () => {
+      const p = document.createElement('p'); p.id = 'ins'; p.className = 'ins';
+      p.textContent = '[INS-A] 기록 도중 끼어든 노란 문단입니다. 늦게 렌더된 본문이나 펼친 내용을 흉내 냅니다. 이 문단이 새 유닛으로 잡히는지 봅니다.';
+      document.getElementById('p3').after(p); }],
+  ["단계 2: 광고 문구 끼우기", "P8 문장 가운데에 광고가 끼었습니다.", () => {
+      const p8 = document.getElementById('p8'); const s = document.createElement('span'); s.className = 'ad';
+      s.textContent = ' [AD-B] 지금 가입하면 첫 달 무료! ';
+      p8.insertBefore(s, p8.firstChild.splitText(p8.firstChild.data.indexOf('이 문장')) ); }],
+  ["단계 3: 노란 문단 없애기", "노란 문단이 사라졌습니다(토글을 닫은 것과 같음). 데이터에는 남아야 합니다.", () => {
+      document.getElementById('ins').remove(); }],
+  ["단계 4: 끝에 문단 덧붙이기", "글 끝에 문단이 붙었습니다(lazy-load 흉내, append).", () => {
+      const p = document.createElement('p'); p.id = 'tail';
+      p.textContent = '[TAIL] 끝에 덧붙은 문단입니다. 끝에 붙는 경우는 기존 유닛을 건드리지 않고 새 유닛만 생겨야 합니다.';
+      document.querySelector('article').appendChild(p); }],
+];
+let k = 0;
+const go = document.getElementById('go');
+go.onclick = () => {
+  const [, say, fn] = steps[k]; fn();
+  document.getElementById('say').innerHTML = say;
+  document.getElementById('step').innerHTML = '<span class="done">단계 ' + (k + 1) + ' 완료</span> · ' + new Date().toTimeString().slice(0, 8);
+  k++;
+  if (k < steps.length) { go.disabled = true; go.textContent = steps[k][0]; setTimeout(() => { go.disabled = false; }, 3000); }
+  else { go.disabled = true; go.textContent = '끝 — 끝까지 읽고 평가 → 저장'; }
+};
+</script>
+</body></html>

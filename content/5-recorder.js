@@ -234,11 +234,17 @@
   // ==========================================================================
   // 내보내기 — 여기는 사실만 발행한다. 실어 나르는 건 11-session.
   // ==========================================================================
+  // 살아 있는 유닛 + 기록 중 splice 로 사라진 유닛(retired: true, order 는 살아 있는 것 뒤로 이어 붙임).
+  //   retired 를 빼면 그 pid 를 참조한 옛 틱이 meta.paragraphs 에 없어 pid 정합성이 깨진다.
   function paragraphs() {
-    return RBC.units.all().map(u => ({
-      pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
-      pieces: u.pieces || [],                      // v3 조각 (감사 §8-4)
-    }));
+    const alive = RBC.units.all();
+    const one = (u, order, gone) => {
+      const p = { pid: u.pid, order, charLen: u.charLen, text: u.text.slice(0, 1000), pieces: u.pieces || [] };
+      if (gone) { p.retired = true; p.after = u.after || null; }   // 사라질 때 바로 앞 유닛 pid (글 순서 복원용)
+      return p;
+    };
+    return alive.map(u => one(u, u.order, false))
+      .concat(RBC.units.retired().map((u, k) => one(u, alive.length + k, true)));
   }
 
   // 글 정보 + 유닛 목록. 구간을 열 때, 그리고 기록 중 유닛이 늘었을 때(append).
@@ -319,8 +325,10 @@
         'tick.mdx / mdy = 직전 틱 이후 mousemove 이동량 Σ|dx| · Σ|dy| (px). ' +
         'tick.edits = 직전 틱 이후 input 이벤트 수(내용 안 남김, 한글 IME 로 부풀므로 0 이냐 아니냐로만).',
         '차분값(스크롤 속도 · 커서 이동 거리)은 로그에 없다. 아래 리셋 규칙으로 백엔드가 계산.',
-        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션. ' +
-        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. 원인은 첫 이벤트.',
+        'type=rescan mode=splice = 기록 중 본문 중간이 바뀌어 바뀐 구간만 다시 청킹함 { kept, added, retired, diff }. ' +
+        '사라진 유닛은 paragraphs 에 retired:true 로 남는다(order 는 살아 있는 유닛 뒤). ' +
+        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. ' +
+        'mode=disruptive-skipped 는 옛 확장(splice 이전)의 기록 — 본문 교체로 학습 제외.',
         '기사 제목은 유닛에 포함되지 않는다(본문 루트 밖). 제목 텍스트는 meta.title.',
         '한 페이지 = 같은 글(pageId)의 모든 구간(segId)을 합친 것. 탭 전환은 ' +
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
@@ -370,7 +378,11 @@
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
   // reason: 'user'(세션 정지 방송) | 'idle' | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
-    if (recording) push({ type: 'segend', t: tNow(), segId, reason: reason || 'user' });
+    if (recording) {
+      const e = { type: 'segend', t: tNow(), segId, reason: reason || 'user' };
+      if (sameN) { e.same = [sameN, sameMs, sameMax]; sameN = 0; sameMs = 0; sameMax = 0; }
+      push(e);
+    }
     if (pageSent) flush();                             // 마지막 조각까지 넘기고 닫는다
     else timeline = [];                                // 한 번도 안 본 구간: 흔적 없이 버린다
     clearInterval(flushTimer); flushTimer = null;
@@ -499,10 +511,24 @@
   // [R3] 전: rescan() 이 timeline.push 를 직접 호출했다.
   // 유닛이 늘거나 바뀌었으면(append/full) 유닛 목록도 다시 보낸다. 안 보내면 새 pid 가
   // timeline 에만 있고 meta.paragraphs 에는 없어서 pid 정합성이 깨진다.
+  // 글이 안 바뀐 재스캔(mode 'same')은 횟수 · 시간만 모아 두고 다음 기록 이벤트에 얹는다 —
+  //   호버 UI 처럼 잦은 DOM 변경마다 이벤트 · page 기록을 쌓지 않으려고 (0-B 성능).
+  let sameN = 0, sameMs = 0, sameMax = 0;
   bus.on('units:rescanned', (d) => {
     if (!recording) return;
-    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count };
-    if (d.diff) e.diff = d.diff;                      // disruptive-skipped 진단
+    if (d.mode === 'same') {
+      sameN++; sameMs += d.ms || 0; sameMax = Math.max(sameMax, d.ms || 0);
+      return;
+    }
+    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count, ms: d.ms };
+    if (sameN) { e.same = [sameN, sameMs, sameMax]; sameN = 0; sameMs = 0; sameMax = 0; }
+    if (d.diff) e.diff = d.diff;                      // splice 진단: 어디가 바뀌었나
+    if (d.root) e.root = d.root;                      // 이 시점 본문 루트 (패널 · [6] 표시)
+    if (d.mode === 'splice') {
+      e.kept = d.kept; e.added = d.added; e.retired = d.retired; e.check = d.check;
+      if (d.inline) e.inline = true;                 // 문단 안쪽 변경 → 유닛 제자리 수정
+      if (d.rootChanged) { e.rootChanged = true; e.rootFrom = d.rootFrom; e.rootTo = d.root; }
+    }
     push(e);
     if (d.mode !== 'disruptive-skipped' && pageSent) emitPage();   // 첫 틱 전이면 첫 틱 때 최신 목록이 나간다
   });

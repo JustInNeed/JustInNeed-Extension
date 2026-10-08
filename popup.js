@@ -111,7 +111,54 @@
       ? '이 창을 닫고 글을 읽으세요. 끝까지 내리면 평가 질문이 뜹니다. 안 뜨면 다시 열어 [다 읽었어요]를 누르세요.'
       : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
     $('tid').textContent = c.participantNo || '';
+    renderConn(rec);
   }
+
+  // ---------------------------------------------------------------------------
+  // 이 탭 연결 확인 (참가자용, 0-B)
+  //   확장을 새로 설치 · 업데이트한 뒤 새로고침 안 한 탭은 수집 코드가 없거나 끊겨 있다(고아 탭).
+  //   그 상태로 기록을 시작하면 아무것도 안 쌓인다 → 팝업에서 바로 알려 주고 새로고침 버튼을 준다.
+  //   tab = 지금 창의 활성 탭. 응답 = 11-session 의 ping (최상위 프레임).
+  // ---------------------------------------------------------------------------
+  //   activeTab 권한: 팝업을 연 순간 활성 탭 주소를 읽을 수 있다(설치 경고 없음). 브라우저 내부 페이지
+  //   (chrome://, 웹 스토어, 새 탭, PDF 뷰어 등)는 확장이 들어갈 수 없어서 새로고침해도 안 된다 — 따로 알린다.
+  let tabId = null;
+  let conn = null;                 // null = 확인 중, { ok:true, units, … } | { ok:false, closed? }
+  const CLOSED = /^(chrome|chrome-extension|edge|about|view-source|devtools|data|file):|^https:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/;
+  async function pingTab() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) { conn = { ok: false }; return; }
+      tabId = tab.id;
+      // activeTab 은 일반 웹 페이지에서만 주소를 준다. chrome:// 같은 내부 페이지는 권한이 안 나와서 url 이 비어 있다
+      //   (2026-10-08 실측: chrome://extensions 에서 url 없음). 그래서 "주소가 안 보임" 자체를 내부 페이지로 본다.
+      if (!tab.url || CLOSED.test(tab.url)) { conn = { ok: false, closed: true }; return; }
+      const r = await chrome.tabs.sendMessage(tab.id, { rbc: 'ping' });
+      conn = r && r.ok ? r : { ok: false };
+    } catch (e) {
+      conn = { ok: false };        // Receiving end does not exist — 수집 코드가 없음
+    }
+  }
+
+  function renderConn(rec) {
+    const box = $('conn');
+    const bad = conn && !conn.ok;
+    box.className = 'conn' + (conn ? (bad ? ' bad' : ' ok') : '');
+    $('conn-text').textContent = !conn ? '이 탭 확인 중…'
+      : bad && conn.closed ? '이 페이지는 브라우저 내부 페이지라 기록할 수 없어요. 읽을 글을 연 탭에서 다시 열어 주세요.'
+      : bad ? '이 탭은 기록할 준비가 안 됐어요. [이 탭 새로고침]을 누른 뒤 다시 열어 주세요.'
+        : conn.units ? `이 탭 연결됨 · 본문 ${conn.units}부분 인식`
+          : '이 탭 연결됨 · 본문을 찾는 중 — 잠시 뒤 다시 열어 보세요';
+    $('btn-reload').hidden = !bad || !!conn.closed;
+    if (!rec && bad) $('btn-rec').disabled = true;
+    else $('btn-rec').disabled = false;
+  }
+
+  $('btn-reload').addEventListener('click', async () => {
+    if (tabId == null) return;
+    try { await chrome.tabs.reload(tabId); } catch (e) { show(e.message); return; }
+    window.close();
+  });
 
   async function refresh() {
     try {
@@ -179,5 +226,6 @@
   $('btn-export').addEventListener('click', () => openPage('#export'));
 
   refresh();
+  pingTab().then(() => { if (st) render(); });
   setInterval(refresh, 1000);
 })();

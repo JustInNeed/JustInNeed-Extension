@@ -75,6 +75,13 @@
   let segs = [];
   let nodeIndex = new Map();
   let breaks = new Set();
+  // 벽(wall): 앞 블록과 부모가 다른 블록이 시작하는 위치 (0-B 유닛 안정, 2026-10-08).
+  //   청킹은 벽을 넘어 합치지 않는다. 노션처럼 블록마다 감싸고 토글을 열면 DOM 에 새 블록을 끼우는 사이트에서,
+  //   기존 유닛 안으로 글이 끼는 일이 없어 기존 유닛 · pid 가 그대로 남는다.
+  //   **플랫폼 지정 루트(SITE_ROOTS 의 walls: true)일 때만** 쓴다. 일반 사이트에 켜면 네이버 뉴스 기준선이
+  //   22 → 23 으로 바뀌었다(캡션 등 다른 부모 줄이 따로 떨어짐). 티스토리 · 네이버 블로그의 접은글은 CSS 로만
+  //   숨겨 글이 처음부터 스트림에 있으므로 끼어듦 자체가 없다.
+  let walls = [];
   let contentRoot = null;
   let rootInfo = null;       // 루트를 왜 골랐나 — { how, sel, len, link, el }. 패널 · meta.root
 
@@ -171,7 +178,30 @@
     return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
   }
 
+  // 알려진 플랫폼의 본문 컨테이너 — 글자 수 문턱 없이 루트로 쓴다.
+  //   노션: 토글이 다 닫히면 본문이 200자 미만이라 1) 에서 떨어지고, 2) 에서 사이드바가 이겼다
+  //   (사이드바 항목은 <a> 가 아니라 div role=button 이라 링크 글자로 안 셈). 2026-10-08 stepK.
+  //   기록 중 토글을 열면 루트가 사이드바 → 본문으로 바뀌어 앞 구간 데이터가 사이드바 것이 됐다.
+  // walls: 벽 방식. 'toggle' = 노션 토글 둘레에만 벽 (2026-10-08 세 번째 안).
+  //   1안 "부모가 다른 블록 사이" → 인라인 코드 조각까지 갈라 7자 유닛. 2안 "노션 블록마다" → 글머리표 하나하나가
+  //   유닛이라 10~60자, 평정 불가. 지금: 토글 제목 · 토글 안쪽 · 토글 밖을 서로 다른 구역으로 보고, 구역이 바뀌는
+  //   곳에만 벽. 같은 구역 안 문단 · 글머리표 · 코드는 일반 사이트처럼 200자 언저리로 합친다.
+  //   토글을 열면 내용이 "토글 안쪽" 구역으로 끼므로 제목 · 앞뒤 유닛 글이 안 바뀐다 → pid 유지.
+  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }];
+  const NOTION_BLOCK = '[data-block-id]';
+  let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
+
   function findContentRoot() {
+    // 0) 알려진 플랫폼
+    useWalls = false;
+    for (const site of SITE_ROOTS) {
+      const el = document.querySelector(site.sel);
+      if (!el || !textLen(el)) continue;
+      const m = measure(el);
+      rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null };
+      useWalls = site.walls || false;
+      return el;
+    }
     // 1) 시맨틱 태그: 선택자마다 첫 요소만 본다 (기존 동작 유지).
     //    바뀐 것은 문턱을 재는 잣대뿐 — textContent(공백 포함) → 스트림 글자 수.
     //    헤럴드경제는 main.view(제목 영역)가 textContent 1297 로 통과했지만
@@ -245,6 +275,33 @@
 
     const newSegs = [];
     const newBreaks = new Set();
+    const newWalls = [];
+    let lastWallKey;                     // 지금 구역 (토글 제목 · 토글 안쪽 · 밖) — 바뀌면 벽
+    // 노션 토글 판별: 클래스에 toggle 이 있거나, 이 블록 자신의 줄(자식 블록 말고)에 열고 닫는 버튼(aria-expanded)이 있음.
+    //   닫힌 토글은 자식 블록이 DOM 에 없어서 "자식이 있나"로는 못 알아본다 — 그래서 버튼으로 본다.
+    const togCache = new Map();
+    const isToggle = (b) => {
+      if (togCache.has(b)) return togCache.get(b);
+      let t = /toggle/i.test(typeof b.className === 'string' ? b.className : '');
+      if (!t) for (const x of b.querySelectorAll('[aria-expanded]')) if (x.closest(NOTION_BLOCK) === b) { t = true; break; }
+      togCache.set(b, t);
+      return t;
+    };
+    const inner = new Map();             // 토글 → "그 토글 안쪽" 구역 표식
+    const zoneOf = (el) => {
+      if (!el) return null;
+      const own = el.closest(NOTION_BLOCK);
+      let b = own;
+      while (b && b !== root && root.contains(b)) {
+        if (isToggle(b)) {
+          if (b === own) return b;       // 토글 제목 줄
+          if (!inner.has(b)) inner.set(b, { of: b });
+          return inner.get(b);           // 토글 안쪽
+        }
+        b = b.parentElement ? b.parentElement.closest(NOTION_BLOCK) : null;
+      }
+      return root;                       // 토글 밖
+    };
     const parts = [];
     let len = 0;
     let pendingBreak = true;
@@ -255,6 +312,11 @@
       if (n.nodeType === 1) { pendingBreak = true; continue; }  // <br>
       const blk = nearestBlock(n);
       if (blk !== lastBlock) pendingBreak = true;
+      if (useWalls) {
+        const key = zoneOf(n.parentElement);
+        if (lastWallKey !== undefined && key !== lastWallKey) { newWalls.push(len); pendingBreak = true; }
+        lastWallKey = key;
+      }
       lastBlock = blk;
 
       if (pendingBreak) newBreaks.add(len);
@@ -268,7 +330,8 @@
       pendingBreak = false;
     }
 
-    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks };
+    if (useWalls && rootInfo) rootInfo.toggles = [...togCache.values()].filter(Boolean).length;
+    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks, walls: newWalls };
   }
 
   function buildSig(s) {
@@ -286,6 +349,7 @@
     raw = built.raw;
     segs = built.segs;
     breaks = built.breaks;
+    walls = built.walls || [];
     sig = buildSig(raw);
     nodeIndex = new Map();
     for (const s of segs) nodeIndex.set(s.node, s);
@@ -302,6 +366,7 @@
     len: () => raw.length,
     sig: () => sig,                     // 배열 그대로. 청킹 hot loop 때문.
     breaks: () => breaks,
+    walls: () => walls,                 // 오름차순 원문 위치 (청킹이 넘지 않는 경계)
     segs: () => segs,
     segFor: (node) => nodeIndex.get(node),
     root: () => contentRoot,

@@ -206,7 +206,9 @@ function assemble(log) {
     } else if (r.k === 'page') {
       const pg = pages[r.pageId] ||
         (pages[r.pageId] = { meta: r.meta, paras: new Map(), events: [], segs: new Map() });
-      for (const p of r.paragraphs || []) if (!pg.paras.has(p.pid)) pg.paras.set(p.pid, p);
+      // 나중 것이 이긴다: 기록 중 splice 로 order 가 바뀌고 사라진 유닛이 retired:true 로 바뀐다(2-units 헤더).
+      //   목록에서 빠진 pid 는 지우지 않는다 — 옛 틱이 참조한다.
+      for (const p of r.paragraphs || []) pg.paras.set(p.pid, p);
       // 같은 구간의 page record 는 여러 번 온다(유닛 append). 첫 번째가 구간 시작이다.
       if (!pg.segs.has(r.segId)) {
         pg.segs.set(r.segId, { segId: r.segId, tabId: r.tabId, t: r.t, url: r.meta && r.meta.url });

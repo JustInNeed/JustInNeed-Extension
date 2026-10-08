@@ -54,8 +54,9 @@
     SCAN_RETRY_MAX: 5,
     SCAN_RETRY_MS: 1500,
     MUTATION_DEBOUNCE: 800,
-    MUTATION_DEBOUNCE_REC: 5000,
-    RESCAN_MIN_GAP_REC: 15000,
+    MUTATION_DEBOUNCE_REC: 700,     // 0-B: 5000 → 700. 늦게 그려진 본문(노션 토글)이 5~15초 유닛 없이 읽히던 것
+    MUTATION_MAX_WAIT: 2500,        // 변경이 끊이지 않아도 이 시간 안에는 한 번 재스캔 (디바운스 굶주림 방지)
+    RESCAN_MIN_GAP_REC: 1500,       // 0-B: 15000 → 1500. splice 는 바뀐 구간만 다시 자르므로 자주 해도 된다
 
     // --- 세션 ---
     IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료

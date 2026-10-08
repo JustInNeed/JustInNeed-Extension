@@ -151,6 +151,11 @@
     if (m.rbc === 'start') { applySession(m); joinIfRecording(); }
     else if (m.rbc === 'stop') { applySession(m); RBC.frames.send('stop', { reason: 'user' }); }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
+    else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)
+      const ri = RBC.stream.rootInfo() || {};
+      reply({ ok: true, units: RBC.units.count(), root: ri.sel || null, how: ri.how || null,
+        recording: RBC.recorder.isRecording() });
+    }
     return false;
   });
 

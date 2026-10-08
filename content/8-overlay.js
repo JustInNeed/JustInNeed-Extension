@@ -4,7 +4,8 @@
  * 소유: overlayOn, CSS Custom Highlight 객체, 폴백 레이어, 중앙선 엘리먼트, vis 상자 레이어
  * 의존(직접 호출): 0-core, RBC.units, RBC.hittest   ← 전부 자기보다 낮은 번호
  * 발행: overlay:changed
- * 구독: cmd:overlay, units:changed, tick:done, viewport:resized
+ * 구독: cmd:overlay, units:changed, tick:done, viewport:resized, label:mode
+ *   평정 · 중요 표시(label:mode on) 동안은 숨긴다 — 오버레이 상자가 평정 상자와 겹쳐 헷갈렸다(2026-10-08).
  *
  * --- 이 파일의 존재 이유 ----------------------------------------------------
  *   유닛이 DOM 요소가 아니라 글자 범위라서 outline을 못 쓴다.
@@ -231,17 +232,24 @@
   bus.on('cmd:overlay', (m) => setOverlay(!!(m && m.on)));
 
   // [R2] 전: rescan() 안에서 if (overlayOn) paintOverlay(true);
-  bus.on('units:changed', () => { if (overlayOn) paint(true); });
+  let labelHide = false;
+  bus.on('label:mode', (d) => {
+    labelHide = !!(d && d.on);
+    if (!overlayOn) return;
+    if (labelHide) { paint(false); hideVis(); } else paint(true);
+  });
+
+  bus.on('units:changed', () => { if (overlayOn && !labelHide) paint(true); });
 
   // [R5] 전: tick() 안에서 if (overlayOn) markCurrent(centerU, cursorPid);
   bus.on('tick:done', (d) => {
-    if (!overlayOn || !d) return;
+    if (!overlayOn || labelHide || !d) return;
     markCurrent(d.centerU, d.cursorPid);
     drawVis(d.vis);
   });
 
   // 전: onResize() 안에서 if (overlayOn) paintOverlay(true);
-  bus.on('viewport:resized', () => { if (overlayOn) paint(true); });
+  bus.on('viewport:resized', () => { if (overlayOn && !labelHide) paint(true); });
 
   // ==========================================================================
   // 공개 — content.js 는 이걸 안 쓴다. 콘솔에서 손으로 켜볼 때만 쓰는 통로.

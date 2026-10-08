@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel
+ *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -67,6 +67,7 @@
   let uiRecording = false;               // 세션 상태의 표시용 사본. session:changed 로만 바뀐다
   let uiOverlay = false;
   let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
+  let rescanHtml = '';                   // 마지막 재스캔 한 줄 (기록 중 splice 를 눈으로 보려고, 0-B)
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
 
   // ==========================================================================
@@ -146,6 +147,7 @@
       </div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
+      <div class="rbc-stat" id="rbc-rescan">${rescanHtml}</div>
       <div class="rbc-list" id="rbc-list"></div>
     `;
     listEl = panelEl.querySelector('#rbc-list');
@@ -248,6 +250,46 @@
     render();
   });
 
+  // 재스캔 결과 한 줄: 기록 중 토글을 열거나 늦게 그려질 때 무슨 일이 났는지 바로 보이게.
+  //   splice 면 유지 · 새 · 사라짐 · 자체 검증([0,0] = 정상) · 루트. 루트가 바뀌면 빨갛게.
+  const RESCAN_KO = { full: '전체 재청킹', append: '끝에 추가', splice: '중간 변경(splice)' };
+  let sameN = 0, sameMax = 0;            // 글 변화 없는 재스캔(호버 UI 등) 횟수 · 최대 ms
+  bus.on('units:rescanned', (d) => {
+    if (!d) return;
+    if (d.mode === 'same') {
+      sameN++; sameMax = Math.max(sameMax, d.ms || 0);
+      const el = panelEl && panelEl.querySelector('#rbc-same');
+      if (el) el.textContent = ` · 글 변화 없는 재스캔 ${sameN}회 (최대 ${sameMax}ms)`;
+      return;
+    }
+    const t = new Date().toTimeString().slice(0, 8);
+    const kind = d.inline ? '문단 안 변경(제자리 수정)' : (RESCAN_KO[d.mode] || esc(d.mode));
+    let s = `<b>재스캔</b> ${t} · ${kind} · ${d.ms != null ? d.ms + 'ms · ' : ''}유닛 ${d.count}`;
+    if (d.mode === 'splice') {
+      const ok = d.check && d.check[0] === 0;
+      s += ` · 유지 ${d.kept} · 새 ${d.added} · 사라짐 ${d.retired}` +
+        ` · 검증 <span style="color:${ok ? '#16a34a' : '#dc2626'}">${esc(JSON.stringify(d.check))}</span>`;
+      if (d.diff && d.diff.unit != null) s += ` · 첫 변경 #${d.diff.unit}`;
+    }
+    if (d.rootChanged) {
+      s += ` <span style="color:#dc2626;font-weight:600">· 루트 바뀜! ${esc(d.rootFrom)} → ${esc(d.root)}</span>`;
+    } else if (d.root) {
+      s += ` · 루트 ${esc(d.root)}`;
+    }
+    const ri = RBC.stream.rootInfo();
+    if (ri && ri.toggles != null) s += ` · 토글 ${ri.toggles}개 인식`;
+    // 목록에는 지금 화면의 유닛만 나온다. 사라진 유닛은 내보낼 데이터에 남아 있다는 걸 여기서 보여 준다.
+    const gone = RBC.units.retired ? RBC.units.retired() : [];
+    if (gone.length) {
+      s += `<br><span style="color:#666">사라진 유닛 ${gone.length}개 데이터에 보존: ` +
+        gone.slice(-3).map(u => `${esc(u.pid)} "${esc(u.text.slice(0, 12))}…"`).join(', ') +
+        (gone.length > 3 ? ' …' : '') + '</span>';
+    }
+    rescanHtml = s + `<span id="rbc-same">${sameN ? ` · 글 변화 없는 재스캔 ${sameN}회 (최대 ${sameMax}ms)` : ''}</span>`;
+    const el = panelEl && panelEl.querySelector('#rbc-rescan');
+    if (el) el.innerHTML = rescanHtml;
+  });
+
   bus.on('ui:panel', (d) => {
     const on = !!(d && d.on);
     if (on === visible) return;
@@ -292,12 +334,13 @@
 
   // 본문으로 고른 요소와 이유. 루트를 잘못 고르면 유닛 수만으로는 티가 안 날 때가
   // 있어서(헤럴드: 제목 영역, 감사 §6-F) 콘솔 없이 바로 보이게 한다.
-  const ROOT_HOW = { semantic: '시맨틱 태그', fallback: '링크 아닌 글자 최다', body: '후보 없음 → body' };
+  const ROOT_HOW = { site: '플랫폼 지정', semantic: '시맨틱 태그', fallback: '링크 아닌 글자 최다', body: '후보 없음 → body' };
   function rootLine(r) {
     if (!r) return '';
     const warn = r.how === 'body';
     return `<br><span style="color:${warn ? '#c00' : '#999'}">루트 ${esc(r.sel)} · ` +
-      `${ROOT_HOW[r.how] || esc(r.how)} · 링크 ${Number(r.link || 0).toLocaleString()}자</span>`;
+      `${ROOT_HOW[r.how] || esc(r.how)} · 링크 ${Number(r.link || 0).toLocaleString()}자` +
+      (r.toggles != null ? ` · 토글 ${r.toggles}개 인식(둘레에만 벽)` : '') + '</span>';
   }
 
   // ==========================================================================

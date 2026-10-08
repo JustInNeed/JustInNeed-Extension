@@ -591,13 +591,19 @@
     if (now - endSince >= END_HOLD_MS && now >= nextAskAt) begin('ask', 'end');
   });
 
-  // 재스캔으로 유닛이 바뀌면: 끝 유닛 다시 계산, 사라진 pid 는 평정 · 표시에서 뺀다.
+  // 재스캔으로 유닛이 바뀌면(append · splice): 끝 유닛 다시 계산. 평정 중이면 대상 목록을 새로 만들고
+  //   (새 유닛은 끼워 넣음 — 빠지면 [17] FAIL), 사라진 pid 는 평정 · 표시에서 뺀다. 지금 유닛은 유지.
   bus.on('units:changed', () => {
     lastPidDirty = true;
     if (!phase || phase === 'ask') return;
     const alive = (pid) => !!RBC.units.byPid(pid);
-    targets = targets.filter(alive);
-    excluded = excluded.filter(alive);
+    const curPid = targets[idx];
+    if (targets.length || excluded.length) {
+      const sp = splitUnits();
+      targets = sp.t; excluded = sp.x;
+      const k = targets.indexOf(curPid);
+      if (k >= 0) idx = k;
+    }
     for (const pid of [...ratings.keys()]) if (!alive(pid)) ratings.delete(pid);
     for (const pid of [...marks]) if (!alive(pid)) marks.delete(pid);
     idx = Math.min(idx, Math.max(0, targets.length - 1));

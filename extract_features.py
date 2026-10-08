@@ -463,6 +463,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
 
     # 품질 플래그
     disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
+    n_splice = sum(1 for e in tl if e.get("type") == "rescan" and e.get("mode") == "splice")
     seg_ids = {g["segId"] for g in meta.get("segments", [])}
     missing = sum(len(c.get("missing", [])) for c in bundle["session"].get("chunkReport", [])
                   if c.get("segId") in seg_ids)
@@ -589,6 +590,9 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "z_is_weak": n_sess_tester < CFG["MIN_SESSIONS_FOR_Z"],
             "trend_low_sample": bool(s_tr_low or c_tr_low or hr_low),
             "page_disruptive_rescan": disruptive,
+            "page_splice_count": n_splice,
+            "is_retired": bool(para.get("retired")),
+            "_after": para.get("after") if para.get("retired") else None,
             "page_missing_chunks": missing,
             "page_idle_sec": round(float(df["idle"].sum()) * tick_sec, 1) if n else 0.0,
             "page_edit_ticks": int(df["edit"].sum()) if n else 0,
@@ -646,6 +650,34 @@ def page_queries(bundle):
 # =============================================================================
 # main
 # =============================================================================
+def reading_order(g):
+    """한 페이지 행을 글 순서로: 최종 유닛은 order 순, 사라진 유닛은 사라질 때 바로 앞 유닛(after) 뒤에 끼운다.
+    after 가 다시 사라진 유닛이면 사슬로 따라간다(토글 안 3-1 → 3-2 → 3-3). 앞을 못 찾으면 맨 끝."""
+    alive = g[~g["is_retired"]].sort_values("unit_order", kind="stable")
+    ret = g[g["is_retired"]]
+    kids = {}
+    for idx, r in ret.iterrows():
+        kids.setdefault(r["_after"] if isinstance(r["_after"], str) else None, []).append(idx)
+    seq, done = [], set()
+
+    def emit(idx, pid):
+        seq.append(idx)
+        done.add(idx)
+        for k in kids.get(pid, []):
+            if k not in done:
+                emit(k, g.at[k, "paragraph_id"])
+
+    for k in kids.get(None, []):                         # 맨 앞에서 사라진 유닛
+        if k not in done:
+            emit(k, g.at[k, "paragraph_id"])
+    for idx, r in alive.iterrows():
+        emit(idx, r["paragraph_id"])
+    seq += [k for k in ret.index if k not in done]       # 앞 유닛을 못 찾은 것
+    o = g.loc[seq].copy()
+    o["unit_order"] = range(len(o))
+    return o
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="+", help="세션 bundle JSON (rbc_*.json)")
@@ -653,6 +685,8 @@ def main():
     ap.add_argument("--noise", help="본문 아닌 유닛 파일 {pageId|url: [pid, ...]}")
     ap.add_argument("--no-selection-features", action="store_true",
                     help="has_highlight / has_copy 를 모델 feature 목록에서 뺌 (컬럼은 남음)")
+    ap.add_argument("--final-only", action="store_true",
+                    help="기록 중 사라진 유닛(is_retired) 행을 뺌. 기본은 남김 — 사용자가 읽은 글은 전부 보존한다")
     args = ap.parse_args()
 
     noise = json.load(open(args.noise, encoding="utf-8")) if args.noise else None
@@ -680,11 +714,26 @@ def main():
     out = pd.DataFrame(all_rows)
     if out.empty:
         sys.exit("유닛 행이 0개.")
+    # 표 = 페이지마다 "사용자 화면에 나온 모든 유닛을 글 순서대로" + 행동 데이터 (2026-10-08 서현 결정).
+    #   기록 중 본문 변경(토글 여닫기 등)으로 사라진 유닛(is_retired)도 화면에 한 번이라도 나왔으면 남긴다 — 읽은 글이다.
+    #   화면에 한 번도 안 나온 사라진 유닛은 뺀다(잠깐 생겼다 사라진 덩어리). 최종 유닛은 안 나왔어도 남긴다(= 안 읽음).
+    #   unit_order 는 다시 매긴 글 순서: 사라진 유닛은 사라질 때 자리 바로 앞에 놓는다.
+    #   같은 글이 두 버전으로 두 줄에 있을 수 있다(예: 토글 닫힌 제목 덩어리 · 열린 덩어리).
+    n_ret = int(out["is_retired"].sum())
+    out = out[~out["is_retired"] | (out["n_vis_ticks"] > 0)]
+    if args.final_only:
+        out = out[~out["is_retired"]]
+    out = pd.concat([reading_order(g) for _, g in out.groupby(["session_id", "page_id"], sort=False)],
+                    ignore_index=True)
+    out = out.drop(columns=["_after"])
     out.to_csv(args.output, index=False)
 
     feats = [f for f in MODEL_FEATURES if not (args.no_selection_features and f in SELECTION_FEATURES)]
     print(f"세션 {len(bundles)}개 · 페이지 {len(checks)}개 → 유닛 행 {len(out)}개  (→ {args.output})")
     print(f"  · 모델 feature {len(feats)}개")
+    if n_ret:
+        print(f"  · 기록 중 사라진 유닛 {n_ret}행 " + ("제외(--final-only)" if args.final_only else
+              "중 화면에 나온 것만 글 순서대로 포함(is_retired=True)"))
 
     # ---- 검산 (판정 아님, 사람이 보는 용) ----
     for bd, pg, df, G, rows in checks:
@@ -713,14 +762,24 @@ def main():
               f"라벨 " + (" ".join(f"{k}{(r['label_state'] == k).sum()}" for k in RATE_N_ALL)
                          + f" · 중요 {int(r['label_mark'].sum())}" if r['page_labeled'].iloc[0] else '없음'))
         if r["page_disruptive_rescan"].any():
-            print("  ⚠ 본문 교체(disruptive) 페이지 — pid 정합성 확인 전 학습 제외 권장")
+            print("  ⚠ 본문 교체(disruptive, 옛 확장) 페이지 — 학습 제외 권장")
+        if r["is_retired"].any():
+            rd = r["dwell_gvam_sec"].where(r["is_retired"], 0).sum()
+            td = r["dwell_gvam_sec"].sum()
+            print(f"  · 기록 중 본문 변경(splice {int(r['page_splice_count'].iloc[0])}회) — 사라진 유닛 "
+                  f"{int(r['is_retired'].sum())}개, 체류 {rd:.1f}s / {td:.1f}s ({(rd / td * 100) if td else 0:.0f}%)"
+                  f"{' — CSV 에서는 뺌(--final-only)' if args.final_only else ''}")
         if r["page_missing_chunks"].iloc[0]:
             print(f"  ⚠ 유실 조각 {r['page_missing_chunks'].iloc[0]}개")
         with pd.option_context("display.max_columns", None, "display.width", 200):
             cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
                     "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
                     "cursorfreq", "has_highlight", "label_state", "label_mark"]
-            print(r[cols].to_string(index=False))
+            # CSV 와 같은 행만, 같은 글 순서로 (화면에 안 나온 사라진 유닛 제외)
+            show = r[~r["is_retired"] | (r["n_vis_ticks"] > 0)].copy()
+            show = reading_order(show.assign(session_id="", page_id=""))
+            show["retired"] = show["is_retired"].map({True: "닫힘", False: ""})
+            print(show[cols + ["retired"]].to_string(index=False))
 
 
 if __name__ == "__main__":

@@ -64,6 +64,12 @@
 
   .warn { margin-top: 8px; font-size: 12.5px; color: #7a5b0c; }
   .hint { margin-top: 8px; font-size: 12.5px; color: var(--sub); }
+  .conn { margin: 2px 0 10px; font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
+  .conn i { width: 7px; height: 7px; border-radius: 50%; background: #bbb; flex: none; }
+  .conn.ok i { background: var(--green); }
+  .conn.bad { color: #9a3412; }
+  .conn.bad i { background: #ea580c; }
+  #btn-reload { margin: -4px 0 10px; }
 
   .foot { display: flex; gap: 8px; margin-top: 10px; }
   .foot button { font-weight: 500; font-size: 13px; padding: 8px 10px; }
@@ -119,6 +125,8 @@
       </label>
       <div class="qshow" id="s-show" hidden>읽는 목적 <b id="s-val"></b></div>
 
+      <div class="conn" id="conn"><i></i><span id="conn-text">이 탭 확인 중…</span></div>
+      <button id="btn-reload" type="button" hidden>이 탭 새로고침</button>
       <button id="btn-rec" type="button">기록 시작</button>
       <div class="warn" id="warn" hidden></div>
       <div class="hint" id="hint"></div>
