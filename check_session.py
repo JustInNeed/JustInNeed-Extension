@@ -49,6 +49,16 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          틱 필수 필드 누락 · 삭제 필드(scrollSpeed · cursorDist · cursorMoved) 잔존,
          highlight/copy 의 ranges 누락 · 형식(0 ≤ lo < hi ≤ charLen) · pids/pid 잔존,
          틱이 있는데 scroller 이벤트 없음. 세트 B 이전 파일은 FAIL — 정상.
+    [17] 라벨 v2 (라벨_명세_v2.md §8)                 FAIL / WARN
+         취소 아닌 마지막 label 이 정답. 라벨 없는 페이지는 '검사 대상 없음'으로 통과.
+         FAIL: v2 아님 · 필수 필드 · ratings ∪ excluded = 전체 유닛(겹침 없음) · 값 5종 ·
+               marks ⊆ 평정 대상(중복 없음) · 설문 3문항 값 · ratingLog 최종값 = ratings ·
+               라벨 모드(label 의 startT..t) 안에 tick/highlight/copy 이벤트.
+               (labelask 카드 구간은 기록이 정상 — 카드를 무시하고 읽는 사람 대비, 2026-10-07)
+         WARN: 기억 안 남 > 50% · 평정 간격 중앙값 < 300ms (대충 찍기) ·
+               한 번도 화면에 안 나온 유닛이 read/focus (평가 중 새로 읽음 의심, 명세 §10).
+  세션 단위 추가:
+    [S6] stopReason == 'labeled' 이면 취소 아닌 label 이 어느 페이지엔가 있다  FAIL
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -106,6 +116,10 @@ def all_pids_used(timeline):
         r = e.get("ranges")                      # v3 highlight / copy
         if isinstance(r, list):
             used.update(x[0] for x in r if isinstance(x, list) and x and x[0])
+        if e.get("type") == "label":             # 라벨 v2: 평정 · 제외 · 중요 표시
+            used.update((e.get("ratings") or {}).keys())
+            used.update(e.get("excluded") or [])
+            used.update(e.get("marks") or [])
     return used
 
 
@@ -711,6 +725,113 @@ def check_v3_fields(rep, meta, timeline, ticks):
         rep.add(OK, "v3 필드", f"틱 {len(ticks)}개 · 선택/복사 {len(sels)}건 형식 일치")
 
 
+# [17] 라벨 v2 ----------------------------------------------------------------
+RATE_VALUES = {"skip", "skim", "read", "focus", "unsure"}
+SURVEY_VALUES = {"gain": {"yes", "partly", "no"}, "interest": {1, 2, 3, 4}, "familiarity": {1, 2, 3, 4}}
+LABEL_REQUIRED = {"v": int, "t": (int, float), "startT": (int, float), "ms": (int, float),
+                  "trigger": str, "ratings": dict, "ratingLog": list, "excluded": list,
+                  "marks": list, "survey": dict, "phaseMs": dict}
+FAST_RATE_MS = 300
+
+
+def final_label(timeline):
+    labs = [e for e in timeline if e.get("type") == "label" and not e.get("cancelled")]
+    return labs[-1] if labs else None
+
+
+def check_label(rep, meta, timeline, ticks):
+    """[17] 라벨 v2 형식 · 정합 · 라벨 모드 중 기록 없음 · 대충 찍기 의심."""
+    name = "라벨 v2"
+    # 라벨 모드 구간: label(취소 포함) 의 (startT, t). labelask 카드 구간은 기록이 정상이라 뺀다
+    windows = [(e["startT"], e["t"]) for e in timeline
+               if e.get("type") == "label"
+               and isinstance(e.get("startT"), (int, float)) and isinstance(e.get("t"), (int, float))]
+    leak = [e for e in timeline if e.get("type") in ("tick", "highlight", "copy")
+            and any(a < e.get("t", -1) < b for a, b in windows)]
+
+    lab = final_label(timeline)
+    if lab is None:
+        if leak:
+            rep.add(FAIL, name, f"라벨 모드 중 기록 {len(leak)}건 (취소된 라벨 구간)")
+        else:
+            n_ask = sum(1 for e in timeline if e.get("type") == "labelask")
+            rep.add(OK, name, f"검사 대상 없음 (완료된 라벨 없음 · 질문 응답 {n_ask}건)")
+        return
+
+    probs = []
+    if lab.get("v") != 2:
+        rep.add(FAIL, name, f"v{lab.get('v', 1)} 형식 — v2 전용. 새로 기록할 것")
+        return
+    for k, ty in LABEL_REQUIRED.items():
+        if not isinstance(lab.get(k), ty):
+            probs.append(f"필드 {k} 없음/형식")
+    if probs:
+        rep.add(FAIL, name, " · ".join(probs))
+        return
+
+    allp = [p["pid"] for p in meta.get("paragraphs", [])]
+    rat, exc, marks = lab["ratings"], lab["excluded"], lab["marks"]
+    both = set(rat) & set(exc)
+    if both:
+        probs.append(f"평정 · 제외 겹침 {len(both)}개")
+    missing = set(allp) - set(rat) - set(exc)
+    if missing:
+        probs.append(f"평정 빠진 유닛 {len(missing)}개")
+    extra = (set(rat) | set(exc)) - set(allp)
+    if extra:
+        probs.append(f"없는 유닛 {len(extra)}개")
+    badv = [v for v in rat.values() if v not in RATE_VALUES]
+    if badv:
+        probs.append(f"평정 값 {badv[0]!r}")
+    if len(marks) != len(set(marks)):
+        probs.append("marks 중복")
+    if set(marks) - set(rat):
+        probs.append(f"marks 가 평정 대상 밖 {len(set(marks) - set(rat))}개")
+    for k, ok in SURVEY_VALUES.items():
+        if lab["survey"].get(k) not in ok:
+            probs.append(f"설문 {k}={lab['survey'].get(k)!r}")
+    last = {}
+    for row in lab["ratingLog"]:
+        if isinstance(row, list) and len(row) == 3:
+            last[row[0]] = row[1]
+        else:
+            probs.append(f"ratingLog 형식 {row!r}")
+            break
+    if last != rat:
+        probs.append("ratingLog 최종값 ≠ ratings")
+    if leak:
+        probs.append(f"라벨 모드 중 기록 {len(leak)}건 (첫 t={leak[0].get('t', 0) / 1000:.1f}s)")
+    if probs:
+        rep.add(FAIL, name, " · ".join(probs))
+        return
+
+    warns = []
+    if rat:
+        n_uns = sum(1 for v in rat.values() if v == "unsure")
+        if n_uns / len(rat) > 0.5:
+            warns.append(f"기억 안 남 {n_uns}/{len(rat)}")
+    ts = [row[2] for row in lab["ratingLog"]]
+    gaps = [b - a for a, b in zip(ts, ts[1:])]
+    if len(gaps) >= 3 and statistics.median(gaps) < FAST_RATE_MS:
+        warns.append(f"평정 간격 중앙값 {statistics.median(gaps):.0f}ms")
+    seen = {p[0] for e in ticks for p in (e.get("vis") or []) if p and len(p) >= 6 and p[5] - p[4] > 0}
+    unseen_hi = [pid for pid, v in rat.items() if v in ("read", "focus") and pid not in seen]
+    if unseen_hi:
+        warns.append(f"화면에 안 나온 유닛이 read/focus {len(unseen_hi)}개")
+
+    cnt = {}
+    for v in rat.values():
+        cnt[v] = cnt.get(v, 0) + 1
+    sv = lab["survey"]
+    detail = (f"{lab['trigger']} · {lab['ms'] / 1000:.0f}s · 평정 {len(rat)}(제외 {len(exc)}) "
+              + " ".join(f"{k}{cnt.get(k, 0)}" for k in ("skip", "skim", "read", "focus", "unsure"))
+              + f" · 중요 {len(marks)} · 설문 {sv.get('gain')}/{sv.get('interest')}/{sv.get('familiarity')}")
+    if warns:
+        rep.add(WARN, name, " · ".join(warns) + " — " + detail)
+    else:
+        rep.add(OK, name, detail)
+
+
 def input_summary(timeline, ticks):
     """세트 C 입력 · 스크롤 요약 (판정 아님)."""
     paths = []
@@ -827,6 +948,7 @@ def run_payload(label, data, baseline=None):
     check_vis_cross(rep, meta, ticks)
     check_scroll_cross(rep, meta, timeline, ticks)
     check_v3_fields(rep, meta, timeline, ticks)
+    check_label(rep, meta, timeline, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -869,6 +991,15 @@ def run(path, baseline=None):
     if baseline and not used:
         srep.add(WARN, "유닛 기준선", f"기준선 글({base_url})이 이 세션에 없음 — 검사 안 함")
         srep.show()
+
+    # [S6] 라벨로 끝난 세션이면 완료된 라벨이 있어야 한다
+    if session.get("stopReason") == "labeled":
+        has = any(final_label(pg.get("timeline", [])) for pg in data.get("pages", []))
+        lv = OK if has else FAIL
+        srep2 = Report(f"{path} [세션 라벨]")
+        srep2.add(lv, "라벨로 정지", "완료된 label 있음" if has else "stopReason=labeled 인데 완료된 label 없음")
+        srep2.show()
+        reps.append(srep2)
     return reps
 
 

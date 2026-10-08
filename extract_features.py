@@ -19,8 +19,9 @@ v2 → v3
   - 하이라이트 · 복사 = ranges 의 pid.
   - 재방문 = 방문 뒤 화면 위로 빠진 적이 있는 유닛이 다시 읽기 구간(μ±σ)에 1초 머문 횟수 (revisit_count, 모델 입력).
   - idle(120초 이상 입력 없음) · 편집(edits>0) 틱은 모든 feature 계산에서 제외.
-  - 라벨(테스트 모드): label 열 = 참가자가 고른 유닛 1 / 안 고른 유닛 0 / 라벨 없는 페이지 빈 값.
-    scenario 열 = 읽는 목적. 둘 다 모델 입력 아님 (정답 · 조건).
+  - 라벨 v2(라벨_명세_v2.md §7): label_state = 자기보고 읽기 상태(skip/skim/read/focus/unsure),
+    label_n = 0~3(unsure · 없음은 빈 값), label_mark = 중요 표시 1/0, 페이지 단위 설문 · 소요 시간.
+    scenario 열 = 읽는 목적. 전부 모델 입력 아님 (정답 · 조건). v1 라벨 파일은 라벨 없음으로 처리.
 
 사용법:
   python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
@@ -40,6 +41,9 @@ import pandas as pd
 # =============================================================================
 # CONFIG — 문서 "파라미터" 표와 같은 값. 튜닝은 여기서만.
 # =============================================================================
+RATE_N = {"skip": 0, "skim": 1, "read": 2, "focus": 3}        # 라벨 v2 → 숫자 (unsure 는 빈 값)
+RATE_N_ALL = ("skip", "skim", "read", "focus", "unsure")
+
 CFG = {
     # GVAM (Grusky 외 CHI 2017, 뷰포트 높이 비율)
     "GVAM_MU": 0.492,
@@ -440,8 +444,22 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
 
     # 라벨 (테스트 모드): 취소 아닌 마지막 label 이벤트가 정답. 없으면 이 페이지는 라벨 없음.
     labs = [e for e in tl if e.get("type") == "label" and not e.get("cancelled")]
-    lab_set = set(labs[-1].get("pids") or []) if labs else None
-    lab_ms = labs[-1].get("ms") if labs else None
+    lab = labs[-1] if labs else None
+    if lab is not None and lab.get("v") != 2:
+        print(f"  ⚠ 라벨 v{lab.get('v', 1)} — v2 전용, 이 페이지는 라벨 없음으로 처리", file=sys.stderr)
+        lab = None
+    rat = (lab.get("ratings") or {}) if lab else {}
+    exc = set(lab.get("excluded") or []) if lab else set()
+    mk = set(lab.get("marks") or []) if lab else set()
+    lab_sv = (lab.get("survey") or {}) if lab else {}
+    pms = (lab.get("phaseMs") or {}) if lab else {}
+    rate_gap = {}                                  # pid → 최종값을 누르기까지 직전 누름과의 간격
+    prev_t = None
+    for row in (lab.get("ratingLog") or []) if lab else []:
+        if isinstance(row, list) and len(row) == 3:
+            rate_gap[row[0]] = (row[2] - prev_t) if prev_t is not None else row[2]
+            prev_t = row[2]
+    n_ask_no = sum(1 for e in tl if e.get("type") == "labelask" and e.get("answer") in ("no", "cancel"))
 
     # 품질 플래그
     disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
@@ -544,9 +562,22 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "query": query_info[0],
             "query_source": query_info[1],
             "scenario": bundle["session"].get("scenario"),
-            "label": (int(pid in lab_set) if lab_set is not None else np.nan),
-            "page_labeled": lab_set is not None,
-            "page_label_ms": lab_ms,
+            "label_state": rat.get(pid) if lab else None,
+            "label_n": RATE_N.get(rat.get(pid), np.nan) if lab else np.nan,
+            "label_excluded": (pid in exc) if lab else np.nan,
+            "label_rate_ms": rate_gap.get(pid, np.nan),
+            "label_mark": (int(pid in mk) if pid in rat else np.nan) if lab else np.nan,
+            "page_labeled": lab is not None,
+            "label_trigger": lab.get("trigger") if lab else None,
+            "page_label_ms": lab.get("ms") if lab else np.nan,
+            "label_phase_ask_ms": pms.get("ask", np.nan),
+            "label_phase_rate_ms": pms.get("rate", np.nan),
+            "label_phase_mark_ms": pms.get("mark", np.nan),
+            "label_phase_survey_ms": pms.get("survey", np.nan),
+            "survey_gain": lab_sv.get("gain"),
+            "survey_interest": lab_sv.get("interest", np.nan),
+            "survey_familiarity": lab_sv.get("familiarity", np.nan),
+            "n_labelask_no": n_ask_no,
             "is_noise": (pid in noise_set) if noise_set is not None else np.nan,
             "scroll_depth_pct": round(depth, 4) if depth == depth else np.nan,
             "dwell_gvam_sec": round(dwell_gvam, 3),
@@ -679,7 +710,8 @@ def main():
         print(f"  유닛 {len(r)} · 화면에 나온 유닛 {(r['n_vis_ticks']>0).sum()} · "
               f"방문 ≥1 {(r['visit_count']>0).sum()} · 재방문 ≥1 {(r['revisit_count']>0).sum()} · "
               f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()} · "
-              f"라벨 {int(r['label'].sum()) if r['page_labeled'].iloc[0] else '없음'}")
+              f"라벨 " + (" ".join(f"{k}{(r['label_state'] == k).sum()}" for k in RATE_N_ALL)
+                         + f" · 중요 {int(r['label_mark'].sum())}" if r['page_labeled'].iloc[0] else '없음'))
         if r["page_disruptive_rescan"].any():
             print("  ⚠ 본문 교체(disruptive) 페이지 — pid 정합성 확인 전 학습 제외 권장")
         if r["page_missing_chunks"].iloc[0]:
@@ -687,7 +719,7 @@ def main():
         with pd.option_context("display.max_columns", None, "display.width", 200):
             cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
                     "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
-                    "cursorfreq", "has_highlight", "label"]
+                    "cursorfreq", "has_highlight", "label_state", "label_mark"]
             print(r[cols].to_string(index=False))
 
 

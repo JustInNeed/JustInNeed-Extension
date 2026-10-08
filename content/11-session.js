@@ -3,7 +3,7 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready
+ * 발행: session:changed, session:link, export:ready, ui:panel
  * 구독: seg:page, seg:chunk, record:stopped, scan:done, label:done,
  *       ui:rec, ui:export, ui:query
  *
@@ -168,6 +168,20 @@
 
   bus.on('scan:done', resync);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resync(); });
+
+  // ==========================================================================
+  // 디버그 패널 보이기 설정 → 9-panel (기본 숨김)
+  //   참여 정보 페이지가 chrome.storage.local 'ui:panel' 에 쓴다. 여기서 읽어 버스로 알린다.
+  //   9-panel 이 없어도 아무 일 없다(구독자 없음). 고아 탭이면 chrome.storage 가 던지므로 감싼다.
+  // ==========================================================================
+  const K_PANEL = 'ui:panel';
+  const emitPanel = (v) => bus.emit('ui:panel', { on: v === true });
+  try {
+    chrome.storage.local.get(K_PANEL).then((r) => emitPanel(r[K_PANEL])).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch[K_PANEL]) emitPanel(ch[K_PANEL].newValue);
+    });
+  } catch (e) { /* 고아 탭: 패널은 숨김 그대로 */ }
 
   // ==========================================================================
   // 버튼 → background (9-panel 이 발행)

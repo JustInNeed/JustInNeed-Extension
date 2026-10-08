@@ -1,11 +1,19 @@
 /* =============================================================================
  * 9-panel.js — 디버그 패널 (최상위 프레임 전용)
  *
- * 소유: panelEl, listEl, uiRecording, uiOverlay
+ * 소유: panelEl, listEl, uiRecording, uiOverlay, visible
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done
+ *       scan:progress, scan:failed, scan:done, ui:panel
+ *
+ * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
+ *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
+ *   그래서 기본은 숨김이고, 참여 정보 페이지의 "연구자용 설정"에서 켠다(서현 결정 2026-10-06).
+ *   설정은 chrome.storage.local 'ui:panel' — content 쪽에서 chrome.* 는 11-session 만 쓰므로
+ *   11-session 이 읽어서 ui:panel{on} 으로 알린다. 열린 탭에도 바로 반영된다(storage.onChanged).
+ *   숨기면 DOM 을 통째로 뺀다. 상태(uiRecording 등)는 계속 갱신되고, 켜면 다시 그린다.
+ *   숨길 때 오버레이가 켜져 있으면 끈다 — 오버레이 버튼이 패널 안에 있어서 못 끄게 되니까.
  *
  * --- 상태줄은 primary 프레임 것만 그린다 -------------------------------------
  *   stat 은 모든 프레임에서 올라온다. 광고 iframe 이 재스캔할 때마다 그 iframe 의
@@ -58,6 +66,7 @@
   let panelEl = null, listEl = null;
   let uiRecording = false;               // 세션 상태의 표시용 사본. session:changed 로만 바뀐다
   let uiOverlay = false;
+  let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
 
   // ==========================================================================
@@ -102,6 +111,10 @@
   // 렌더
   // ==========================================================================
   function render() {
+    if (!visible) {
+      if (panelEl) { panelEl.remove(); panelEl = null; listEl = null; }
+      return;
+    }
     if (!panelEl) {
       panelEl = document.createElement('div');
       panelEl.id = CFG.PANEL_ID;
@@ -235,6 +248,17 @@
     render();
   });
 
+  bus.on('ui:panel', (d) => {
+    const on = !!(d && d.on);
+    if (on === visible) return;
+    visible = on;
+    if (!on && uiOverlay) {
+      uiOverlay = false;
+      RBC.frames.send('overlay', { on: false });
+    }
+    render();
+  });
+
   bus.on('session:link', (d) => {
     const why = d && d.why;
     linkMsg = d && d.ok ? ''
@@ -285,5 +309,5 @@
   RBC.panel = { render, setStat };
 
   injectStyle();
-  render();
+  render();                              // 숨김 상태면 아무것도 안 그린다. ui:panel{on:true} 가 오면 그린다
 })();

@@ -108,7 +108,7 @@
     $('btn-export').disabled = rec || !st.records;
     $('btn-export').title = rec ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
     $('hint').textContent = rec
-      ? '이 창을 닫고 글을 읽으세요. 다 읽으면 다시 열어 [다 읽었어요]를 누르세요.'
+      ? '이 창을 닫고 글을 읽으세요. 끝까지 내리면 평가 질문이 뜹니다. 안 뜨면 다시 열어 [다 읽었어요]를 누르세요.'
       : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
     $('tid').textContent = c.participantNo || '';
   }
@@ -169,7 +169,7 @@
     show(null);
     try {
       await bg({ rbc: 'label' });
-      window.close();                     // 페이지로 돌아가서 고른다
+      window.close();                     // 페이지로 돌아가서 평가한다
     } catch (e) {
       show(e.message);
     }

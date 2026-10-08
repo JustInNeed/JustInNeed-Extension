@@ -8,7 +8,7 @@
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
  *       sel:highlight, sel:copy, visibility, focus, pagehide,
- *       label:mode, label:done
+ *       label:mode, label:ask, label:done
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   150ms 마스터 클럭을 돌리고, 그 순간의 관측을 timeline 에 원본 그대로 남긴다.
@@ -67,9 +67,13 @@
  * --- 라벨 모드 (12-label) ----------------------------------------------------
  *   label:mode{on:true} 동안 틱을 찍지 않는다 (숨김 · 포커스 없음과 같은 처리: drain 버림).
  *   라벨 고르는 시간은 읽기 행동이 아니다 (명세). 선택 · 복사도 기록하지 않는다.
- *   label:done → { type:'label', t, segId, pids, cancelled, startT, ms } 를 남기고 바로 넘긴다.
- *     pids = 고른 유닛(유닛 order 순), startT = 라벨 모드 시작 t, ms = t − startT.
- *     취소면 pids [] · cancelled true — 틱 공백의 이유가 데이터에 남게.
+ *   v2 (라벨_명세_v2.md §6). 끝 도달 질문 카드가 떠 있는 동안은 계속 기록한다(무시하고 읽는 사람 대비).
+ *   label:ask  → { type:'labelask', t, segId, answer, startT, ms }  answer = yes | no | cancel.
+ *                startT = 카드가 뜬 때(t − shownMs). 이 구간의 틱은 정상 기록이다.
+ *                yes 면 바로 label:mode{on:true} — 라벨 모드(틱 정지)는 여기부터.
+ *   label:done → { type:'label', v:2, t, segId, trigger, cancelled, startT, ms, phaseMs,
+ *                  ratings, ratingLog, excluded, marks, survey } 를 남기고 바로 넘긴다.
+ *     startT = 라벨 모드 시작 t, ms = t − startT. 취소여도 채운 값은 남긴다 — 틱 공백의 이유가 데이터에 남게.
  *   하이라이트 · 복사와 다른 이벤트다 (행동 feature 와 정답이 섞이지 않게).
  *
  * --- 미러 두 개 -------------------------------------------------------------
@@ -263,7 +267,7 @@
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
       // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체, L = + 라벨. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-L',
+      collector: 'rbc-v3-T',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
@@ -322,8 +326,10 @@
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
         '연속 틱 간 차분은 segId 가 바뀌거나 두 틱의 t 간격이 2×tickMs 를 넘으면 리셋.',
         'tabId 는 background 가 붙인다(sender.tab.id).',
-        'type=label = 참가자가 고른 중요 유닛 { pids(유닛 order 순), cancelled, startT, ms }. ' +
-        '라벨 모드(startT..t) 동안은 틱을 기록하지 않는다. 여러 번 있으면 마지막 것(취소 아닌)이 정답.',
+        'type=label (v:2) = 참가자 자기보고 { trigger, cancelled, startT, ms, phaseMs, ratings(pid→skip|skim|read|focus|unsure), ' +
+        'ratingLog([pid,값,ms]), excluded(숨은 유닛), marks(중요 유닛 pid, order 순), survey{gain,interest,familiarity} }. ' +
+        'type=labelask = 끝 도달 질문 응답 { answer: yes|no|cancel, startT(카드가 뜬 때), ms } — 카드가 떠 있는 동안도 틱은 기록된다. ' +
+        'label 의 startT..t(라벨 모드) 동안은 틱을 기록하지 않는다. label 이 여러 번 있으면 마지막 것(취소 아닌)이 정답.',
       ],
     };
   }
@@ -450,11 +456,21 @@
     }
   });
 
+  bus.on('label:ask', (d) => {
+    if (!recording) return;
+    const t = tNow();
+    const ms = Math.max(0, Math.round((d && d.shownMs) || 0));
+    push({ type: 'labelask', t, segId, answer: (d && d.answer) || 'cancel', startT: t - ms, ms });
+  });
+
   bus.on('label:done', (d) => {
     if (!recording) return;
     const t = tNow();
-    push({ type: 'label', t, segId, pids: (d && d.pids) || [], cancelled: !!(d && d.cancelled),
-      startT: labelStartT, ms: t - labelStartT });
+    const x = d || {};
+    push({ type: 'label', v: 2, t, segId, trigger: x.trigger || null, cancelled: !!x.cancelled,
+      startT: labelStartT, ms: t - labelStartT, phaseMs: x.phaseMs || null,
+      ratings: x.ratings || {}, ratingLog: x.ratingLog || [], excluded: x.excluded || [],
+      marks: x.marks || [], survey: x.survey || {} });
     flush();
   });
 

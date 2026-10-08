@@ -11,6 +11,9 @@
  *
  * 주소가 #export 로 열리면(팝업의 내보내기) 첫 status 뒤 한 번 바로 내보낸다.
  *
+ * 예외: '연구자용 설정'의 디버그 패널 보이기는 chrome.storage.local 'ui:panel' 에 직접 쓴다.
+ *   세션 · 동의 데이터가 아닌 화면 설정이라 background 를 거치지 않는다. content 쪽은 11-session 이 읽는다.
+ *
  * 조용히 실패하지 않는다: background 에 못 닿거나 거절되면 사유 원문을 배너에 띄운다.
  * 화면 기본은 '불러오는 중…' 이고 첫 render 가 지운다 — 스크립트가 안 뜨면 그 문구에서 멈춘다.
  * 되돌릴 수 없는 버튼(삭제 · 철회)은 두 번 눌러야 실행된다.
@@ -210,6 +213,21 @@
     await bg({ rbc: 'withdraw' });
     $('f-no').value = ''; $('f-name').value = ''; $('f-tag').value = ''; $('f-agree').checked = false;
     show('동의를 철회했습니다. 이 브라우저의 기록과 참여 정보를 모두 지웠습니다.');
+  });
+
+  // ---------------------------------------------------------------------------
+  // 연구자용 설정: 디버그 패널 보이기 (기본 꺼짐)
+  // ---------------------------------------------------------------------------
+  const K_PANEL = 'ui:panel';
+  chrome.storage.local.get(K_PANEL)
+    .then((r) => { $('f-panel').checked = r[K_PANEL] === true; })
+    .catch((e) => show(`설정을 읽지 못했습니다. (ui:panel: ${e.message || e})`, 'err'));
+  $('f-panel').addEventListener('change', async () => {
+    try {
+      await chrome.storage.local.set({ [K_PANEL]: $('f-panel').checked });
+    } catch (e) {
+      show(`설정을 저장하지 못했습니다. (ui:panel: ${e.message || e})`, 'err');
+    }
   });
 
   // ---------------------------------------------------------------------------
