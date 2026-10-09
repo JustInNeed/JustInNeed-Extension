@@ -53,8 +53,13 @@
  *     - 옛 유닛 중 새 목록에 없는 것 = retired. 버리지 않고 남긴다 — timeline 이 이미 그 pid 를
  *       참조하고 있어서 meta.paragraphs 에 없으면 pid 정합성이 깨진다.
  *   order: 살아 있는 유닛 0..n-1, retired 는 그 뒤 n.. (paragraphs 전체가 0..N-1 연속 — [7]).
- *   한계: 바뀐 곳이 여러 군데면 첫 변경 ~ 마지막 변경 사이를 한 덩어리로 다시 청킹한다. 그 사이의
- *   변하지 않은 문단도 경계가 같게 잘리면 같은 pid, 아니면 새 pid 가 된다.
+ *   바뀐 곳이 여러 군데면 (2026-10-09 고침): 블록(문단) 단위로 옛 · 새를 맞춰 바뀐 곳마다 따로 처리한다(hunksOf).
+ *   전에는 첫 변경 ~ 마지막 변경 사이를 한 덩어리로 다시 잘라, 본문 끝 숫자 변경 + 중간 삽입이 한 재스캔에 오면
+ *   그 사이 문단이 전부 새 pid 를 받고 옛 버전이 retired 로 남았다(같은 글 두 버전 — settle_test 실측, jsdom 재현).
+ *   검증: 무작위 글 · 변경 하나 900회 = 옛 코드와 결과 완전 동일, 변경 2~3개 동시 1500회 = 두 버전 0
+ *   (옛 코드 185/900). 노션 토글 여닫기 순서도 옛 코드와 동일.
+ *   붙어 있는 두 문단이 각각 바뀌면 블록끼리 짝지어 따로 본다. 블록 수가 다르게 바뀐 덩어리(문단 2개 → 3개 등)는
+ *   한 덩어리. 가운데 블록 수 곱이 LCS_MAX_CELLS 를 넘으면 예전처럼 한 덩어리(비용 상한).
  *   벽(1-stream walls, 2026-10-08): 부모가 다른 블록 사이는 합치지 않는다. 노션 토글을 열면 새 블록이
  *   다른 부모 아래 끼므로 기존 유닛(토글 제목 등)은 글이 그대로 → pid 그대로, 새 블록만 새 유닛이 된다.
  *   전에는 짧은 토글 제목 여러 개가 한 유닛으로 합쳐져 있다가, 사이에 토글 내용이 끼면 그 유닛 글이 바뀌어
@@ -350,106 +355,199 @@
     return false;
   }
 
+  // 바뀐 곳 찾기 (2026-10-09): 블록(문단 경계 사이) 단위로 옛 · 새 스트림을 맞춰 보고, 안 맞는 블록 덩어리마다
+  //   하나의 hunk 로 낸 뒤 그 안에서 글자 단위로 좁힌다. 전에는 \"공통 앞부분 ~ 공통 뒷부분\" 한 덩어리였다 →
+  //   본문 끝의 숫자 변경(조회수 등)과 중간 삽입이 한 재스캔에 같이 오면 그 사이 문단이 전부 다시 잘려 옛 버전이
+  //   retired 로 남았다(같은 글 두 버전, settle_test 실측 · jsdom 재현).
+  //   블록 정렬이라 \"[\" 겹침(끼어든 글 첫 글자 = 다음 문단 첫 글자) 같은 우연도 생기지 않는다.
+  //   hunk = { oa, ob, na, nb }  옛 [oa, ob) → 새 [na, nb)  (글자 단위로 좁힌 뒤)
+  const LCS_MAX_CELLS = 250000;     // 가운데 블록 수 곱이 이보다 크면 한 덩어리로 (예전 방식, 비용 상한)
+  function blocksOf(text, brk) {
+    const pos = [...brk].filter(b => b > 0 && b < text.length).sort((x, y) => x - y);
+    const out = [];
+    let prev = 0;
+    for (const b of pos) { if (b > prev) { out.push([prev, b]); prev = b; } }
+    if (text.length > prev || !out.length) out.push([prev, text.length]);
+    return out;
+  }
+  function hunksOf(oText, oBrk, nText, nBrk) {
+    const ob = blocksOf(oText, oBrk), nb = blocksOf(nText, nBrk);
+    const os = ob.map(([x, y]) => oText.slice(x, y)), ns = nb.map(([x, y]) => nText.slice(x, y));
+    let pre = 0;
+    while (pre < os.length && pre < ns.length && os[pre] === ns[pre]) pre++;
+    let suf = 0;
+    while (suf < os.length - pre && suf < ns.length - pre && os[os.length - 1 - suf] === ns[ns.length - 1 - suf]) suf++;
+    const O = os.length - pre - suf, N = ns.length - pre - suf;
+    // 블록 hunk 목록 [oi0, oi1, ni0, ni1)
+    let runs = [];
+    if (O === 0 && N === 0) runs = [];
+    else if (O === 0 || N === 0 || O * N > LCS_MAX_CELLS) runs = [[pre, pre + O, pre, pre + N]];
+    else {
+      const L = new Int32Array((O + 1) * (N + 1));          // L[i][j] = os[pre+i..] · ns[pre+j..] 의 LCS 길이
+      for (let i = O - 1; i >= 0; i--) {
+        for (let j = N - 1; j >= 0; j--) {
+          L[i * (N + 1) + j] = os[pre + i] === ns[pre + j] ? L[(i + 1) * (N + 1) + j + 1] + 1
+            : Math.max(L[(i + 1) * (N + 1) + j], L[i * (N + 1) + j + 1]);
+        }
+      }
+      let i = 0, j = 0, ri = -1, rj = -1;
+      const close = () => { if (ri >= 0) { runs.push([pre + ri, pre + i, pre + rj, pre + j]); ri = -1; } };
+      while (i < O || j < N) {
+        if (i < O && j < N && os[pre + i] === ns[pre + j]) { close(); i++; j++; continue; }
+        if (ri < 0) { ri = i; rj = j; }
+        if (j >= N || (i < O && L[(i + 1) * (N + 1) + j] >= L[i * (N + 1) + j + 1])) i++; else j++;
+      }
+      close();
+    }
+    // 옛 · 새 블록 수가 같은 덩어리는 블록끼리 짝지어 따로 낸다 — 붙어 있는 두 문단이 각각 조금씩 바뀐 경우
+    //   (한 문단엔 광고 span, 다음 문단 끝엔 덧붙임) 한 덩어리로 보면 두 유닛에 걸쳐 둘 다 다시 잘린다.
+    runs = runs.flatMap(([o0, o1, n0, n1]) => (o1 - o0 === n1 - n0 && o1 - o0 > 1
+      ? Array.from({ length: o1 - o0 }, (_, q) => [o0 + q, o0 + q + 1, n0 + q, n0 + q + 1])
+      : [[o0, o1, n0, n1]]));
+    const at = (bl, k, len) => (k < bl.length ? bl[k][0] : len);
+    return runs.map(([o0, o1, n0, n1]) => {
+      const oA = at(ob, o0, oText.length), oB = at(ob, o1, oText.length);
+      const nA = at(nb, n0, nText.length), nB = at(nb, n1, nText.length);
+      const { P, S } = commonEnds(oText.slice(oA, oB), nText.slice(nA, nB));
+      return { oa: oA + P, ob: oB - S, na: nA + P, nb: nB - S };
+    }).filter(h => h.ob > h.oa || h.nb > h.na);
+  }
+
   function splice(built) {
     const oldRaw = RBC.stream.raw();
     const oldBreaks = RBC.stream.breaks();
     const diff = rawDiff(oldRaw, built.raw);          // 진단 (커밋 전 옛 유닛 기준)
-    const { P, S } = commonEnds(oldRaw, built.raw);
     const oL = oldRaw.length;
-    const delta = built.raw.length - oL;
-
-    // (A) 문단 안쪽 변경이 옛 유닛 하나 안에서 끝나면: 그 유닛을 제자리에서 고친다 (pid · 경계 그대로, 글만 바뀜).
-    //   광고 span 이 문장 안에 끼거나 글자가 바뀐 경우. 나누지도, 새 유닛으로 갈아끼우지도 않는다 — 같은 문단이니까.
-    const pureIns = P + S === oL, pureDel = P + S === built.raw.length;
-    const block = (pureIns && isBlockChange(P, delta, built.breaks, built.raw.length))
-      || (pureDel && isBlockChange(P, delta, oldBreaks, oL));
-    if (!block) {
-      const k = units.findIndex(u => u.start <= P && oL - S <= u.end);
-      if (k >= 0) {
-        RBC.stream.commit(built);
-        syncStream();
-        dynWalls = dynWalls.map(w => (w >= oL - S ? w + delta : w));
-        mergeWalls();
-        const u = units[k];
-        const fixed = units.map((x, i) => {
-          if (i < k) return x;
-          if (i === k) {
-            const end = x.end + delta;
-            const text = clean(raw.slice(x.start, end));
-            return { ...x, end, text, charLen: text.length, pieces: null, piecesEnd: -1 };
-          }
-          return { ...x, start: x.start + delta, end: x.end + delta };
-        });
-        units = fillPieces(fixed);
-        units.forEach((x, i) => { x.order = i; });
-        return { diff, kept: units.length, added: 0, retired: 0, region: [u.start, u.end + delta], inline: true };
-      }
-    }
-
-    let i = 0;
-    while (i < units.length && units[i].end <= P) i++;          // 앞부분 유닛 [0, i)
-    let j = units.length;
-    while (j > i && units[j - 1].start >= oL - S) j--;          // 뒷부분 유닛 [j, n)
-
-    const a = i < j ? Math.min(units[i].start, P) : (i > 0 ? units[i - 1].end : 0);
+    const hunks = hunksOf(oldRaw, oldBreaks, built.raw, built.breaks);
     const old = units;
-    const head = old.slice(0, i);
-    const mid = old.slice(i, j);
-    const tail = old.slice(j).map(u => ({ ...u, start: u.start + delta, end: u.end + delta }));
+
+    // 옛 위치 → 새 위치. 시작은 그 앞에서 끝난 hunk 만큼(같은 자리 삽입은 앞에 들어간 것으로), 끝은 그 앞에서 시작한 hunk 만큼.
+    const dOf = (h) => (h.nb - h.na) - (h.ob - h.oa);
+    const mapStart = (p) => { let d = 0; for (const h of hunks) if (h.ob <= p) d += dOf(h); return p + d; };
+    const mapEnd = (p) => { let d = 0; for (const h of hunks) if (h.oa < p) d += dOf(h); return p + d; };
+
+    // (A) 문단 안쪽 변경 (hunk 마다): 블록 경계 변경이 아니고 옛 유닛 하나 안에서 끝나면 그 유닛을 제자리에서 고친다.
+    //   광고 span 이 문장 안에 끼거나 글자 · 숫자가 바뀐 경우. pid · 경계 그대로, 글만 바뀜.
+    const nL = built.raw.length;
+    for (const h of hunks) {
+      const pureIns = h.oa === h.ob, pureDel = h.na === h.nb;
+      const block = (pureIns && isBlockChange(h.na, h.nb - h.na, built.breaks, nL))
+        || (pureDel && isBlockChange(h.oa, h.ob - h.oa, oldBreaks, oL));
+      h.inlineK = block ? -1 : old.findIndex(u => u.start <= h.oa && h.ob <= u.end);
+      // 유닛 i..j-1 = 이 hunk 가 건드리는 유닛 (끝이 oa 이하 = 앞, 시작이 ob 이상 = 뒤)
+      let i = 0;
+      while (i < old.length && old[i].end <= h.oa) i++;
+      let j = i;
+      while (j < old.length && old[j].start < h.ob) j++;
+      h.i = i; h.j = j;
+    }
 
     RBC.stream.commit(built);
     syncStream();
 
-    // 끼어든 글 둘레에 벽 (헤더 "끼어든 글 둘레 벽"). 바뀐 구간 [P, 새길이 − S) 를 문단 경계로 넓혀 양끝에 벽.
-    //   옛 벽: 바뀐 구간 앞은 그대로, 뒤는 delta 만큼 이동, 안쪽은 버림.
-    //   공통 앞부분이 끼어든 글 첫 글자와 우연히 겹치면 P 가 실제 시작보다 뒤로 밀리고, 끝도 같은 만큼 밀린다
-    //   ("[P4]" 앞에 "[INS-A]" 가 끼면 "[" 하나가 겹침). 그래서 끝은 (P − lo) 만큼 당겨서 문단 경계를 찾는다.
-    let lo = 0;
-    for (const b of breaks) if (b <= P && b > lo) lo = b;
-    const insEnd = raw.length - S - (P - lo);
-    let hi = raw.length;
-    for (const b of breaks) if (b >= insEnd && b < hi) hi = b;
-    dynWalls = dynWalls.filter(w => w <= P || w >= oL - S).map(w => (w >= oL - S ? w + delta : w))
-      .concat([lo, hi]);
+    // 블록 hunk 를 묶는다: 그 사이에 손대지 않는 유닛이 하나도 없으면 한 묶음 (다시 자르는 구간이 겹치지 않게).
+    const groups = [];
+    for (const h of hunks) {
+      if (h.inlineK >= 0) continue;
+      const g = groups[groups.length - 1];
+      if (g && h.i <= g.j) { g.hs.push(h); g.j = Math.max(g.j, h.j); } else groups.push({ hs: [h], i: h.i, j: h.j });
+    }
+    // 다시 자르는 유닛 안에 든 문단 안 변경은 묶음이 처리한다 (다시 자르면 새 글이 들어감).
+    const inGroup = new Set();
+    for (const g of groups) for (let k = g.i; k < g.j; k++) inGroup.add(k);
+    const inlineKs = new Set(hunks.filter(h => h.inlineK >= 0 && !inGroup.has(h.inlineK)).map(h => h.inlineK));
+
+    // 벽: 옛 동적 벽은 hunk 안쪽 것을 버리고 뒤로 민다. 블록 hunk 마다 끼어든 글 둘레(문단 경계)에 새 벽.
+    const inside = (w) => hunks.some(h => h.oa < w && w < h.ob);
+    const newWalls = [];
+    const wallOf = new Map();
+    for (const g of groups) for (const h of g.hs) {
+      let lo = 0;
+      for (const b of breaks) if (b <= h.na && b > lo) lo = b;
+      let hi = raw.length;
+      for (const b of breaks) if (b >= h.nb && b < hi) hi = b;
+      newWalls.push(lo, hi);
+      wallOf.set(h, lo);
+    }
+    dynWalls = dynWalls.filter(w => !inside(w)).map(mapStart).concat(newWalls);
     mergeWalls();
 
-    const E = tail.length ? tail[0].start : raw.length;
-    const fresh = E > a ? chunkFrom(a, null, E) : [];
-    // 이름 이어받기: 다시 자른 첫 유닛이 옛 유닛과 같은 자리에서 시작하면 그 pid 를 이어받는다.
-    //   (끼어든 글 앞부분 = 옛 유닛의 앞부분 — 같은 글 덩어리로 본다. 옛 유닛의 그 전 틱은 이 유닛 몫이 된다.)
-    //   단, 옛 유닛의 시작이 바뀐 구간보다 앞이어야 한다(그 앞부분 글이 그대로 남아 있음). 바뀐 구간에서 시작한 옛 유닛
-    //   (끼어들었던 글이 빠진 경우 등)은 이어받지 않고 사라진 유닛으로 남긴다.
-    const inherit = mid.length && fresh.length && fresh[0].start === mid[0].start && mid[0].start < lo
-      ? mid[0].pid : null;
-
-    // pid: 같은 글이면 같은 해시. 앞 · 뒷부분 pid 와 겹치면 _2, _3 …
-    const taken = new Set(head.map(u => u.pid).concat(tail.map(u => u.pid)));
-    for (const u of fresh) {
-      if (inherit && u === fresh[0] && !taken.has(inherit)) { u.pid = inherit; taken.add(inherit); continue; }
-      const base = 'u' + hash(u.text.slice(0, 160));
-      let pid = base, c = 1;
-      while (taken.has(pid)) pid = base + '_' + (++c);
-      u.pid = pid;
-      taken.add(pid);
+    // 유닛 다시 만들기: 묶음 밖은 위치만 옮김(문단 안 변경이면 글도 고침), 묶음은 다시 청킹.
+    const taken = new Set();
+    old.forEach((u, k) => { if (!inGroup.has(k)) taken.add(u.pid); });
+    const out = [];
+    const goneAll = [];
+    let keptMid = 0, added = 0, region = null;
+    let k = 0, gi = 0;
+    while (k < old.length || gi < groups.length) {
+      const g = groups[gi];
+      if (g && k === g.i) {
+        const mid = old.slice(g.i, g.j);
+        const firstH = g.hs[0];
+        const a = mid.length ? Math.min(mapStart(mid[0].start), firstH.na) : (g.i > 0 ? mapEnd(old[g.i - 1].end) : 0);
+        const E = g.j < old.length ? mapStart(old[g.j].start) : raw.length;
+        const fresh = E > a ? chunkFrom(a, null, E) : [];
+        const lo = wallOf.get(firstH);
+        const inherit = mid.length && fresh.length && fresh[0].start === mapStart(mid[0].start) && mapStart(mid[0].start) < lo
+          ? mid[0].pid : null;
+        for (const u of fresh) {
+          if (inherit && u === fresh[0] && !taken.has(inherit)) { u.pid = inherit; taken.add(inherit); continue; }
+          const base = 'u' + hash(u.text.slice(0, 160));
+          let pid = base, c = 1;
+          while (taken.has(pid)) pid = base + '_' + (++c);
+          u.pid = pid;
+          taken.add(pid);
+        }
+        const alive = new Set(fresh.map(u => u.pid));
+        const gone = mid.filter(u => !alive.has(u.pid));
+        keptMid += mid.length - gone.length;
+        added += fresh.length - (mid.length - gone.length);
+        goneAll.push(...gone);
+        out.push(...fresh);
+        region = region ? [region[0], E] : [a, E];
+        k = g.j; gi++;
+        continue;
+      }
+      if (k >= old.length) { gi++; continue; }
+      const u = old[k];
+      let start = mapStart(u.start), end = mapEnd(u.end);
+      if (inlineKs.has(k)) {
+        // 이 유닛 몫으로 정한 hunk 는 유닛 경계에 붙어 있어도(끝에 덧붙임 · 앞에 끼움) 유닛 안으로 넣는다.
+        for (const h of hunks) {
+          if (h.inlineK !== k) continue;
+          if (h.ob <= u.start) start -= dOf(h);
+          if (!(h.oa < u.end)) end += dOf(h);
+        }
+        const text = clean(raw.slice(start, end));
+        out.push({ ...u, start, end, text, charLen: text.length, pieces: null, piecesEnd: -1 });
+      } else if (start !== u.start || end !== u.end) {
+        out.push({ ...u, start, end });
+      } else {
+        out.push(u);
+      }
+      k++;
     }
-    const alive = new Set(fresh.map(u => u.pid));
-    const gone = mid.filter(u => !alive.has(u.pid));
+
     // after = 사라질 때 바로 앞 유닛의 pid. 나중에 글 순서로 다시 놓을 때 쓴다(위치 번호는 그 뒤 삽입으로 밀리므로).
-    const prevPid = (u) => { const k = old.indexOf(u); return k > 0 ? old[k - 1].pid : null; };
-    retired = retired.filter(u => !alive.has(u.pid) && !taken.has(u.pid))
-      .concat(gone.map(u => ({ ...u, retired: true, after: prevPid(u) })));
+    const alivePids = new Set(out.map(u => u.pid));
+    const prevPid = (u) => { const q = old.indexOf(u); return q > 0 ? old[q - 1].pid : null; };
+    retired = retired.filter(u => !alivePids.has(u.pid))
+      .concat(goneAll.map(u => ({ ...u, retired: true, after: prevPid(u) })));
 
-    units = fillPieces(head.concat(fresh, tail));
-    units.forEach((u, k) => { u.order = k; });
+    units = fillPieces(out);
+    units.forEach((u, q) => { u.order = q; });
 
-    const keptMid = mid.length - gone.length;
-    return {
+    const onlyInline = !groups.length && inlineKs.size > 0;
+    const res = {
       diff,
-      kept: head.length + tail.length + keptMid,
-      added: fresh.length - keptMid,
-      retired: gone.length,
-      region: [a, E],
+      kept: units.length - added,
+      added,
+      retired: goneAll.length,
+      region: region || (onlyInline ? [units[[...inlineKs][0]].start, units[[...inlineKs][0]].end] : [0, 0]),
+      hunks: hunks.length,
     };
+    if (onlyInline) res.inline = true;
+    return res;
   }
 
   // splice 자체 검증 (헤더 splice). 상태는 안 바꾼다.
@@ -502,7 +600,7 @@
         const chk = selfCheck();
         const ev = {
           mode: 'splice', count: units.length, diff: r.diff,
-          kept: r.kept, added: r.added, retired: r.retired, inline: !!r.inline,
+          kept: r.kept, added: r.added, retired: r.retired, inline: !!r.inline, hunks: r.hunks,
           check: chk, root: rootTo, ms: Math.round(performance.now() - t0),
         };
         if (rootChanged) { ev.rootChanged = true; ev.rootFrom = prevSel; }

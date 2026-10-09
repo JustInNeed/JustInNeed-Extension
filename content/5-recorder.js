@@ -610,6 +610,7 @@
     if (d.mode === 'splice') {
       e.kept = d.kept; e.added = d.added; e.retired = d.retired; e.check = d.check;
       if (d.inline) e.inline = true;                 // 문단 안쪽 변경 → 유닛 제자리 수정
+      if (d.hunks > 1) e.hunks = d.hunks;            // 한 재스캔에 바뀐 곳 수 (2026-10-09, 따로 처리됨)
       if (d.rootChanged) { e.rootChanged = true; e.rootFrom = d.rootFrom; e.rootTo = d.root; }
     }
     push(e);

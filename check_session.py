@@ -589,8 +589,10 @@ def piece_problem(p):
     return None
 
 
-def vis_problems(meta, ticks):
-    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개)."""
+def vis_problems(meta, ticks, k_from=None):
+    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개).
+    k_from: 이 시각 이후 틱만 조각 번호 k 범위를 본다. splice 가 유닛 조각을 다시 계산하면(이어받기로 줄어든 유닛 등)
+    그 전 틱의 k 는 옛 조각 기준이라 지금 pieces 로는 잴 수 없다(설계, 2-units 헤더 · 감사 §8-13). pid 는 언제나 본다."""
     npieces = {p["pid"]: len(p.get("pieces") or []) for p in meta.get("paragraphs", [])}
     bad, ex = 0, []
 
@@ -617,7 +619,7 @@ def vis_problems(meta, ticks):
             if pid not in npieces:
                 note(t, f"모르는 pid {pid}")
                 break
-            if not isinstance(k, int) or not 0 <= k < npieces[pid]:
+            if not isinstance(k, int) or k < 0 or ((k_from is None or t > k_from) and k >= npieces[pid]):
                 note(t, f"{pid} k={k} / 조각 {npieces[pid]}")
                 break
             if top > bot or left > right:
@@ -626,7 +628,7 @@ def vis_problems(meta, ticks):
     return bad, ex
 
 
-def check_pieces(rep, meta, ticks):
+def check_pieces(rep, meta, ticks, timeline=None):
     """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가 + 틱 vis 가 조각을 제대로 가리키는가.
 
     오름차순 + 합계만 보면 빈틈과 겹침이 서로 상쇄돼 통과하므로 연결을 본다.
@@ -634,7 +636,10 @@ def check_pieces(rep, meta, ticks):
     """
     paras = meta.get("paragraphs", [])
     bad = [(p.get("order"), why) for p in paras if (why := piece_problem(p))]
-    vbad, vex = vis_problems(meta, ticks)
+    sp_t = [e.get("t", 0) for e in (timeline or []) if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    k_from = max(sp_t) if sp_t else None
+    vbad, vex = vis_problems(meta, ticks, k_from)
+    pre = sum(1 for e in ticks if k_from is not None and e.get("t", 0) <= k_from)
     if bad or vbad:
         parts = []
         if bad:
@@ -643,7 +648,8 @@ def check_pieces(rep, meta, ticks):
             parts.append(f"vis 틱 {vbad}/{len(ticks)} (" + "; ".join(vex) + ")")
         rep.add(FAIL, "조각 연결", " · ".join(parts))
     else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합")
+        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합"
+                + (f" (마지막 splice 전 {pre}틱은 조각 번호 범위 제외)" if pre else ""))
 
 
 def check_vis_cross(rep, meta, ticks):
@@ -1041,7 +1047,7 @@ def run_payload(label, data, baseline=None):
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
-    check_pieces(rep, meta, ticks)
+    check_pieces(rep, meta, ticks, timeline)
     check_vis_cross(rep, meta, oticks)
     check_scroll_cross(rep, meta, timeline, ticks)
     check_v3_fields(rep, meta, timeline, ticks)
