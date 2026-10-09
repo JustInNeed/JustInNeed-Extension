@@ -260,6 +260,10 @@
   let sameN = 0, sameMax = 0;            // 글 변화 없는 재스캔(호버 UI 등) 횟수 · 최대 ms
   bus.on('units:rescanned', (d) => {
     if (!d) return;
+    // 이 버스는 이 프레임(최상위) 것이다. 본문이 iframe(블로그 PC)이면 여기 재스캔은 껍데기 페이지(루트 body · 유닛 0)라
+    //   그리면 "루트 body"로 잘못 보인다(2026-10-09). iframe 재스캔은 중계되지 않으므로 안 그린다 — 루트는 스캔 결과 줄로 본다.
+    const p = RBC.frames.primaryTag();
+    if (p && p !== TAG) return;
     if (d.mode === 'same') {
       sameN++; sameMax = Math.max(sameMax, d.ms || 0);
       const el = panelEl && panelEl.querySelector('#rbc-same');

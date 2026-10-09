@@ -187,7 +187,11 @@
   //   유닛이라 10~60자, 평정 불가. 지금: 토글 제목 · 토글 안쪽 · 토글 밖을 서로 다른 구역으로 보고, 구역이 바뀌는
   //   곳에만 벽. 같은 구역 안 문단 · 글머리표 · 코드는 일반 사이트처럼 200자 언저리로 합친다.
   //   토글을 열면 내용이 "토글 안쪽" 구역으로 끼므로 제목 · 앞뒤 유닛 글이 안 바뀐다 → pid 유지.
-  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }];
+  //   네이버 블로그 (2026-10-09): SmartEditor ONE 본문 상자. 없으면 폴백이 스킨 전체(div#head-skin, PC)나
+  //   글 아래 카드 목록까지 든 div#ct(모바일)를 골라 프로필 · 카테고리 · 다른 글 제목이 유닛이 됐다 → 참가자가 평정까지 해야 했음
+  //   (stepL_iframe: 유닛 25 · 링크 글자 조각 119/345). 벽 없음(일반 사이트와 같은 청킹).
+  //   실제 DOM 으로 확인 안 한 선택자 — 패널 루트 줄이 "div.se-main-container (site)" 인지로 확인. 옛 에디터 글은 이 상자가 없어 폴백 그대로.
+  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
