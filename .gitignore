@@ -4,8 +4,11 @@ __pycache__/
 .venv/
 venv/
 .env
-site_*.json
-diag_*.json
-site*.json
-step*.json
 *.csv
+
+# 기록 · 산출물 (2026-10-09 폴더 정리)
+*.json
+!extension/manifest.json
+!test/baseline_session.json
+*.zip
+EOF
