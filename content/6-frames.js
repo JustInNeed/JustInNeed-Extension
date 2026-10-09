@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 5-recorder
  * 발행: cmd:*, primary:changed, scan:progress, scan:failed, scan:done
  * 구독: units:scanned, units:list, stat, export:ready, record:stopped,
- *       activity, focus:broadcast
+ *       activity, focus:broadcast, settle:empty
  *
  * --- export 는 여기서 저장만 한다 --------------------------------------------
  *   세션 bundle 은 background 가 만들고 11-session(최상위)이 받아 export:ready
@@ -116,6 +116,7 @@
     if (!IS_TOP) return;
     if (m.res === 'scan') collectScan(m);
     else if (m.res === 'stat') bus.emit('stat', m);
+    else if (m.res === 'reelect') reelect();
     else if (m.res === 'list') bus.emit('units:list', m.list);
     else if (m.res === 'autostop') bus.emit('record:stopped', { reason: 'idle' });
   });
@@ -167,6 +168,17 @@
     }, CFG.SCAN_COLLECT_MS);
   }
 
+  // primary 다시 뽑기 — 대기 중인 primary 가 본문을 못 찾았을 때(settle:empty, 5-recorder).
+  //   블로그 PC: 본문 iframe 이 최상위의 스캔 재시도보다 늦게 뜨면 선출이 실패하고 최상위가 기본 primary 로 남는다.
+  //   재시도 횟수가 이미 다 찼어도 한 번은 스캔하도록 횟수를 하나 남겨 둔다(성공하면 0 으로 돌아감).
+  //   이 스캔이 iframe 을 뽑으면 send('primary') → 대기 중이던 프레임은 primary:changed 로 대기를 취소하고,
+  //   scan:done → 11-session 합류 → 새 primary 가 대기를 시작한다.
+  function reelect() {
+    if (!IS_TOP) return;
+    scanTries = Math.min(scanTries, CFG.SCAN_RETRY_MAX - 1);
+    doScan(true);
+  }
+
   function collectScan(m) {
     if (m.units > 0) scanBucket.push(m);
   }
@@ -210,6 +222,8 @@
   });
 
   // 최상위의 활동·포커스를 하위 프레임으로 브로드캐스트한다.
+  bus.on('settle:empty', () => { if (IS_TOP) reelect(); else toTop({ res: 'reelect' }); });
+
   bus.on('activity', () => send('activity'));
   bus.on('focus:broadcast', (d) => send('focus', { on: d.on }));
 

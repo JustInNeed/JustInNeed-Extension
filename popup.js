@@ -14,6 +14,10 @@
  * 읽는 목적도 검색어와 같은 규칙 — 기록 시작 전에만 받는다.
  * "다 읽었어요"(기록 중에만): 지금 보고 있는 탭에 라벨 모드를 켜고 팝업을 닫는다.
  *
+ * 기록 시작 뒤 "본문 준비 중" (0-B, 2026-10-08): 시작을 누르면 바로 닫지 않는다. 페이지가 본문이 조용해질
+ *   때까지 기다렸다 구간을 여는데(5-recorder), 그동안 이 창이 "본문 준비 중"을 보여 주고 ping 으로 확인해
+ *   기록이 실제로 시작되면 닫힌다. 최대 PREP_MAX_MS. 참가자에게 대기를 보여 줄 곳이 여기뿐이다(패널은 숨김).
+ *
  * 내보내기 · 참여 정보는 consent.html 탭을 연다 (#export 면 그 탭이 바로 내보낸다).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
@@ -65,6 +69,7 @@
   let st = null;
   let qTouched = false;       // 사용자가 검색어 칸을 건드렸으면 status 로 덮어쓰지 않는다
   let sTouched = false;       // 읽는 목적 칸도 같은 규칙
+  let preparing = false;      // 기록 시작 뒤 본문 준비 중 (이 창이 닫히기 전까지)
 
   function render() {
     $('loading').hidden = true;
@@ -112,6 +117,16 @@
       : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
     $('tid').textContent = c.participantNo || '';
     renderConn(rec);
+    if (preparing) renderPreparing();
+  }
+
+  function renderPreparing() {
+    $('state').textContent = '본문 준비 중…';
+    $('dot').classList.remove('on');
+    $('elapsed').textContent = '';
+    $('btn-rec').disabled = true;
+    $('btn-label').hidden = true;
+    $('hint').textContent = '페이지가 다 그려질 때까지 잠깐 기다려요. 이 창이 저절로 닫히면 그때부터 읽으세요.';
   }
 
   // ---------------------------------------------------------------------------
@@ -200,7 +215,7 @@
         await bg({ rbc: 'start', query: q || null, scenario: sc || null });
         qTouched = false;
         sTouched = false;
-        window.close();                   // 팝업이 열린 채로 읽기 시작하는 혼란 방지 — 시작 = 페이지로 돌아감
+        waitReady();                      // 본문 준비가 끝나면 닫힌다 — 시작 = 페이지로 돌아감
         return;
       }
     } catch (e) {
@@ -208,6 +223,23 @@
     }
     await refresh();
   });
+
+  // 기록 시작 뒤: 이 탭이 실제로 기록을 시작할 때까지 기다렸다 닫는다.
+  //   닫는 조건: ping 이 recording && !settling / ping 실패(닫고 페이지로) / PREP_MAX_MS 지남.
+  //   페이지 쪽 최대 대기(SETTLE_MAX_MS 6초)보다 길게 — 그 안에 대개 풀린다.
+  const PREP_MAX_MS = 8000, PREP_POLL_MS = 300;
+  function waitReady() {
+    preparing = true;
+    if (st) render();
+    const t0 = Date.now();
+    const poll = async () => {
+      let r = null;
+      try { if (tabId != null) r = await chrome.tabs.sendMessage(tabId, { rbc: 'ping' }); } catch (e) { r = null; }
+      if (!r || !r.ok || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
+      setTimeout(poll, PREP_POLL_MS);
+    };
+    setTimeout(poll, PREP_POLL_MS);
+  }
 
   $('q').addEventListener('input', () => { qTouched = true; });
   $('s').addEventListener('input', () => { sTouched = true; });

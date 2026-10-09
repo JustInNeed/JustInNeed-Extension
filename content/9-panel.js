@@ -204,13 +204,17 @@
   }
 
   // s.recording 은 "이 탭에서 지금 구간을 기록 중"이다. 세션 여부는 버튼이 보여준다.
+  // s.settling = 본문 준비 중 대기 (구간을 열기 전, 5-recorder). 주황 점.
   function applyStat(s) {
     if (!panelEl || !s) return;
     const primary = RBC.frames.primaryTag();
     if (primary ? s.tag !== primary : s.tag !== TAG) return;   // 광고 iframe 등은 무시
     setStat(`
-      <span class="dot" style="background:${s.recording ? '#16a34a' : '#bbb'}"></span>
-      ${s.recording ? '기록 중' : '대기'} · 샘플 ${s.samples}개 · 유닛 ${s.units}개
+      <span class="dot" style="background:${s.recording ? '#16a34a' : s.settling ? '#f59e0b' : '#bbb'}"></span>
+      ${s.recording ? '기록 중' : s.settling
+        ? `<b style="color:#b45309">본문 준비 중 ${(s.settling.ms / 1000).toFixed(1)}초 · 글 변화 ${s.settling.changes}회` +
+          `${s.units ? '' : ' · 본문 못 찾음, 다시 찾는 중'}</b>`
+        : '대기'} · 샘플 ${s.samples}개 · 유닛 ${s.units}개
       ${s.recording ? `· focus ${s.focusSec}s` : ''}<br>
       <b style="color:#16a34a">중앙선(B)</b>: ${esc(s.centerPid) || '—'} <i>${esc(s.centerText)}</i><br>
       <b style="color:#2563eb">커서(A)</b>: ${esc(s.cursorPid) || '여백/없음'}<br>

@@ -58,6 +58,15 @@
     MUTATION_MAX_WAIT: 2500,        // 변경이 끊이지 않아도 이 시간 안에는 한 번 재스캔 (디바운스 굶주림 방지)
     RESCAN_MIN_GAP_REC: 1500,       // 0-B: 15000 → 1500. splice 는 바뀐 구간만 다시 자르므로 자주 해도 된다
 
+    // --- 본문 준비 중 대기 (0-B 마지막, 2026-10-08) ---
+    //   구간을 열기 전에 본문 글자가 SETTLE_QUIET_MS 동안 안 바뀔 때까지 기다린다(최대 SETTLE_MAX_MS).
+    //   시계는 탭이 보일 때만 간다. 근거 · 값의 검증 방법은 5-recorder 헤더.
+    SETTLE_POLL_MS: 300,
+    SETTLE_QUIET_MS: 1500,
+    SETTLE_MAX_MS: 6000,
+    SETTLE_ASK_MS: 2000,            // 유닛 0개로 기다리는 동안 primary 다시 뽑기를 요청하는 간격 (블로그 PC 느린 iframe)
+    SETTLE_EMPTY_POLL_MS: 1000,     // 최대 대기를 넘겨도 유닛 0개면 이 간격으로 계속 확인 (빈 페이지 비용 줄이기)
+
     // --- 세션 ---
     IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
     ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기

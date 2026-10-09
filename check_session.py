@@ -995,6 +995,23 @@ def baseline_url(path):
 
 
 # --- main -----------------------------------------------------------------
+def check_settle(rep, timeline):
+    """본문 준비 중 대기 (0-B 마지막, 2026-10-08). 판정 없음 — 정보만.
+    구간을 열기 전 본문 글자가 1.5초 조용해질 때까지 기다린 기록 settle {ms, how: quiet|max, changes}.
+    '대기 직후 5초 안 splice' 가 글마다 자주 나오면 조용함 기준(SETTLE_QUIET_MS)이 짧다는 근거."""
+    st = [e for e in timeline if e.get("type") == "settle"]
+    if not st:
+        rep.add(OK, "본문 준비 대기", "기록 없음 (대기 이전 확장)")
+        return
+    sp = [e.get("t", 0) for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    parts = []
+    for e in st:
+        t = e.get("t", 0)
+        soon = sum(1 for x in sp if t <= x <= t + 5000)
+        parts.append(f"{e.get('ms', 0) / 1000:.1f}초 ({e.get('how')}) · 글 변화 {e.get('changes', 0)}회 · 직후 5초 splice {soon}회")
+    rep.add(OK, "본문 준비 대기", " / ".join(parts))
+
+
 def run_payload(label, data, baseline=None):
     """페이지 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
@@ -1019,6 +1036,7 @@ def run_payload(label, data, baseline=None):
     check_counters(rep, ticks)
     check_rescan(rep, timeline, meta)
     check_rescan_cost(rep, timeline)
+    check_settle(rep, timeline)
     check_order_continuity(rep, meta)
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
