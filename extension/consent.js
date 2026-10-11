@@ -170,7 +170,10 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
-    a.download = `rbc_${sid}_${Date.now()}.json`;
+    // 참여 번호를 파일 이름 앞에 (2026-10-11) — 6-frames download() 와 같은 규칙.
+    const pno = String((bundle.session.tester && bundle.session.tester.participantNo) || 'NOID')
+      .replace(/[^A-Za-z0-9_-]/g, '_');
+    a.download = `rbc_${pno}_${sid}_${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // 탭이라 여유 있게
     show(`파일로 내보냈습니다: 글 ${bundle.pages.length}개. 다운로드 폴더를 확인하세요.`);

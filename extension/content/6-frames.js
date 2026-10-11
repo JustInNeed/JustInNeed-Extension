@@ -194,7 +194,11 @@
     // bundle 은 session.sessionId, 옛 단일 payload 는 meta.sessionId
     const sid = ((payload.session && payload.session.sessionId) ||
       (payload.meta && payload.meta.sessionId) || 'nosid').slice(0, 8);
-    a.download = `rbc_${sid}_${Date.now()}.json`;
+    // 참여 번호를 파일 이름 앞에 (2026-10-11): 한 노트북에서 여러 명을 받을 때 다운로드 폴더에서 사람별로 바로 갈리게.
+    //   파일 이름에 못 쓰는 글자는 _ 로. 동의 전 로그라 tester 가 없으면 NOID. consent.js exportFile() 과 같은 규칙.
+    const pno = String((payload.session && payload.session.tester && payload.session.tester.participantNo) || 'NOID')
+      .replace(/[^A-Za-z0-9_-]/g, '_');
+    a.download = `rbc_${pno}_${sid}_${Date.now()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }

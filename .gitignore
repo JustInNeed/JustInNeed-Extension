@@ -11,4 +11,3 @@ venv/
 !extension/manifest.json
 !test/baseline_session.json
 *.zip
-EOF

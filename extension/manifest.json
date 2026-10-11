@@ -1,14 +1,37 @@
 {
   "manifest_version": 3,
-  "name": "Reading Behavior Collector (v2)",
+  "name": "JustInNeed",
   "version": "0.2.1",
-  "description": "본문 텍스트 스트림을 글자 수 기준으로 잘라 유닛을 만들고, 유닛별 읽기 행동 raw 데이터를 수집. feature는 수집 안 함(오프라인 후처리).",
-  "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html", "default_title": "JustInNeed 기록" },
-  "permissions": ["storage", "unlimitedStorage", "activeTab"],
+  "description": "읽기 행동 수집 테스트 — 글을 읽는 동안 화면 · 스크롤 · 커서 기록을 모으고, 다 읽은 뒤 문단별 평가를 받는다.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JustInNeed 기록",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "activeTab"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "all_frames": true,
       "match_about_blank": false,
       "js": [
