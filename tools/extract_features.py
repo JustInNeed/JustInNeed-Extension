@@ -19,8 +19,9 @@ v2 → v3
   - 하이라이트 · 복사 = ranges 의 pid.
   - 재방문 = 방문 뒤 화면 위로 빠진 적이 있는 유닛이 다시 읽기 구간(μ±σ)에 1초 머문 횟수 (revisit_count, 모델 입력).
   - idle(120초 이상 입력 없음) · 편집(edits>0) 틱은 모든 feature 계산에서 제외.
-  - 라벨(테스트 모드): label 열 = 참가자가 고른 유닛 1 / 안 고른 유닛 0 / 라벨 없는 페이지 빈 값.
-    scenario 열 = 읽는 목적. 둘 다 모델 입력 아님 (정답 · 조건).
+  - 라벨 v2(라벨_명세_v2.md §7): label_state = 자기보고 읽기 상태(skip/skim/read/focus/unsure),
+    label_n = 0~3(unsure · 없음은 빈 값), label_mark = 중요 표시 1/0, 페이지 단위 설문 · 소요 시간.
+    scenario 열 = 읽는 목적. 전부 모델 입력 아님 (정답 · 조건). v1 라벨 파일은 라벨 없음으로 처리.
 
 사용법:
   python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
@@ -40,6 +41,9 @@ import pandas as pd
 # =============================================================================
 # CONFIG — 문서 "파라미터" 표와 같은 값. 튜닝은 여기서만.
 # =============================================================================
+RATE_N = {"skip": 0, "skim": 1, "read": 2, "focus": 3}        # 라벨 v2 → 숫자 (unsure 는 빈 값)
+RATE_N_ALL = ("skip", "skim", "read", "focus", "unsure")
+
 CFG = {
     # GVAM (Grusky 외 CHI 2017, 뷰포트 높이 비율)
     "GVAM_MU": 0.492,
@@ -192,7 +196,9 @@ def load_bundle(path):
         "session": s,
         "pages": pages,
         "session_id": s.get("sessionId") or path,
-        "tester_id": tester.get("testId") or "unknown",
+        # 사람 키 = 연구자가 준 참여 번호. 옛 파일(동의 v1)은 설치 ID(testId)로 대신한다
+        "tester_id": tester.get("participantNo") or tester.get("testId") or "unknown",
+        "install_id": tester.get("testId") or "",
         "tick_ms": s.get("tickMs", 150),
     }
 
@@ -438,11 +444,26 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
 
     # 라벨 (테스트 모드): 취소 아닌 마지막 label 이벤트가 정답. 없으면 이 페이지는 라벨 없음.
     labs = [e for e in tl if e.get("type") == "label" and not e.get("cancelled")]
-    lab_set = set(labs[-1].get("pids") or []) if labs else None
-    lab_ms = labs[-1].get("ms") if labs else None
+    lab = labs[-1] if labs else None
+    if lab is not None and lab.get("v") != 2:
+        print(f"  ⚠ 라벨 v{lab.get('v', 1)} — v2 전용, 이 페이지는 라벨 없음으로 처리", file=sys.stderr)
+        lab = None
+    rat = (lab.get("ratings") or {}) if lab else {}
+    exc = set(lab.get("excluded") or []) if lab else set()
+    mk = set(lab.get("marks") or []) if lab else set()
+    lab_sv = (lab.get("survey") or {}) if lab else {}
+    pms = (lab.get("phaseMs") or {}) if lab else {}
+    rate_gap = {}                                  # pid → 최종값을 누르기까지 직전 누름과의 간격
+    prev_t = None
+    for row in (lab.get("ratingLog") or []) if lab else []:
+        if isinstance(row, list) and len(row) == 3:
+            rate_gap[row[0]] = (row[2] - prev_t) if prev_t is not None else row[2]
+            prev_t = row[2]
+    n_ask_no = sum(1 for e in tl if e.get("type") == "labelask" and e.get("answer") in ("no", "cancel"))
 
     # 품질 플래그
     disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
+    n_splice = sum(1 for e in tl if e.get("type") == "rescan" and e.get("mode") == "splice")
     seg_ids = {g["segId"] for g in meta.get("segments", [])}
     missing = sum(len(c.get("missing", [])) for c in bundle["session"].get("chunkReport", [])
                   if c.get("segId") in seg_ids)
@@ -529,6 +550,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
         rows.append({
             # --- 메타 ---
             "tester_id": bundle["tester_id"],
+            "install_id": bundle["install_id"],
             "session_id": bundle["session_id"],
             "page_id": page_id,
             "url": meta.get("url"),
@@ -541,9 +563,22 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "query": query_info[0],
             "query_source": query_info[1],
             "scenario": bundle["session"].get("scenario"),
-            "label": (int(pid in lab_set) if lab_set is not None else np.nan),
-            "page_labeled": lab_set is not None,
-            "page_label_ms": lab_ms,
+            "label_state": rat.get(pid) if lab else None,
+            "label_n": RATE_N.get(rat.get(pid), np.nan) if lab else np.nan,
+            "label_excluded": (pid in exc) if lab else np.nan,
+            "label_rate_ms": rate_gap.get(pid, np.nan),
+            "label_mark": (int(pid in mk) if pid in rat else np.nan) if lab else np.nan,
+            "page_labeled": lab is not None,
+            "label_trigger": lab.get("trigger") if lab else None,
+            "page_label_ms": lab.get("ms") if lab else np.nan,
+            "label_phase_ask_ms": pms.get("ask", np.nan),
+            "label_phase_rate_ms": pms.get("rate", np.nan),
+            "label_phase_mark_ms": pms.get("mark", np.nan),
+            "label_phase_survey_ms": pms.get("survey", np.nan),
+            "survey_gain": lab_sv.get("gain"),
+            "survey_interest": lab_sv.get("interest", np.nan),
+            "survey_familiarity": lab_sv.get("familiarity", np.nan),
+            "n_labelask_no": n_ask_no,
             "is_noise": (pid in noise_set) if noise_set is not None else np.nan,
             "scroll_depth_pct": round(depth, 4) if depth == depth else np.nan,
             "dwell_gvam_sec": round(dwell_gvam, 3),
@@ -555,6 +590,9 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "z_is_weak": n_sess_tester < CFG["MIN_SESSIONS_FOR_Z"],
             "trend_low_sample": bool(s_tr_low or c_tr_low or hr_low),
             "page_disruptive_rescan": disruptive,
+            "page_splice_count": n_splice,
+            "is_retired": bool(para.get("retired")),
+            "_after": para.get("after") if para.get("retired") else None,
             "page_missing_chunks": missing,
             "page_idle_sec": round(float(df["idle"].sum()) * tick_sec, 1) if n else 0.0,
             "page_edit_ticks": int(df["edit"].sum()) if n else 0,
@@ -612,6 +650,34 @@ def page_queries(bundle):
 # =============================================================================
 # main
 # =============================================================================
+def reading_order(g):
+    """한 페이지 행을 글 순서로: 최종 유닛은 order 순, 사라진 유닛은 사라질 때 바로 앞 유닛(after) 뒤에 끼운다.
+    after 가 다시 사라진 유닛이면 사슬로 따라간다(토글 안 3-1 → 3-2 → 3-3). 앞을 못 찾으면 맨 끝."""
+    alive = g[~g["is_retired"]].sort_values("unit_order", kind="stable")
+    ret = g[g["is_retired"]]
+    kids = {}
+    for idx, r in ret.iterrows():
+        kids.setdefault(r["_after"] if isinstance(r["_after"], str) else None, []).append(idx)
+    seq, done = [], set()
+
+    def emit(idx, pid):
+        seq.append(idx)
+        done.add(idx)
+        for k in kids.get(pid, []):
+            if k not in done:
+                emit(k, g.at[k, "paragraph_id"])
+
+    for k in kids.get(None, []):                         # 맨 앞에서 사라진 유닛
+        if k not in done:
+            emit(k, g.at[k, "paragraph_id"])
+    for idx, r in alive.iterrows():
+        emit(idx, r["paragraph_id"])
+    seq += [k for k in ret.index if k not in done]       # 앞 유닛을 못 찾은 것
+    o = g.loc[seq].copy()
+    o["unit_order"] = range(len(o))
+    return o
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="+", help="세션 bundle JSON (rbc_*.json)")
@@ -619,6 +685,8 @@ def main():
     ap.add_argument("--noise", help="본문 아닌 유닛 파일 {pageId|url: [pid, ...]}")
     ap.add_argument("--no-selection-features", action="store_true",
                     help="has_highlight / has_copy 를 모델 feature 목록에서 뺌 (컬럼은 남음)")
+    ap.add_argument("--final-only", action="store_true",
+                    help="기록 중 사라진 유닛(is_retired) 행을 뺌. 기본은 남김 — 사용자가 읽은 글은 전부 보존한다")
     args = ap.parse_args()
 
     noise = json.load(open(args.noise, encoding="utf-8")) if args.noise else None
@@ -646,11 +714,26 @@ def main():
     out = pd.DataFrame(all_rows)
     if out.empty:
         sys.exit("유닛 행이 0개.")
+    # 표 = 페이지마다 "사용자 화면에 나온 모든 유닛을 글 순서대로" + 행동 데이터 (2026-10-08 서현 결정).
+    #   기록 중 본문 변경(토글 여닫기 등)으로 사라진 유닛(is_retired)도 화면에 한 번이라도 나왔으면 남긴다 — 읽은 글이다.
+    #   화면에 한 번도 안 나온 사라진 유닛은 뺀다(잠깐 생겼다 사라진 덩어리). 최종 유닛은 안 나왔어도 남긴다(= 안 읽음).
+    #   unit_order 는 다시 매긴 글 순서: 사라진 유닛은 사라질 때 자리 바로 앞에 놓는다.
+    #   같은 글이 두 버전으로 두 줄에 있을 수 있다(예: 토글 닫힌 제목 덩어리 · 열린 덩어리).
+    n_ret = int(out["is_retired"].sum())
+    out = out[~out["is_retired"] | (out["n_vis_ticks"] > 0)]
+    if args.final_only:
+        out = out[~out["is_retired"]]
+    out = pd.concat([reading_order(g) for _, g in out.groupby(["session_id", "page_id"], sort=False)],
+                    ignore_index=True)
+    out = out.drop(columns=["_after"])
     out.to_csv(args.output, index=False)
 
     feats = [f for f in MODEL_FEATURES if not (args.no_selection_features and f in SELECTION_FEATURES)]
     print(f"세션 {len(bundles)}개 · 페이지 {len(checks)}개 → 유닛 행 {len(out)}개  (→ {args.output})")
     print(f"  · 모델 feature {len(feats)}개")
+    if n_ret:
+        print(f"  · 기록 중 사라진 유닛 {n_ret}행 " + ("제외(--final-only)" if args.final_only else
+              "중 화면에 나온 것만 글 순서대로 포함(is_retired=True)"))
 
     # ---- 검산 (판정 아님, 사람이 보는 용) ----
     for bd, pg, df, G, rows in checks:
@@ -676,16 +759,27 @@ def main():
         print(f"  유닛 {len(r)} · 화면에 나온 유닛 {(r['n_vis_ticks']>0).sum()} · "
               f"방문 ≥1 {(r['visit_count']>0).sum()} · 재방문 ≥1 {(r['revisit_count']>0).sum()} · "
               f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()} · "
-              f"라벨 {int(r['label'].sum()) if r['page_labeled'].iloc[0] else '없음'}")
+              f"라벨 " + (" ".join(f"{k}{(r['label_state'] == k).sum()}" for k in RATE_N_ALL)
+                         + f" · 중요 {int(r['label_mark'].sum())}" if r['page_labeled'].iloc[0] else '없음'))
         if r["page_disruptive_rescan"].any():
-            print("  ⚠ 본문 교체(disruptive) 페이지 — pid 정합성 확인 전 학습 제외 권장")
+            print("  ⚠ 본문 교체(disruptive, 옛 확장) 페이지 — 학습 제외 권장")
+        if r["is_retired"].any():
+            rd = r["dwell_gvam_sec"].where(r["is_retired"], 0).sum()
+            td = r["dwell_gvam_sec"].sum()
+            print(f"  · 기록 중 본문 변경(splice {int(r['page_splice_count'].iloc[0])}회) — 사라진 유닛 "
+                  f"{int(r['is_retired'].sum())}개, 체류 {rd:.1f}s / {td:.1f}s ({(rd / td * 100) if td else 0:.0f}%)"
+                  f"{' — CSV 에서는 뺌(--final-only)' if args.final_only else ''}")
         if r["page_missing_chunks"].iloc[0]:
             print(f"  ⚠ 유실 조각 {r['page_missing_chunks'].iloc[0]}개")
         with pd.option_context("display.max_columns", None, "display.width", 200):
             cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
                     "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
-                    "cursorfreq", "has_highlight", "label"]
-            print(r[cols].to_string(index=False))
+                    "cursorfreq", "has_highlight", "label_state", "label_mark"]
+            # CSV 와 같은 행만, 같은 글 순서로 (화면에 안 나온 사라진 유닛 제외)
+            show = r[~r["is_retired"] | (r["n_vis_ticks"] > 0)].copy()
+            show = reading_order(show.assign(session_id="", page_id=""))
+            show["retired"] = show["is_retired"].map({True: "닫힘", False: ""})
+            print(show[cols + ["retired"]].to_string(index=False))
 
 
 if __name__ == "__main__":

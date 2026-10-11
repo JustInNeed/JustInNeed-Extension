@@ -49,6 +49,16 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          틱 필수 필드 누락 · 삭제 필드(scrollSpeed · cursorDist · cursorMoved) 잔존,
          highlight/copy 의 ranges 누락 · 형식(0 ≤ lo < hi ≤ charLen) · pids/pid 잔존,
          틱이 있는데 scroller 이벤트 없음. 세트 B 이전 파일은 FAIL — 정상.
+    [17] 라벨 v2 (라벨_명세_v2.md §8)                 FAIL / WARN
+         취소 아닌 마지막 label 이 정답. 라벨 없는 페이지는 '검사 대상 없음'으로 통과.
+         FAIL: v2 아님 · 필수 필드 · ratings ∪ excluded = 전체 유닛(겹침 없음) · 값 5종 ·
+               marks ⊆ 평정 대상(중복 없음) · 설문 3문항 값 · ratingLog 최종값 = ratings ·
+               라벨 모드(label 의 startT..t) 안에 tick/highlight/copy 이벤트.
+               (labelask 카드 구간은 기록이 정상 — 카드를 무시하고 읽는 사람 대비, 2026-10-07)
+         WARN: 기억 안 남 > 50% · 평정 간격 중앙값 < 300ms (대충 찍기) ·
+               한 번도 화면에 안 나온 유닛이 read/focus (평가 중 새로 읽음 의심, 명세 §10).
+  세션 단위 추가:
+    [S6] stopReason == 'labeled' 이면 취소 아닌 label 이 어느 페이지엔가 있다  FAIL
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -106,6 +116,10 @@ def all_pids_used(timeline):
         r = e.get("ranges")                      # v3 highlight / copy
         if isinstance(r, list):
             used.update(x[0] for x in r if isinstance(x, list) and x and x[0])
+        if e.get("type") == "label":             # 라벨 v2: 평정 · 제외 · 중요 표시
+            used.update((e.get("ratings") or {}).keys())
+            used.update(e.get("excluded") or [])
+            used.update(e.get("marks") or [])
     return used
 
 
@@ -282,8 +296,20 @@ def check_counters(rep, ticks):
         rep.add(OK, "이벤트 카운터", f"mouse {mouse} / scroll {scroll}")
 
 
-def check_rescan(rep, timeline):
-    """[6] 본문 교체가 일어났는가."""
+def tick_pids(e):
+    """틱 하나가 참조하는 pid 들."""
+    out = set()
+    for k in ("centerPid", "cursorPid"):          # visTop/visBot 은 order(정수)라 pid 가 아님
+        if e.get(k):
+            out.add(e[k])
+    for p in e.get("vis") or []:
+        if p and p[0]:
+            out.add(p[0])
+    return out
+
+
+def check_rescan(rep, timeline, meta=None):
+    """[6] 기록 중 본문 변경. splice(0-B) 는 처리된 것 — 규모만 본다. disruptive-skipped(옛 확장)는 학습 제외."""
     modes = [e.get("mode") for e in timeline if e.get("type") == "rescan"]
     if "disruptive-skipped" in modes:
         first = next(e for e in timeline
@@ -297,11 +323,71 @@ def check_rescan(rep, timeline):
         else:
             why = " (diff 없음)"
         rep.add(FAIL, "본문 교체",
-                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 학습에서 제외.{why}")
-    elif modes:
-        rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
+                f"disruptive-skipped {modes.count('disruptive-skipped')}회 — 옛 확장 기록, 학습에서 제외.{why}")
+        return
+    sps = [e for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    if not sps:
+        if modes:
+            rep.add(OK, "본문 교체", f"append 재스캔 {modes.count('append')}회 (정상)")
+        else:
+            rep.add(OK, "본문 교체", "없음")
+        return
+    probs, warns = [], []
+    roots = [e for e in sps if e.get("rootChanged")]
+    if roots:
+        r0 = roots[0]
+        probs.append(f"기록 중 본문 루트가 바뀜 {len(roots)}회 (t={r0.get('t', 0) / 1000:.1f}s "
+                     f"{r0.get('rootFrom')} → {r0.get('rootTo')}) — 그 전 구간은 다른 영역을 기록한 것")
+    bads = [e for e in sps if (e.get("check") or [0, 0])[0] > 0]
+    if bads:
+        probs.append(f"splice 자체 검증 실패 {len(bads)}회 (유닛 글 ≠ 원문 · 겹침 · pid 중복 {bads[0]['check'][0]}개)")
+    unc = max(((e.get("check") or [0, 0])[1] for e in sps), default=0)
+    if unc > 30:
+        warns.append(f"어느 유닛에도 안 든 글자 최대 {unc}자")
+    # 큰 변경(유닛 절반 넘게 사라짐)은 정보로만: 노션 큰 토글을 닫으면 정상적으로 생긴다(2026-10-08 실측 4회).
+    #   다른 글로 바뀌는 경우는 주소가 바뀌어 구간이 닫히고, 같은 영역 밖으로 가면 rootChanged 가 FAIL 로 잡는다.
+    big = [e for e in sps if (e.get("retired") or 0) >= 5
+           and (e.get("retired") or 0) > 0.5 * ((e.get("kept") or 0) + (e.get("retired") or 0))]
+    retired = {p["pid"] for p in (meta or {}).get("paragraphs", []) if p.get("retired")}
+    last_t = max(e.get("t", 0) for e in sps)
+    stale = [e for e in timeline if e.get("type") == "tick" and e.get("t", 0) > last_t
+             and tick_pids(e) & retired]
+    if stale:
+        probs.append(f"마지막 splice 뒤 틱 {len(stale)}개가 사라진 유닛을 가리킴")
+    tot = (sum(e.get("kept") or 0 for e in sps[-1:]), sum(e.get("added") or 0 for e in sps),
+           sum(e.get("retired") or 0 for e in sps))
+    d = sps[0].get("diff") or {}
+    chk = "자체 검증 " + ("전부 [0,0]" if all((e.get("check") or [0, 0]) == [0, 0] for e in sps)
+                         else "/".join(str(e.get("check")) for e in sps[:5]))
+    detail = (f"splice {len(sps)}회 (큰 변경 {len(big)}) · 새 유닛 {tot[1]} · 사라진 유닛 {tot[2]}(retired) · 마지막 유지 {tot[0]} · {chk} · "
+              f"루트 {sps[-1].get('root')} · 첫 변경 t={sps[0].get('t', 0) / 1000:.1f}s 유닛 #{d.get('unit')} ⟨{d.get('new', '')}⟩")
+    if probs:
+        rep.add(FAIL, "본문 교체", " · ".join(probs) + " — " + detail)
+    elif warns:
+        rep.add(WARN, "본문 교체", " · ".join(warns) + " — " + detail)
     else:
-        rep.add(OK, "본문 교체", "없음")
+        rep.add(OK, "본문 교체", detail)
+
+
+def check_rescan_cost(rep, timeline):
+    """재스캔 비용 (0-B 성능). 기록 중 재스캔 간격을 1.5초로 줄였으므로 실제 비용을 본다. 정보성(WARN까지만).
+    글이 바뀐 재스캔은 rescan 이벤트의 ms, 글이 그대로인 재스캔(mode same)은 다음 이벤트에 얹힌 same=[횟수, 합 ms, 최대 ms]."""
+    ev = [e for e in timeline if e.get("type") == "rescan" and isinstance(e.get("ms"), (int, float))]
+    same = [e["same"] for e in timeline if isinstance(e.get("same"), list) and len(e["same"]) == 3]
+    if not ev and not same:
+        rep.add(OK, "재스캔 비용", "기록 중 재스캔 없음 (또는 측정 이전 확장)")
+        return
+    ms = sorted(e["ms"] for e in ev)
+    s_n = sum(x[0] for x in same)
+    s_tot = sum(x[1] for x in same)
+    s_max = max((x[2] for x in same), default=0)
+    worst = max(ms[-1] if ms else 0, s_max)
+    dur = (max(e.get("t", 0) for e in timeline) - min(e.get("t", 0) for e in timeline)) / 1000 or 1
+    load = (sum(ms) + s_tot) / 1000 / dur
+    detail = (f"글 변경 {len(ms)}회 (중앙 {ms[len(ms) // 2] if ms else 0}ms · 최대 {ms[-1] if ms else 0}ms) · "
+              f"글 그대로 {s_n}회 (최대 {s_max}ms) · 기록 시간 대비 {load:.2%}")
+    rep.add(WARN if worst > 100 or load > 0.02 else OK, "재스캔 비용",
+            detail + (" — 한 번에 100ms 넘거나 전체의 2% 넘음, 틱이 흔들릴 수 있음" if worst > 100 or load > 0.02 else ""))
 
 
 def check_order_continuity(rep, meta):
@@ -321,7 +407,7 @@ def check_units_baseline(rep, meta, baseline_path):
     with open(baseline_path, encoding="utf-8") as f:
         base = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
     now = [f"{p.get('order')}\t{p['pid']}\t{p.get('charLen')}"
-           for p in meta.get("paragraphs", [])]
+           for p in meta.get("paragraphs", []) if not p.get("retired")]
     if base == now:
         rep.add(OK, "유닛 기준선", f"{len(now)}개 유닛 완전 일치")
         return
@@ -503,8 +589,10 @@ def piece_problem(p):
     return None
 
 
-def vis_problems(meta, ticks):
-    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개)."""
+def vis_problems(meta, ticks, k_from=None):
+    """틱 vis 가 조각과 맞는가. (문제 수, 예시 3개).
+    k_from: 이 시각 이후 틱만 조각 번호 k 범위를 본다. splice 가 유닛 조각을 다시 계산하면(이어받기로 줄어든 유닛 등)
+    그 전 틱의 k 는 옛 조각 기준이라 지금 pieces 로는 잴 수 없다(설계, 2-units 헤더 · 감사 §8-13). pid 는 언제나 본다."""
     npieces = {p["pid"]: len(p.get("pieces") or []) for p in meta.get("paragraphs", [])}
     bad, ex = 0, []
 
@@ -531,7 +619,7 @@ def vis_problems(meta, ticks):
             if pid not in npieces:
                 note(t, f"모르는 pid {pid}")
                 break
-            if not isinstance(k, int) or not 0 <= k < npieces[pid]:
+            if not isinstance(k, int) or k < 0 or ((k_from is None or t > k_from) and k >= npieces[pid]):
                 note(t, f"{pid} k={k} / 조각 {npieces[pid]}")
                 break
             if top > bot or left > right:
@@ -540,7 +628,7 @@ def vis_problems(meta, ticks):
     return bad, ex
 
 
-def check_pieces(rep, meta, ticks):
+def check_pieces(rep, meta, ticks, timeline=None):
     """[13] 조각이 유닛 text 를 빈틈 · 겹침 없이 나누는가 + 틱 vis 가 조각을 제대로 가리키는가.
 
     오름차순 + 합계만 보면 빈틈과 겹침이 서로 상쇄돼 통과하므로 연결을 본다.
@@ -548,7 +636,10 @@ def check_pieces(rep, meta, ticks):
     """
     paras = meta.get("paragraphs", [])
     bad = [(p.get("order"), why) for p in paras if (why := piece_problem(p))]
-    vbad, vex = vis_problems(meta, ticks)
+    sp_t = [e.get("t", 0) for e in (timeline or []) if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    k_from = max(sp_t) if sp_t else None
+    vbad, vex = vis_problems(meta, ticks, k_from)
+    pre = sum(1 for e in ticks if k_from is not None and e.get("t", 0) <= k_from)
     if bad or vbad:
         parts = []
         if bad:
@@ -557,7 +648,8 @@ def check_pieces(rep, meta, ticks):
             parts.append(f"vis 틱 {vbad}/{len(ticks)} (" + "; ".join(vex) + ")")
         rep.add(FAIL, "조각 연결", " · ".join(parts))
     else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합")
+        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합"
+                + (f" (마지막 splice 전 {pre}틱은 조각 번호 범위 제외)" if pre else ""))
 
 
 def check_vis_cross(rep, meta, ticks):
@@ -711,6 +803,113 @@ def check_v3_fields(rep, meta, timeline, ticks):
         rep.add(OK, "v3 필드", f"틱 {len(ticks)}개 · 선택/복사 {len(sels)}건 형식 일치")
 
 
+# [17] 라벨 v2 ----------------------------------------------------------------
+RATE_VALUES = {"skip", "skim", "read", "focus", "unsure"}
+SURVEY_VALUES = {"gain": {"yes", "partly", "no"}, "interest": {1, 2, 3, 4}, "familiarity": {1, 2, 3, 4}}
+LABEL_REQUIRED = {"v": int, "t": (int, float), "startT": (int, float), "ms": (int, float),
+                  "trigger": str, "ratings": dict, "ratingLog": list, "excluded": list,
+                  "marks": list, "survey": dict, "phaseMs": dict}
+FAST_RATE_MS = 300
+
+
+def final_label(timeline):
+    labs = [e for e in timeline if e.get("type") == "label" and not e.get("cancelled")]
+    return labs[-1] if labs else None
+
+
+def check_label(rep, meta, timeline, ticks):
+    """[17] 라벨 v2 형식 · 정합 · 라벨 모드 중 기록 없음 · 대충 찍기 의심."""
+    name = "라벨 v2"
+    # 라벨 모드 구간: label(취소 포함) 의 (startT, t). labelask 카드 구간은 기록이 정상이라 뺀다
+    windows = [(e["startT"], e["t"]) for e in timeline
+               if e.get("type") == "label"
+               and isinstance(e.get("startT"), (int, float)) and isinstance(e.get("t"), (int, float))]
+    leak = [e for e in timeline if e.get("type") in ("tick", "highlight", "copy")
+            and any(a < e.get("t", -1) < b for a, b in windows)]
+
+    lab = final_label(timeline)
+    if lab is None:
+        if leak:
+            rep.add(FAIL, name, f"라벨 모드 중 기록 {len(leak)}건 (취소된 라벨 구간)")
+        else:
+            n_ask = sum(1 for e in timeline if e.get("type") == "labelask")
+            rep.add(OK, name, f"검사 대상 없음 (완료된 라벨 없음 · 질문 응답 {n_ask}건)")
+        return
+
+    probs = []
+    if lab.get("v") != 2:
+        rep.add(FAIL, name, f"v{lab.get('v', 1)} 형식 — v2 전용. 새로 기록할 것")
+        return
+    for k, ty in LABEL_REQUIRED.items():
+        if not isinstance(lab.get(k), ty):
+            probs.append(f"필드 {k} 없음/형식")
+    if probs:
+        rep.add(FAIL, name, " · ".join(probs))
+        return
+
+    allp = [p["pid"] for p in meta.get("paragraphs", []) if not p.get("retired")]   # splice 로 사라진 유닛 제외
+    rat, exc, marks = lab["ratings"], lab["excluded"], lab["marks"]
+    both = set(rat) & set(exc)
+    if both:
+        probs.append(f"평정 · 제외 겹침 {len(both)}개")
+    missing = set(allp) - set(rat) - set(exc)
+    if missing:
+        probs.append(f"평정 빠진 유닛 {len(missing)}개")
+    extra = (set(rat) | set(exc)) - set(allp)
+    if extra:
+        probs.append(f"없는 유닛 {len(extra)}개")
+    badv = [v for v in rat.values() if v not in RATE_VALUES]
+    if badv:
+        probs.append(f"평정 값 {badv[0]!r}")
+    if len(marks) != len(set(marks)):
+        probs.append("marks 중복")
+    if set(marks) - set(rat):
+        probs.append(f"marks 가 평정 대상 밖 {len(set(marks) - set(rat))}개")
+    for k, ok in SURVEY_VALUES.items():
+        if lab["survey"].get(k) not in ok:
+            probs.append(f"설문 {k}={lab['survey'].get(k)!r}")
+    last = {}
+    for row in lab["ratingLog"]:
+        if isinstance(row, list) and len(row) == 3:
+            last[row[0]] = row[1]
+        else:
+            probs.append(f"ratingLog 형식 {row!r}")
+            break
+    if last != rat:
+        probs.append("ratingLog 최종값 ≠ ratings")
+    if leak:
+        probs.append(f"라벨 모드 중 기록 {len(leak)}건 (첫 t={leak[0].get('t', 0) / 1000:.1f}s)")
+    if probs:
+        rep.add(FAIL, name, " · ".join(probs))
+        return
+
+    warns = []
+    if rat:
+        n_uns = sum(1 for v in rat.values() if v == "unsure")
+        if n_uns / len(rat) > 0.5:
+            warns.append(f"기억 안 남 {n_uns}/{len(rat)}")
+    ts = [row[2] for row in lab["ratingLog"]]
+    gaps = [b - a for a, b in zip(ts, ts[1:])]
+    if len(gaps) >= 3 and statistics.median(gaps) < FAST_RATE_MS:
+        warns.append(f"평정 간격 중앙값 {statistics.median(gaps):.0f}ms")
+    seen = {p[0] for e in ticks for p in (e.get("vis") or []) if p and len(p) >= 6 and p[5] - p[4] > 0}
+    unseen_hi = [pid for pid, v in rat.items() if v in ("read", "focus") and pid not in seen]
+    if unseen_hi:
+        warns.append(f"화면에 안 나온 유닛이 read/focus {len(unseen_hi)}개")
+
+    cnt = {}
+    for v in rat.values():
+        cnt[v] = cnt.get(v, 0) + 1
+    sv = lab["survey"]
+    detail = (f"{lab['trigger']} · {lab['ms'] / 1000:.0f}s · 평정 {len(rat)}(제외 {len(exc)}) "
+              + " ".join(f"{k}{cnt.get(k, 0)}" for k in ("skip", "skim", "read", "focus", "unsure"))
+              + f" · 중요 {len(marks)} · 설문 {sv.get('gain')}/{sv.get('interest')}/{sv.get('familiarity')}")
+    if warns:
+        rep.add(WARN, name, " · ".join(warns) + " — " + detail)
+    else:
+        rep.add(OK, name, detail)
+
+
 def input_summary(timeline, ticks):
     """세트 C 입력 · 스크롤 요약 (판정 아님)."""
     paths = []
@@ -802,6 +1001,23 @@ def baseline_url(path):
 
 
 # --- main -----------------------------------------------------------------
+def check_settle(rep, timeline):
+    """본문 준비 중 대기 (0-B 마지막, 2026-10-08). 판정 없음 — 정보만.
+    구간을 열기 전 본문 글자가 1.5초 조용해질 때까지 기다린 기록 settle {ms, how: quiet|max, changes}.
+    '대기 직후 5초 안 splice' 가 글마다 자주 나오면 조용함 기준(SETTLE_QUIET_MS)이 짧다는 근거."""
+    st = [e for e in timeline if e.get("type") == "settle"]
+    if not st:
+        rep.add(OK, "본문 준비 대기", "기록 없음 (대기 이전 확장)")
+        return
+    sp = [e.get("t", 0) for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    parts = []
+    for e in st:
+        t = e.get("t", 0)
+        soon = sum(1 for x in sp if t <= x <= t + 5000)
+        parts.append(f"{e.get('ms', 0) / 1000:.1f}초 ({e.get('how')}) · 글 변화 {e.get('changes', 0)}회 · 직후 5초 splice {soon}회")
+    rep.add(OK, "본문 준비 대기", " / ".join(parts))
+
+
 def run_payload(label, data, baseline=None):
     """페이지 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
@@ -815,18 +1031,27 @@ def run_payload(label, data, baseline=None):
     check_pid_integrity(rep, meta, timeline)
     check_tick_interval(rep, meta, ticks)
     check_focus_ms(rep, meta, ticks)
-    check_visible_range(rep, meta, ticks)
-    check_viewport_covers_dwell(rep, meta, ticks)
+    # visTop/visBot 은 틱 당시의 order 다. splice 뒤 order 가 바뀌므로 order 로 비교하는 [4] · [8] · [14] 는
+    #   마지막 splice 뒤 틱만 본다 (feature 는 pid 기반 vis 를 써서 영향 없음, 감사 §8-13).
+    sp_t = [e.get("t", 0) for e in timeline if e.get("type") == "rescan" and e.get("mode") == "splice"]
+    oticks = [e for e in ticks if e.get("t", 0) > max(sp_t)] if sp_t else ticks
+    if sp_t:
+        rep.add(OK, "order 기반 검사 범위", f"splice 뒤 틱 {len(oticks)}/{len(ticks)}개만 ([4] · [8] · [14])")
+    check_visible_range(rep, meta, oticks)
+    check_viewport_covers_dwell(rep, meta, oticks)
     check_counters(rep, ticks)
-    check_rescan(rep, timeline)
+    check_rescan(rep, timeline, meta)
+    check_rescan_cost(rep, timeline)
+    check_settle(rep, timeline)
     check_order_continuity(rep, meta)
     check_segments(rep, meta, timeline)
     check_scroll_capture(rep, meta, timeline, ticks)
     check_extraction(rep, meta, ticks)
-    check_pieces(rep, meta, ticks)
-    check_vis_cross(rep, meta, ticks)
+    check_pieces(rep, meta, ticks, timeline)
+    check_vis_cross(rep, meta, oticks)
     check_scroll_cross(rep, meta, timeline, ticks)
     check_v3_fields(rep, meta, timeline, ticks)
+    check_label(rep, meta, timeline, ticks)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -869,6 +1094,15 @@ def run(path, baseline=None):
     if baseline and not used:
         srep.add(WARN, "유닛 기준선", f"기준선 글({base_url})이 이 세션에 없음 — 검사 안 함")
         srep.show()
+
+    # [S6] 라벨로 끝난 세션이면 완료된 라벨이 있어야 한다
+    if session.get("stopReason") == "labeled":
+        has = any(final_label(pg.get("timeline", [])) for pg in data.get("pages", []))
+        lv = OK if has else FAIL
+        srep2 = Report(f"{path} [세션 라벨]")
+        srep2.add(lv, "라벨로 정지", "완료된 label 있음" if has else "stopReason=labeled 인데 완료된 label 없음")
+        srep2.show()
+        reps.append(srep2)
     return reps
 
 

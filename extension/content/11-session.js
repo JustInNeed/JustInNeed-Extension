@@ -3,9 +3,9 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready
+ * 발행: session:changed, session:link, export:ready, ui:panel
  * 구독: seg:page, seg:chunk, record:stopped, scan:done, label:done,
- *       ui:rec, ui:export, ui:query
+ *       ui:rec, ui:export, ui:query, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   content script 와 background 사이의 유일한 통로다. chrome.runtime 은
@@ -143,6 +143,21 @@
     });
   }
 
+  // primary 의 마지막 stat (최상위 전용). primary 가 iframe(블로그 PC)이면 기록 · 대기 상태가 그 프레임에 있어서
+  //   이 프레임의 recorder 로는 알 수 없다. 6-frames 가 iframe 의 stat 을 이 버스로 중계해 준다.
+  let pStat = null;
+  bus.on('stat', (st) => {
+    const p = RBC.frames.primaryTag();
+    if (st && st.tag === (p || RBC.TAG)) pStat = st;
+  });
+  function primaryState() {
+    const own = RBC.frames.primaryTag() == null || RBC.frames.primaryTag() === RBC.TAG;
+    if (own || !pStat) {
+      return { recording: RBC.recorder.isRecording(), settling: RBC.recorder.isSettling(), units: RBC.units.count() };
+    }
+    return { recording: !!pStat.recording, settling: !!pStat.settling, units: pStat.units };
+  }
+
   // background → 이 탭 (최상위 프레임에만 온다: frameId 0)
   //   label: 팝업 "다 읽었어요". primary 에서 12-label 이 켜진다. 받았다는 답만 바로 한다 —
   //          답이 없으면 background 의 sendMessage 가 실패로 끝날 수 있다.
@@ -151,6 +166,17 @@
     if (m.rbc === 'start') { applySession(m); joinIfRecording(); }
     else if (m.rbc === 'stop') { applySession(m); RBC.frames.send('stop', { reason: 'user' }); }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
+    else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)
+      //   settling = 본문 준비 중 대기. 팝업은 기록 시작 뒤 이게 풀리고 recording 이 될 때까지 기다렸다 닫힌다.
+      const ri = RBC.stream.rootInfo() || {};
+      const ps = primaryState();
+      // 본문을 아직 못 찾았고 기록 · 대기 전이면 primary 를 다시 뽑는다. 블로그 PC 처럼 본문 iframe 이 스캔 재시도(약 9초)보다
+      //   늦게 뜨면 그 뒤로는 아무도 다시 찾지 않아, 팝업의 "잠시 뒤 다시 열어 보세요"가 거짓말이 됐다(2026-10-09 3G 실측).
+      //   이번 답은 옛 값(0개) — 다시 열면 새 값이 보인다. 기록을 시작하면 5-recorder 대기가 같은 일을 한다(settle:empty).
+      if (!ps.units && !ps.recording && !ps.settling) RBC.frames.doScan();
+      reply({ ok: true, units: ps.units, root: ri.sel || null, how: ri.how || null,
+        recording: ps.recording, settling: ps.settling });
+    }
     return false;
   });
 
@@ -162,12 +188,28 @@
       const wasRecording = session.recording;
       applySession(m);
       if (session.recording) joinIfRecording();
-      else if (wasRecording || RBC.recorder.isRecording()) RBC.frames.send('stop', { reason: 'user' });
+      else if (wasRecording || RBC.recorder.isRecording() || RBC.recorder.isSettling()) {
+        RBC.frames.send('stop', { reason: 'user' });       // 대기 중인 탭도 (정지 방송을 놓친 경우)
+      }
     });
   }
 
   bus.on('scan:done', resync);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resync(); });
+
+  // ==========================================================================
+  // 디버그 패널 보이기 설정 → 9-panel (기본 숨김)
+  //   참여 정보 페이지가 chrome.storage.local 'ui:panel' 에 쓴다. 여기서 읽어 버스로 알린다.
+  //   9-panel 이 없어도 아무 일 없다(구독자 없음). 고아 탭이면 chrome.storage 가 던지므로 감싼다.
+  // ==========================================================================
+  const K_PANEL = 'ui:panel';
+  const emitPanel = (v) => bus.emit('ui:panel', { on: v === true });
+  try {
+    chrome.storage.local.get(K_PANEL).then((r) => emitPanel(r[K_PANEL])).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch[K_PANEL]) emitPanel(ch[K_PANEL].newValue);
+    });
+  } catch (e) { /* 고아 탭: 패널은 숨김 그대로 */ }
 
   // ==========================================================================
   // 버튼 → background (9-panel 이 발행)

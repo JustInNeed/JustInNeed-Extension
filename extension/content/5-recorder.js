@@ -4,11 +4,11 @@
  * 소유: recording, 구간(segId, segPageId, segMeta), timeline 버퍼, tickTimer,
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
  * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 3-hittest, 4-input
- * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk
+ * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk, settle:empty
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
  *       sel:highlight, sel:copy, visibility, focus, pagehide,
- *       label:mode, label:done
+ *       label:mode, label:ask, label:done
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   150ms 마스터 클럭을 돌리고, 그 순간의 관측을 timeline 에 원본 그대로 남긴다.
@@ -67,10 +67,39 @@
  * --- 라벨 모드 (12-label) ----------------------------------------------------
  *   label:mode{on:true} 동안 틱을 찍지 않는다 (숨김 · 포커스 없음과 같은 처리: drain 버림).
  *   라벨 고르는 시간은 읽기 행동이 아니다 (명세). 선택 · 복사도 기록하지 않는다.
- *   label:done → { type:'label', t, segId, pids, cancelled, startT, ms } 를 남기고 바로 넘긴다.
- *     pids = 고른 유닛(유닛 order 순), startT = 라벨 모드 시작 t, ms = t − startT.
- *     취소면 pids [] · cancelled true — 틱 공백의 이유가 데이터에 남게.
+ *   v2 (라벨_명세_v2.md §6). 끝 도달 질문 카드가 떠 있는 동안은 계속 기록한다(무시하고 읽는 사람 대비).
+ *   label:ask  → { type:'labelask', t, segId, answer, startT, ms }  answer = yes | no | cancel.
+ *                startT = 카드가 뜬 때(t − shownMs). 이 구간의 틱은 정상 기록이다.
+ *                yes 면 바로 label:mode{on:true} — 라벨 모드(틱 정지)는 여기부터.
+ *   label:done → { type:'label', v:2, t, segId, trigger, cancelled, startT, ms, phaseMs,
+ *                  ratings, ratingLog, excluded, marks, survey } 를 남기고 바로 넘긴다.
+ *     startT = 라벨 모드 시작 t, ms = t − startT. 취소여도 채운 값은 남긴다 — 틱 공백의 이유가 데이터에 남게.
  *   하이라이트 · 복사와 다른 이벤트다 (행동 feature 와 정답이 섞이지 않게).
+ *
+ * --- 본문 준비 중 대기 (0-B 마지막, 2026-10-08) ------------------------------------
+ *   start() 는 바로 구간을 열지 않는다. SETTLE_POLL_MS 마다 전체 재스캔하고, 본문 스트림 글자가
+ *   SETTLE_QUIET_MS 동안 안 바뀌면 그때 begin() 으로 구간을 연다(최대 SETTLE_MAX_MS).
+ *   대기 중엔 recording 이 꺼져 있어 재스캔은 전체 재청킹 = 기록 시작 순간의 최신 렌더로 유닛 확정.
+ *   그 뒤 늦게 끼는 글은 splice 가 받는다.
+ *   - 기준은 DOM 변경이 아니라 글자 변경. 광고 회전 · 노션 호버 손잡이는 DOM 만 바꾼다 —
+ *     DOM 기준이면 광고 많은 사이트가 매번 최대 대기를 채운다. 유닛이 글자로 정의되므로 기준도 글자.
+ *   - 시계는 탭이 보일 때만 간다(document.hidden 이면 멈추고 조용함도 처음부터).
+ *     세션 시작 때 열린 탭이 전부 start 를 받는데, 숨은 탭은 사용자가 처음 볼 때 대기한다.
+ *     포커스는 안 본다 — 팝업이 열려 있으면 페이지 포커스가 없지만 탭은 보이고, 팝업이 대기를 보여 준다.
+ *   - 대기 중 정지 · primary 교체 = 대기 취소(구간을 연 적이 없으니 segend 도 없다).
+ *   - 구간을 열 때 { type:'settle', t, segId, ms, how: quiet|max, changes } 하나.
+ *     ms = 보이는 동안 기다린 시간, changes = 대기 중 글이 바뀐 횟수(첫 스캔 제외).
+ *     용도: 대기가 실제로 흡수했나(changes>0) · 글이 안 멈추는 페이지(max) · 대기 직후 splice 가 잦으면
+ *     SETTLE_QUIET_MS 가 짧다는 근거. 판정 없이 check_session 요약에 표시.
+ *   - 재스캔 비용은 대기 시간 동안만(노션 재스캔 중앙 11ms / 300ms).
+ *   - 유닛이 0개면 구간을 열지 않고 계속 기다린다(최대 대기와 무관). SETTLE_ASK_MS 마다 settle:empty 를
+ *     발행 → 6-frames 가 primary 를 다시 뽑는다. 최대 대기를 넘긴 뒤엔 SETTLE_EMPTY_POLL_MS 간격으로만 확인.
+ *     이유 (2026-10-09 블로그 PC, 느린 와이파이): 본문 iframe 이 최상위의 스캔 재시도(약 9초)보다 늦게 떠서
+ *     primary 선출이 실패 → 최상위가 기본 primary 로 유닛 0개 · 루트 body 를 기록. 기록 중엔 doScan 이 막혀
+ *     iframe 이 다 떠도 영영 못 넘어갔다(대기 이전부터 있던 구멍). 0개로 구간을 열지 않으면 doScan 이 막히지 않고,
+ *     다시 뽑기에서 iframe 이 이기면 primary:changed 로 이 대기는 취소되고 iframe 이 새로 대기를 시작한다.
+ *     유닛 0개 구간은 어차피 droppedPages 로 버려지므로 잃는 데이터는 없다.
+ *     최대 대기(max)는 본문을 찾은 뒤부터 잰다 — 안 그러면 늦게 뜬 iframe 이 뜨자마자 조용함 확인 없이 열린다.
  *
  * --- 미러 두 개 -------------------------------------------------------------
  *   isPrimary(6-frames 소유), overlayOn(8-overlay 소유) 은 읽기 전용 사본이다.
@@ -109,6 +138,7 @@
   let lastVisN = 0;                     // 패널 표시용 — 마지막 틱 vis 조각 수
   let labeling = false;                 // 12-label 의 라벨 모드 (label:mode 로만 갱신)
   let labelStartT = 0;
+  let settle = null;                    // 본문 준비 중 대기 { m, at, waited, quiet, raw, changes, timer } | null
 
   // --- 미러 (읽기 전용) ---
   let isPrimary = IS_TOP;
@@ -230,11 +260,17 @@
   // ==========================================================================
   // 내보내기 — 여기는 사실만 발행한다. 실어 나르는 건 11-session.
   // ==========================================================================
+  // 살아 있는 유닛 + 기록 중 splice 로 사라진 유닛(retired: true, order 는 살아 있는 것 뒤로 이어 붙임).
+  //   retired 를 빼면 그 pid 를 참조한 옛 틱이 meta.paragraphs 에 없어 pid 정합성이 깨진다.
   function paragraphs() {
-    return RBC.units.all().map(u => ({
-      pid: u.pid, order: u.order, charLen: u.charLen, text: u.text.slice(0, 1000),
-      pieces: u.pieces || [],                      // v3 조각 (감사 §8-4)
-    }));
+    const alive = RBC.units.all();
+    const one = (u, order, gone) => {
+      const p = { pid: u.pid, order, charLen: u.charLen, text: u.text.slice(0, 1000), pieces: u.pieces || [] };
+      if (gone) { p.retired = true; p.after = u.after || null; }   // 사라질 때 바로 앞 유닛 pid (글 순서 복원용)
+      return p;
+    };
+    return alive.map(u => one(u, u.order, false))
+      .concat(RBC.units.retired().map((u, k) => one(u, alive.length + k, true)));
   }
 
   // 글 정보 + 유닛 목록. 구간을 열 때, 그리고 기록 중 유닛이 늘었을 때(append).
@@ -263,7 +299,7 @@
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
       // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체, L = + 라벨. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-L',
+      collector: 'rbc-v3-T',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
@@ -315,15 +351,19 @@
         'tick.mdx / mdy = 직전 틱 이후 mousemove 이동량 Σ|dx| · Σ|dy| (px). ' +
         'tick.edits = 직전 틱 이후 input 이벤트 수(내용 안 남김, 한글 IME 로 부풀므로 0 이냐 아니냐로만).',
         '차분값(스크롤 속도 · 커서 이동 거리)은 로그에 없다. 아래 리셋 규칙으로 백엔드가 계산.',
-        'type=rescan mode=disruptive-skipped 이벤트가 있으면 본문이 교체된 세션. ' +
-        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. 원인은 첫 이벤트.',
+        'type=rescan mode=splice = 기록 중 본문 중간이 바뀌어 바뀐 구간만 다시 청킹함 { kept, added, retired, diff }. ' +
+        '사라진 유닛은 paragraphs 에 retired:true 로 남는다(order 는 살아 있는 유닛 뒤). ' +
+        'diff = 처음 달라진 원문 위치(at) · 그 유닛 order · 직전 40자(ctx) · 옛/새 40자. ' +
+        'mode=disruptive-skipped 는 옛 확장(splice 이전)의 기록 — 본문 교체로 학습 제외.',
         '기사 제목은 유닛에 포함되지 않는다(본문 루트 밖). 제목 텍스트는 meta.title.',
         '한 페이지 = 같은 글(pageId)의 모든 구간(segId)을 합친 것. 탭 전환은 ' +
         '구간을 바꾸지 않는다(visibility/focus 이벤트 + 틱 공백으로 남음).',
         '연속 틱 간 차분은 segId 가 바뀌거나 두 틱의 t 간격이 2×tickMs 를 넘으면 리셋.',
         'tabId 는 background 가 붙인다(sender.tab.id).',
-        'type=label = 참가자가 고른 중요 유닛 { pids(유닛 order 순), cancelled, startT, ms }. ' +
-        '라벨 모드(startT..t) 동안은 틱을 기록하지 않는다. 여러 번 있으면 마지막 것(취소 아닌)이 정답.',
+        'type=label (v:2) = 참가자 자기보고 { trigger, cancelled, startT, ms, phaseMs, ratings(pid→skip|skim|read|focus|unsure), ' +
+        'ratingLog([pid,값,ms]), excluded(숨은 유닛), marks(중요 유닛 pid, order 순), survey{gain,interest,familiarity} }. ' +
+        'type=labelask = 끝 도달 질문 응답 { answer: yes|no|cancel, startT(카드가 뜬 때), ms } — 카드가 떠 있는 동안도 틱은 기록된다. ' +
+        'label 의 startT..t(라벨 모드) 동안은 틱을 기록하지 않는다. label 이 여러 번 있으면 마지막 것(취소 아닌)이 정답.',
       ],
     };
   }
@@ -331,8 +371,61 @@
   // ==========================================================================
   // 구간 제어
   // ==========================================================================
+  // 구간 열기 요청. 바로 열지 않고 본문이 조용해질 때까지 기다린다 (헤더 "본문 준비 중 대기").
+  //   이미 기록 중이거나 대기 중이면 무시 — 11-session 이 스캔 · 탭 복귀마다 여러 번 부른다.
   function start(m) {
-    if (recording) return;                             // 같은 구간을 두 번 열지 않는다
+    if (recording || settle) return;
+    settle = { m, at: null, waited: 0, quiet: 0, raw: null, changes: 0, timer: null, asked: 0, found: 0 };
+    settleStep();
+  }
+
+  function settleStep() {
+    const s = settle;
+    if (!s) return;
+    const now = performance.now();
+    if (document.hidden) {                             // 안 보는 탭: 시계 멈춤, 조용함도 다시 잰다
+      s.at = null; s.quiet = 0;
+      s.timer = setTimeout(settleStep, CFG.SETTLE_POLL_MS);
+      return;
+    }
+    const dt = s.at == null ? 0 : now - s.at;
+    s.at = now;
+    s.waited += dt;
+    RBC.units.rescan({});                              // recording 꺼짐 → 전체 재청킹 (최신 렌더)
+    const raw = RBC.stream.raw();
+    if (raw !== s.raw || !RBC.units.count()) {
+      if (s.raw !== null && raw !== s.raw) s.changes++;
+      s.raw = raw; s.quiet = 0;
+    } else {
+      s.quiet += dt;
+    }
+    const empty = !RBC.units.count();
+    if (empty && s.waited - s.asked >= CFG.SETTLE_ASK_MS) {   // 본문을 못 찾음 → primary 다시 뽑기 요청
+      s.asked = s.waited;
+      bus.emit('settle:empty');
+    }
+    if (empty) s.found = 0; else s.found += dt;              // 최대 대기는 본문을 찾은 뒤부터 잰다
+    const how = empty ? null
+      : s.quiet >= CFG.SETTLE_QUIET_MS ? 'quiet' : s.found >= CFG.SETTLE_MAX_MS ? 'max' : null;
+    if (how) {
+      settle = null;
+      begin(s.m, { ms: Math.round(s.waited), how, changes: s.changes });
+      return;
+    }
+    emitStat();
+    s.timer = setTimeout(settleStep, empty && s.waited >= CFG.SETTLE_MAX_MS ? CFG.SETTLE_EMPTY_POLL_MS : CFG.SETTLE_POLL_MS);
+  }
+
+  function cancelSettle() {
+    if (!settle) return false;
+    clearTimeout(settle.timer);
+    settle = null;
+    emitStat();
+    return true;
+  }
+
+  function begin(m, settled) {
+    if (recording) return;
     if (!RBC.units.count()) RBC.units.rescan({});
     timeline = [];
     segTicks = 0;
@@ -354,6 +447,7 @@
     RBC.input.bump();                                   // idle 타이머 초기화
     recording = true;
     noteScroller(RBC.input.scroller());                 // 구간 시작 때 첫 값
+    if (settled) push({ type: 'settle', t: tNow(), segId, ms: settled.ms, how: settled.how, changes: settled.changes });
     ensureTicking();
     // seg:page 는 여기서 보내지 않는다 — 첫 틱에서 보낸다
     flushTimer = setInterval(flush, CFG.FLUSH_MS);
@@ -364,7 +458,12 @@
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
   // reason: 'user'(세션 정지 방송) | 'idle' | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
-    if (recording) push({ type: 'segend', t: tNow(), segId, reason: reason || 'user' });
+    if (!recording && cancelSettle()) return;         // 대기 중이었음: 구간을 연 적이 없다
+    if (recording) {
+      const e = { type: 'segend', t: tNow(), segId, reason: reason || 'user' };
+      if (sameN) { e.same = [sameN, sameMs, sameMax]; sameN = 0; sameMs = 0; sameMax = 0; }
+      push(e);
+    }
     if (pageSent) flush();                             // 마지막 조각까지 넘기고 닫는다
     else timeline = [];                                // 한 번도 안 본 구간: 흔적 없이 버린다
     clearInterval(flushTimer); flushTimer = null;
@@ -382,6 +481,7 @@
     const u = RBC.units.byPid(lastCenterPid);
     bus.emit('stat', {
       res: 'stat', tag: TAG, recording, overlayOn, isPrimary,
+      settling: settle ? { ms: Math.round(settle.waited), changes: settle.changes } : null,   // 본문 준비 중 (패널 · 팝업)
       units: RBC.units.count(), samples: segEvents,
       centerPid: lastCenterPid, cursorPid: lastCursorPid,
       scrollSpeed: Math.round(lastScrollSpeed),
@@ -420,6 +520,7 @@
       push({ type: 'demoted', t: tNow(), segId });
       stop('demoted');
     }
+    if (!isPrimary) cancelSettle();
   });
 
   // ==========================================================================
@@ -450,11 +551,21 @@
     }
   });
 
+  bus.on('label:ask', (d) => {
+    if (!recording) return;
+    const t = tNow();
+    const ms = Math.max(0, Math.round((d && d.shownMs) || 0));
+    push({ type: 'labelask', t, segId, answer: (d && d.answer) || 'cancel', startT: t - ms, ms });
+  });
+
   bus.on('label:done', (d) => {
     if (!recording) return;
     const t = tNow();
-    push({ type: 'label', t, segId, pids: (d && d.pids) || [], cancelled: !!(d && d.cancelled),
-      startT: labelStartT, ms: t - labelStartT });
+    const x = d || {};
+    push({ type: 'label', v: 2, t, segId, trigger: x.trigger || null, cancelled: !!x.cancelled,
+      startT: labelStartT, ms: t - labelStartT, phaseMs: x.phaseMs || null,
+      ratings: x.ratings || {}, ratingLog: x.ratingLog || [], excluded: x.excluded || [],
+      marks: x.marks || [], survey: x.survey || {} });
     flush();
   });
 
@@ -483,10 +594,25 @@
   // [R3] 전: rescan() 이 timeline.push 를 직접 호출했다.
   // 유닛이 늘거나 바뀌었으면(append/full) 유닛 목록도 다시 보낸다. 안 보내면 새 pid 가
   // timeline 에만 있고 meta.paragraphs 에는 없어서 pid 정합성이 깨진다.
+  // 글이 안 바뀐 재스캔(mode 'same')은 횟수 · 시간만 모아 두고 다음 기록 이벤트에 얹는다 —
+  //   호버 UI 처럼 잦은 DOM 변경마다 이벤트 · page 기록을 쌓지 않으려고 (0-B 성능).
+  let sameN = 0, sameMs = 0, sameMax = 0;
   bus.on('units:rescanned', (d) => {
     if (!recording) return;
-    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count };
-    if (d.diff) e.diff = d.diff;                      // disruptive-skipped 진단
+    if (d.mode === 'same') {
+      sameN++; sameMs += d.ms || 0; sameMax = Math.max(sameMax, d.ms || 0);
+      return;
+    }
+    const e = { type: 'rescan', t: tNow(), segId, mode: d.mode, units: d.count, ms: d.ms };
+    if (sameN) { e.same = [sameN, sameMs, sameMax]; sameN = 0; sameMs = 0; sameMax = 0; }
+    if (d.diff) e.diff = d.diff;                      // splice 진단: 어디가 바뀌었나
+    if (d.root) e.root = d.root;                      // 이 시점 본문 루트 (패널 · [6] 표시)
+    if (d.mode === 'splice') {
+      e.kept = d.kept; e.added = d.added; e.retired = d.retired; e.check = d.check;
+      if (d.inline) e.inline = true;                 // 문단 안쪽 변경 → 유닛 제자리 수정
+      if (d.hunks > 1) e.hunks = d.hunks;            // 한 재스캔에 바뀐 곳 수 (2026-10-09, 따로 처리됨)
+      if (d.rootChanged) { e.rootChanged = true; e.rootFrom = d.rootFrom; e.rootTo = d.root; }
+    }
     push(e);
     if (d.mode !== 'disruptive-skipped' && pageSent) emitPage();   // 첫 틱 전이면 첫 틱 때 최신 목록이 나간다
   });
@@ -499,6 +625,7 @@
   // ==========================================================================
   RBC.recorder = {
     isRecording: () => recording,
+    isSettling: () => !!settle,                // 본문 준비 중 대기 (구간은 아직 안 열림)
     query: () => searchQuery,                  // 9-panel 의 검색어 입력 초기값
     segment: () => ({ sessionId, segId, pageId: segPageId }),
     start,
