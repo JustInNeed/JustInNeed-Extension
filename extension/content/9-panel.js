@@ -253,7 +253,14 @@
     noiseHtml = noiseLine(s.noise);
     const nEl = panelEl.querySelector('#rbc-noise');
     if (nEl) nEl.innerHTML = noiseHtml;
-    if (s.noise && s.noise.min != null) noiseMinPct = Math.round(s.noise.min * 100);
+    if (s.noise && s.noise.min != null) {
+      noiseMinPct = Math.round(s.noise.min * 100);
+      const nm = panelEl.querySelector('[data-act="noisemin"]');
+      if (nm && document.activeElement !== nm) {        // 끌고 있는 중이 아니면 실제 값으로 맞춘다
+        nm.value = noiseMinPct;
+        panelEl.querySelector('#rbc-noiseminval').textContent = noiseMinPct + '%';
+      }
+    }
     setStat(`
       <span class="dot" style="background:${s.recording ? '#16a34a' : s.settling ? '#f59e0b' : '#bbb'}"></span>
       ${s.recording ? '기록 중' : s.settling

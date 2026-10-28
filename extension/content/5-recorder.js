@@ -481,7 +481,7 @@
   // ==========================================================================
   // 패널용 noise 요약 (#11). 판정 상태(1-stream) + 지금 유닛의 조각 개수. 기록 데이터에는 안 나감.
   function noiseStat() {
-    if (!RBC.units.count()) return null;       // 유닛 없는 프레임(광고 iframe)에서 Readability 를 돌리지 않게
+    if (!RBC.units.count()) return null;       // 유닛 없는 프레임은 판정도 없다 (표시할 것 없음)
     const a = RBC.stream.article();
     if (!a) return null;
     let pieces = 0, units = 0, allUnits = 0, none = 0;
