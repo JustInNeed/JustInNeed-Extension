@@ -1,9 +1,28 @@
 /* =============================================================================
  * 1-stream.js — 본문 루트 탐색 + 텍스트 스트림 구축
  *
- * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot
- * 의존(직접 호출): 0-core
- * 발행: 없음   구독: 없음
+ * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin
+ * 의존(직접 호출): 0-core, vendor/readability.js (전역 Readability)
+ * 발행: 없음   구독: record:started, record:stopped
+ *
+ * --- 본문 상자 판정 = noise (Readability, #11, 2026-10-28) ---------------------
+ *   noise 정의(10-10 서현): 본문 루트 밖이 섞인 것만. 루트 안 글(끝인사 · 크레딧 · 관련 글 링크)은 noise 아님.
+ *   여기서 "본문 루트"는 우리가 고른 루트(contentRoot)가 아니라 진짜 기사 본문이다 — 폴백 루트가 관련 기사 ·
+ *   기자 박스까지 크게 잡힐 때 그 섞인 부분을 표시하려는 것. 루트 · 스트림 · 청킹은 이 판정과 무관하게 그대로다.
+ *   - Readability 의 "정리된 결과"는 안 쓰고, 본문으로 "고른 상자(요소)"만 쓴다. Readability 는 본문 안의
+ *     바이라인 · 관련 링크 · 캡션도 지우는데 그건 정의상 noise 가 아니다. 상자 안 = 본문, 상자 밖 = noise.
+ *   - Readability 는 문서를 직접 고치므로 복사본에서 돈다. 상자를 원본에서 되찾는 법: 복사 직전 원본 요소를
+ *     문서 순서로 줄 세우고, 복사본 요소에 같은 순서 번호(data-rbc-i)를 붙인다. 이 둘은 쉬는 틈 없이 한 번에
+ *     실행되므로 그 사이에 페이지가 바뀔 수 없다. 결과에서 번호 붙은 가장 바깥 요소들 = 상자, 번호로 원본을 찾는다.
+ *     번호는 속성이라 Readability 가 태그를 바꾸거나(_setNodeTag 가 속성 복사) HTML 문자열로 되돌려 재시도해도 남는다.
+ *     원본 페이지에는 아무것도 쓰지 않는다(쓰면 7-observer 가 재스캔한다).
+ *   - 되찾은 뒤 대조: 복사본 상자에 남은 글 표본이 원본 상자 글에 다 들어 있어야 한다. 아니면 실패.
+ *   - 플랫폼 지정 루트(how: site) = 루트가 곧 본문(§6 결정) → Readability 를 안 돌리고 전부 본문.
+ *   - 루트 글자 중 상자 안 비율 < noiseMin 이면 엉뚱한 곳을 고른 것으로 보고 미판정. noiseMin 은 근거 없는
+ *     임시값 — 패널 슬라이더로 바꾼다(기록 중 잠김, 청킹과 같은 길).
+ *   - 실패 · 미판정이면 조각에 noise 필드를 안 쓴다(없음 = 미판정, v3 그대로). 이유는 원문 그대로 art.why → 패널.
+ *   언제 다시 판정하나: 루트가 바뀌었거나 상자가 DOM 에서 빠졌을 때, 그리고 기록 중이 아닐 때 본문 글이 바뀌었을 때.
+ *   기록 중에는 처음 판정을 유지한다 — 새로 생긴 유닛도 같은 상자로 본다(한 구간 안 기준이 섞이지 않게).
  *
  * --- seg 하나 = 텍스트 노드 하나 (v3) -----------------------------------------
  *   { node, start, len, blk, link }
@@ -66,7 +85,8 @@
   'use strict';
   const RBC = window.RBC;
   if (!RBC || RBC.dup) return;
-  const { CFG } = RBC;
+  /* global Readability */
+  const { CFG, bus } = RBC;
   const { isWs } = RBC.util;
 
   // --- 이 파일이 소유하는 상태 ---
@@ -360,6 +380,117 @@
   }
 
   // ==========================================================================
+  // 본문 상자 판정 (noise) — 헤더 "본문 상자 판정" 참고
+  // ==========================================================================
+  const MARK = 'data-rbc-i';
+  let noiseMin = 0.3;        // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
+  let art = null;            // { status: site|ok|fail, why, boxes[], ratio, ms, root, raw }
+  let recordingNow = false;  // 5-recorder 소유 recording 의 미러. 기록 중엔 판정을 유지한다.
+  bus.on('record:started', () => { recordingNow = true; });
+  bus.on('record:stopped', () => { recordingNow = false; });
+
+  const squash = (s) => (s || '').replace(/\s+/g, '');
+
+  // 복사본에서 Readability 를 돌려 원본의 상자 요소들을 돌려준다. 실패면 { why }.
+  function findBoxes() {
+    if (typeof Readability !== 'function') return { why: 'Readability 로드 안 됨' };
+    const orig = Array.from(document.getElementsByTagName('*'));
+    const doc = document.cloneNode(true);
+    const copy = Array.from(doc.getElementsByTagName('*'));
+    if (copy.length !== orig.length) return { why: `복사본 요소 수 다름: 원본 ${orig.length} / 복사본 ${copy.length}` };
+    for (let i = 0; i < copy.length; i++) copy[i].setAttribute(MARK, String(i));
+    // 우리 화면 요소(패널 · 오버레이 · 라벨)는 본문 후보에서 뺀다
+    doc.querySelectorAll('[id^="rbc-"]').forEach(el => el.remove());
+
+    let res;
+    try { res = new Readability(doc, { serializer: el => el }).parse(); }
+    catch (e) { return { why: 'Readability 예외: ' + String(e && e.message || e) }; }
+    if (!res || !res.content) return { why: 'Readability 결과 없음 (본문을 못 찾음)' };
+
+    // 번호 붙은 가장 바깥 요소들 = 상자. 번호 없는 요소(Readability 가 만든 감싸개)는 안으로 내려간다.
+    const found = [];
+    const walk = (el) => {
+      for (const c of el.children) {
+        if (c.hasAttribute(MARK)) found.push(c); else walk(c);
+      }
+    };
+    walk(res.content);
+    if (!found.length) return { why: '상자 번호 없음 (Readability 결과에 원본 요소가 안 남음)' };
+
+    const boxes = [];
+    for (const c of found) {
+      const o = orig[+c.getAttribute(MARK)];
+      if (!o) return { why: `상자 번호 ${c.getAttribute(MARK)} 가 원본에 없음` };
+      // 대조: 복사본 상자에 남은 글 표본(최대 5개)이 원본 상자 글에 다 있어야 한다
+      const have = squash(o.textContent);
+      const tw = doc.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+      let n, k = 0;
+      while ((n = tw.nextNode()) && k < 5) {
+        const s = squash(n.data);
+        if (s.length < 10) continue;
+        k++;
+        if (!have.includes(s.slice(0, 30))) {
+          return { why: `상자 대조 실패: "${s.slice(0, 30)}" 가 원본 ${describe(o)} 에 없음` };
+        }
+      }
+      boxes.push(o);
+    }
+    return { boxes };
+  }
+
+  // 판정을 최신으로 맞춘다 (필요할 때만 다시 돈다). 2-units 가 조각을 만들 때 inArticle 을 통해 부른다.
+  function judge() {
+    if (!contentRoot) { art = null; return art; }
+    if (art && art.root === contentRoot) {
+      const alive = art.status !== 'ok' || art.boxes.every(b => b.isConnected);
+      if (alive && (recordingNow || art.raw === raw)) return art;
+    }
+    const t0 = performance.now();
+    if (rootInfo && rootInfo.how === 'site') {
+      art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
+    } else {
+      const r = findBoxes();
+      if (!r.boxes) {
+        art = { status: 'fail', why: r.why, boxes: [], ratio: null };
+      } else {
+        // 루트 글자(공백 빼고) 중 상자 안 비율
+        let inside = 0, total = 0;
+        for (const s of segs) {
+          const c = sig[s.start + s.len] - sig[s.start];
+          total += c;
+          if (r.boxes.some(b => b.contains(s.node))) inside += c;
+        }
+        art = { status: 'ok', why: '', boxes: r.boxes, ratio: total ? inside / total : 0 };
+      }
+    }
+    art.ms = Math.round(performance.now() - t0);
+    art.root = contentRoot;
+    art.raw = raw;
+    return art;
+  }
+
+  // 판정이 쓸 만한가: 플랫폼 지정이거나, 상자를 찾았고 비율이 문턱 이상.
+  const decided = (a) => !!a && (a.status === 'site' || (a.status === 'ok' && a.ratio >= noiseMin));
+
+  // 텍스트 노드가 본문 상자 안인가. true = 본문, false = noise, null = 미판정(필드 안 씀).
+  function inArticle(node) {
+    const a = judge();
+    if (!decided(a)) return null;
+    if (a.status === 'site') return true;
+    return a.boxes.some(b => b.contains(node));
+  }
+
+  // 패널 · 오버레이용 요약 (기록 데이터에는 안 나감).
+  function article() {
+    const a = judge();
+    if (!a) return null;
+    return {
+      status: a.status, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
+      boxes: a.boxes.map(describe), boxEls: a.boxes,
+    };
+  }
+
+  // ==========================================================================
   // 공개
   // ==========================================================================
   RBC.stream = {
@@ -376,5 +507,9 @@
     root: () => contentRoot,
     rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link, el }
     attrs,                              // el → [tag, id, class, role]
+    inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
+    article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
+    noiseMin: () => noiseMin,
+    setNoiseMin: (v) => { noiseMin = v; },   // 기록 중 차단은 6-frames(chunk 명령) · 9-panel
   };
 })();

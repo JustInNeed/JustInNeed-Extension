@@ -35,6 +35,7 @@
       "all_frames": true,
       "match_about_blank": false,
       "js": [
+        "vendor/readability.js",
         "content/0-core.js",
         "content/1-stream.js",
         "content/2-units.js",
