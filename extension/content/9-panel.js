@@ -20,6 +20,10 @@
  *   "유닛 1개" 가 상태줄을 덮어써서 기록이 이상해 보였다(데이터는 멀쩡했다).
  *   선출 전에는 자기 프레임 것만, 선출 뒤에는 primary 것만 받는다.
  *
+ * --- noise 줄 · 본문 문턱 (#11) ----------------------------------------------
+ *   stat.noise 로 noise 조각 · 유닛 개수, 판정 방식(Readability / 플랫폼 생략 / 실패 원문), 되찾은 상자 이름,
+ *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
+ *
  * --- 연결 끊김 표시 ----------------------------------------------------------
  *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
  *   background 응답으로만 바뀌므로, 이게 없으면 "버튼이 안 눌린다"로만 보인다.
@@ -69,6 +73,8 @@
   let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
   let rescanHtml = '';                   // 마지막 재스캔 한 줄 (기록 중 splice 를 눈으로 보려고, 0-B)
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
+  let noiseMinPct = 30;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
+  let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -145,6 +151,12 @@
                data-act="chunk" ${lock}>
         <span id="rbc-chunkval">${RBC.units.opts().target}자</span>
       </div>
+      <div class="rbc-row" title="루트 글자 중 Readability 본문 상자 안 비율이 이보다 낮으면 미판정. 30% 는 근거 없는 임시값">
+        <span>본문 문턱</span>
+        <input type="range" min="0" max="100" step="5" value="${noiseMinPct}" data-act="noisemin" ${lock}>
+        <span id="rbc-noiseminval">${noiseMinPct}%</span>
+      </div>
+      <div class="rbc-stat" id="rbc-noise">${noiseHtml}</div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-stat" id="rbc-rescan">${rescanHtml}</div>
@@ -193,6 +205,35 @@
       panelEl.querySelector('#rbc-chunkval').textContent = e.target.value + '자';
     };
     slider.onchange = (e) => RBC.frames.send('chunk', { target: +e.target.value });
+
+    // 본문 문턱(#11): 청크 명령에 실어 보낸다 → primary 만 받고 기록 중엔 6-frames 가 막는다.
+    const nm = panelEl.querySelector('[data-act="noisemin"]');
+    nm.oninput = (e) => {
+      panelEl.querySelector('#rbc-noiseminval').textContent = e.target.value + '%';
+    };
+    nm.onchange = (e) => {
+      noiseMinPct = +e.target.value;
+      RBC.frames.send('chunk', { noiseMin: noiseMinPct / 100 });
+    };
+  }
+
+  // noise 판정 줄 (#11). primary 의 stat.noise(5-recorder noiseStat)로 그린다 — 본문이 iframe 이어도 보이게.
+  const NOISE_HOW = { ok: 'Readability', site: '플랫폼 지정 루트 — 판정 생략', fail: 'Readability 실패' };
+  function noiseLine(n) {
+    if (!n) return '<span style="color:#999">noise 판정 없음 (유닛 없음)</span>';
+    const pct = (x) => (x == null ? '-' : Math.round(x * 100) + '%');
+    let s = `<b style="color:#dc2626">noise</b> 조각 <b>${n.pieces}</b> · 유닛 <b>${n.units}</b>` +
+      ` (전부 noise ${n.allUnits})` + (n.none ? ` · <span style="color:#b45309">미판정 조각 ${n.none}</span>` : '');
+    if (n.status === 'fail') {
+      s += `<br><span style="color:#dc2626;font-weight:600">${NOISE_HOW.fail}: ${esc(n.why)}</span>`;
+    } else if (n.status === 'site') {
+      s += `<br><span style="color:#666">${NOISE_HOW.site}</span>`;
+    } else {
+      s += `<br><span style="color:#7e22ce">상자 ${esc(n.boxes.join(', '))}</span> · 상자 안 비율 <b>${pct(n.ratio)}</b>` +
+        ` / 문턱 ${pct(n.min)} → ` + (n.decided ? '판정함' : '<b style="color:#b45309">미판정 (비율 &lt; 문턱)</b>');
+    }
+    if (n.ms != null) s += ` · ${n.ms}ms`;
+    return s;
   }
 
   // ==========================================================================
@@ -209,6 +250,10 @@
     if (!panelEl || !s) return;
     const primary = RBC.frames.primaryTag();
     if (primary ? s.tag !== primary : s.tag !== TAG) return;   // 광고 iframe 등은 무시
+    noiseHtml = noiseLine(s.noise);
+    const nEl = panelEl.querySelector('#rbc-noise');
+    if (nEl) nEl.innerHTML = noiseHtml;
+    if (s.noise && s.noise.min != null) noiseMinPct = Math.round(s.noise.min * 100);
     setStat(`
       <span class="dot" style="background:${s.recording ? '#16a34a' : s.settling ? '#f59e0b' : '#bbb'}"></span>
       ${s.recording ? '기록 중' : s.settling
