@@ -331,6 +331,8 @@
         '유닛 text(공백 정리 뒤, UTF-16) 기준이며 빈틈·겹침 없이 text 를 나눈다. linkChars = <a> 안 글자 수.',
         'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
         'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
+        'pieces[].noise = 조각 글이 Readability 가 고른 본문 상자 밖에 걸치면 true, 안이면 false. 필드 없음 = 미판정 ' +
+        '(Readability 실패 · 상자 비율이 문턱 미만). 플랫폼 지정 루트(how=site)는 판정 없이 전부 false. 조각을 처음 만들 때 정함.',
         '이탈 시각은 segend 이벤트 · session.chunkReport.end 로 본다 (meta.leftAt 없음).',
         'tick.vis = 그 틱에 뷰포트와 겹친 조각 [pid, k, top, bottom, left, right]. 자기 프레임 뷰포트 기준 CSS px, ' +
         '자르지 않음(음수 · vh 초과 허용). 조각마다 Range 외곽 상자. 같은 pid 의 조각은 세로 구간 합집합으로 합칠 것(단순 합 금지). ' +
@@ -477,6 +479,23 @@
   // 패널 표시용 통계
   //   여기서는 만들기만 한다. 최상위로 보내는 건 6-frames, 그리는 건 9-panel.
   // ==========================================================================
+  // 패널용 noise 요약 (#11). 판정 상태(1-stream) + 지금 유닛의 조각 개수. 기록 데이터에는 안 나감.
+  function noiseStat() {
+    if (!RBC.units.count()) return null;       // 유닛 없는 프레임은 판정도 없다 (표시할 것 없음)
+    const a = RBC.stream.article();
+    if (!a) return null;
+    let pieces = 0, units = 0, allUnits = 0, none = 0;
+    for (const u of RBC.units.all()) {
+      const n = (u.pieces || []).filter(p => p.noise === true).length;
+      pieces += n;
+      none += (u.pieces || []).filter(p => p.noise == null).length;
+      if (n) units++;
+      if (n && n === u.pieces.length) allUnits++;
+    }
+    return { status: a.status, why: a.why, ratio: a.ratio, min: a.min, decided: a.decided, ms: a.ms,
+      boxes: a.boxes, pieces, units, allUnits, none };
+  }
+
   function emitStat() {
     const u = RBC.units.byPid(lastCenterPid);
     bus.emit('stat', {
@@ -490,6 +509,7 @@
       sampleMs: RBC.hittest.stats(), visN: lastVisN,   // 패널: sample() p95 · 이번 틱 vis 조각 수
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
+      noise: noiseStat(),
     });
   }
 

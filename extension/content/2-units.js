@@ -22,7 +22,9 @@
  *   조각 = 유닛 중 DOM 블록 하나에 속하는 부분. 짧은 문단은 다음 문단과 합쳐지므로
  *   유닛 하나가 조각 여럿일 수 있다 ("본문 마지막 문장 + 관련기사 제목").
  *
- *   u.pieces = [{ off, chars, linkChars, path, pathCut }, …]   배열 순서 = 조각 번호 k
+ *   u.pieces = [{ off, chars, linkChars, path, pathCut, noise? }, …]   배열 순서 = 조각 번호 k
+ *     noise      = 조각 글이 본문 상자 밖에 걸치나 (#11, 1-stream 헤더 "본문 상자 판정"). 미판정이면 필드 없음.
+ *                  조각을 처음 만들 때 한 번 정한다 — 기록 중 이미 있는 조각은 다시 판정하지 않는다.
  *     off, chars = 유닛 text(clean 뒤, UTF-16) 안 위치. 빈틈 · 겹침 없이 text 를 나눈다.
  *     linkChars  = 그중 <a> 안 글자 수 (개수, 비율 아님).
  *     path       = 조각 첫 텍스트 노드의 DOM 블록부터 위로 최대 6단계, 루트 직전에서 멈춤.
@@ -276,20 +278,25 @@
       const oa = textOff(u, ra);
       const ob = textOff(u, rb);
       if (!cur || s.blk !== cur.blk) {
-        cur = { blk: s.blk, off: oa, end: ob, link: 0, ra, rb };
+        cur = { blk: s.blk, off: oa, end: ob, link: 0, ra, rb, out: false, und: false };
         runs.push(cur);
       } else {
         cur.end = ob;
         cur.rb = rb;
       }
       if (s.link) cur.link += ob - oa;
+      const inA = RBC.stream.inArticle(s.node);       // 본문 상자 판정 (1-stream 헤더)
+      if (inA === null) cur.und = true; else if (!inA) cur.out = true;
     }
     // 끝 공백만 있던 조각은 trim 으로 0글자가 된다 → 뺀다 (off 연결은 유지됨)
     const kept = runs.filter(r => r.end > r.off);
     return {
       pieces: kept.map((r) => {
         const { path, cut } = pathOf(r.blk, root);
-        return { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
+        const p = { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
+        // noise: 조각 글 일부라도 본문 상자 밖이면 true (정의 "섞인 것"). 미판정이면 필드 없음.
+        if (!r.und) p.noise = r.out;
+        return p;
       }),
       spans: kept.map(r => [r.ra, r.rb]),
     };
@@ -647,10 +654,15 @@
   });
 
   // 기록 중 차단은 6-frames 와 9-panel 양쪽에 있다. 여기는 계산만 한다.
+  // noiseMin(본문 상자 문턱)도 같은 명령으로 온다 — 청킹처럼 기록 전 설정이고 같은 차단을 타야 해서.
+  //   다시 자르면 유닛이 새로 만들어져 조각 noise 가 새 문턱으로 다시 계산된다.
   bus.on('cmd:chunk', (m) => {
-    chunkOpts.target = m.target;
-    chunkOpts.min = Math.round(m.target * 0.55);
-    chunkOpts.max = Math.round(m.target * 1.7);
+    if (m.target != null) {
+      chunkOpts.target = m.target;
+      chunkOpts.min = Math.round(m.target * 0.55);
+      chunkOpts.max = Math.round(m.target * 1.7);
+    }
+    if (m.noiseMin != null) RBC.stream.setNoiseMin(m.noiseMin);
     rescan({});
   });
 

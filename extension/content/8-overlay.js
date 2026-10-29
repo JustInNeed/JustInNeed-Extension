@@ -2,7 +2,7 @@
  * 8-overlay.js — 유닛 경계 오버레이 (디버그 전용)
  *
  * 소유: overlayOn, CSS Custom Highlight 객체, 폴백 레이어, 중앙선 엘리먼트, vis 상자 레이어
- * 의존(직접 호출): 0-core, RBC.units, RBC.hittest   ← 전부 자기보다 낮은 번호
+ * 의존(직접 호출): 0-core, RBC.stream, RBC.units, RBC.hittest   ← 전부 자기보다 낮은 번호
  * 발행: overlay:changed
  * 구독: cmd:overlay, units:changed, tick:done, viewport:resized, label:mode
  *   평정 · 중요 표시(label:mode on) 동안은 숨긴다 — 오버레이 상자가 평정 상자와 겹쳐 헷갈렸다(2026-10-08).
@@ -17,6 +17,12 @@
  *   글자 칠하기와 따로 — 상자는 "로그에 남는 좌표 그 자체"라서, 사진 칸이 비고 글자만
  *   덮이는지를 눈으로 확인하는 장치다. 라벨 = #order·k. 갱신이 틱 단위(150ms)라 빠른
  *   스크롤에서는 상자가 살짝 늦게 따라온다 (표시만의 한계, 기록과 무관).
+ *
+ * --- noise 표시 (#11) --------------------------------------------------------
+ *   조각 noise === true 인 글은 빨간 바탕 + 물결 밑줄(rbc-noise), vis 상자도 빨간 점선 + "noise" 라벨.
+ *   Readability 가 고른 본문 상자(1-stream article().boxEls)는 보라 굵은 테두리 + "본문 상자" 라벨.
+ *   테두리가 기사 본문을 감싸면 상자를 제대로 되찾은 것이고, 사이드바 · 댓글 · 페이지 전체면 잘못 찾은 것.
+ *   상자 위치는 틱마다 다시 잰다(상자는 몇 개뿐). Highlight 미지원 폴백에는 noise 칠하기를 안 넣었다(크롬은 지원).
  *
  * --- 판정 기준 --------------------------------------------------------------
  *   manifest의 js 배열에서 이 파일을 빼도 스캔·기록·정지·JSON이 전부 정상이어야
@@ -42,11 +48,13 @@
 
   // --- 이 파일이 소유하는 상태 ---
   let overlayOn = false;
-  let hlA = null, hlB = null, hlC = null, hlU = null;
+  let hlA = null, hlB = null, hlC = null, hlU = null, hlN = null;
   let fallbackLayer = null, centerLineEl = null;
   let fbRaf = 0;
   let visLayer = null;
   const visPool = [];
+  let boxLayer = null;                   // 본문 상자 테두리 (#11)
+  const boxPool = [];
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 오버레이 몫만 떼어왔다.
@@ -75,6 +83,16 @@
       .rbc-vis-box > span{ position:absolute; left:-1px; top:-15px; font:10px/14px monospace;
         padding:0 3px; color:#fff; background:rgba(37,99,235,.9); white-space:nowrap; }
       .rbc-vis-box.b > span{ background:rgba(217,119,6,.95); }
+      ::highlight(rbc-noise){ background-color: rgba(220,38,38,.38);
+        text-decoration: underline wavy 1.5px rgba(185,28,28,.95); }
+      .rbc-vis-box.n{ border:2.5px dashed rgba(220,38,38,.95); }
+      .rbc-vis-box.n > span{ background:rgba(220,38,38,.95); }
+      #rbc-box{ position:fixed; left:0; top:0; width:0; height:0; overflow:visible;
+        z-index:2147483644; pointer-events:none; }
+      .rbc-art-box{ position:absolute; box-sizing:border-box; pointer-events:none;
+        border:4px solid rgba(147,51,234,.9); }
+      .rbc-art-box > span{ position:absolute; left:-4px; top:-18px; font:11px/16px monospace;
+        padding:0 4px; color:#fff; background:rgba(147,51,234,.95); white-space:nowrap; }
     `;
     document.documentElement.appendChild(s);
   }
@@ -82,9 +100,12 @@
   // ==========================================================================
   // 유닛 → Range
   // ==========================================================================
-  function rangeForUnit(u) {
-    const a = RBC.hittest.locate(u.start);
-    const b = RBC.hittest.locate(u.end);
+  function rangeForUnit(u) { return rangeForSpan(u.start, u.end); }
+
+  // 원문 구간 [start, end) → Range. 유닛 전체 또는 조각 하나(u.spans[k]).
+  function rangeForSpan(start, end) {
+    const a = RBC.hittest.locate(start);
+    const b = RBC.hittest.locate(end);
     if (!a || !b) return null;
     const r = document.createRange();
     try {
@@ -102,18 +123,25 @@
     if (HL_OK) {
       if (!hlA) {
         hlA = new Highlight(); hlB = new Highlight();
-        hlC = new Highlight(); hlU = new Highlight();
-        hlA.priority = 1; hlB.priority = 1; hlC.priority = 5; hlU.priority = 9;
+        hlC = new Highlight(); hlU = new Highlight(); hlN = new Highlight();
+        hlA.priority = 1; hlB.priority = 1; hlN.priority = 3; hlC.priority = 5; hlU.priority = 9;
         CSS.highlights.set('rbc-unit-a', hlA);
         CSS.highlights.set('rbc-unit-b', hlB);
+        CSS.highlights.set('rbc-noise', hlN);
         CSS.highlights.set('rbc-center', hlC);
         CSS.highlights.set('rbc-cursor', hlU);
       }
-      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear();
+      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear(); hlN.clear();
       if (on) {
         RBC.units.all().forEach((u, i) => {
           const r = rangeForUnit(u);
           if (r) (i % 2 ? hlB : hlA).add(r);
+          (u.pieces || []).forEach((p, k) => {
+            const sp = u.spans && u.spans[k];
+            if (p.noise !== true || !sp) return;
+            const rn = rangeForSpan(sp[0], sp[1]);
+            if (rn) hlN.add(rn);
+          });
         });
       }
     } else {
@@ -168,14 +196,43 @@
       const [pid, k, top, bottom, left, right] = v;
       const u = RBC.units.byPid(pid);
       const order = u ? u.order : '?';
-      d.className = 'rbc-vis-box' + (typeof order === 'number' && order % 2 ? ' b' : '');
+      const noise = !!(u && u.pieces && u.pieces[k] && u.pieces[k].noise === true);
+      d.className = 'rbc-vis-box' + (typeof order === 'number' && order % 2 ? ' b' : '') + (noise ? ' n' : '');
       d.style.cssText = `display:block;left:${left}px;top:${top}px;` +
         `width:${right - left}px;height:${bottom - top}px;`;
-      d.firstChild.textContent = '#' + order + '·' + k;
+      d.firstChild.textContent = '#' + order + '·' + k + (noise ? ' noise' : '');
     }
   }
 
   function hideVis() { if (visLayer) visLayer.style.display = 'none'; }
+
+  // 본문 상자 테두리 — 뷰포트 기준으로 틱마다 다시 잰다.
+  function drawBoxes() {
+    const a = RBC.stream.article();
+    const els = (a && a.status === 'ok') ? a.boxEls : [];
+    if (!boxLayer) {
+      boxLayer = document.createElement('div');
+      boxLayer.id = 'rbc-box';
+      document.documentElement.appendChild(boxLayer);
+    }
+    boxLayer.style.display = 'block';
+    while (boxPool.length < els.length) {
+      const d = document.createElement('div');
+      d.className = 'rbc-art-box';
+      d.appendChild(document.createElement('span'));
+      boxLayer.appendChild(d);
+      boxPool.push(d);
+    }
+    for (let i = 0; i < boxPool.length; i++) {
+      const d = boxPool[i], el = els[i];
+      if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
+      const b = el.getBoundingClientRect();
+      d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
+      d.firstChild.textContent = `본문 상자 (Readability) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정');
+    }
+  }
+
+  function hideBoxes() { if (boxLayer) boxLayer.style.display = 'none'; }
 
   // ==========================================================================
   // 폴백 — CSS Custom Highlight 미지원 브라우저
@@ -218,7 +275,7 @@
   function setOverlay(on) {
     overlayOn = !!on;
     paint(overlayOn);
-    if (!overlayOn) hideVis();
+    if (overlayOn) drawBoxes(); else { hideVis(); hideBoxes(); }
     // content.js 의 미러를 갱신시킨다. 거기서 ensureTicking() 이 다시 불린다.
     bus.emit('overlay:changed', { on: overlayOn });
   }
@@ -236,16 +293,17 @@
   bus.on('label:mode', (d) => {
     labelHide = !!(d && d.on);
     if (!overlayOn) return;
-    if (labelHide) { paint(false); hideVis(); } else paint(true);
+    if (labelHide) { paint(false); hideVis(); hideBoxes(); } else { paint(true); drawBoxes(); }
   });
 
-  bus.on('units:changed', () => { if (overlayOn && !labelHide) paint(true); });
+  bus.on('units:changed', () => { if (overlayOn && !labelHide) { paint(true); drawBoxes(); } });
 
   // [R5] 전: tick() 안에서 if (overlayOn) markCurrent(centerU, cursorPid);
   bus.on('tick:done', (d) => {
     if (!overlayOn || labelHide || !d) return;
     markCurrent(d.centerU, d.cursorPid);
     drawVis(d.vis);
+    drawBoxes();
   });
 
   // 전: onResize() 안에서 if (overlayOn) paintOverlay(true);
