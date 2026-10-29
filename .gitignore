@@ -11,3 +11,8 @@ venv/
 !extension/manifest.json
 !test/baseline_session.json
 *.zip
+
+
+node_modules/
+docs/
+.claude/settings.local.json

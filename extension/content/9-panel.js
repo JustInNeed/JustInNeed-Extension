@@ -22,7 +22,7 @@
  *
  * --- noise 줄 · 본문 문턱 (#11) ----------------------------------------------
  *   stat.noise 로 noise 조각 · 유닛 개수, 판정 방식(Readability / 플랫폼 생략 / 실패 원문), 되찾은 상자 이름,
- *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
+ *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. "전부 noise" 유닛 수 = 테스트 모드 평정에서 빠지는 수(#13). 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
  *
  * --- 연결 끊김 표시 ----------------------------------------------------------
  *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
@@ -223,7 +223,7 @@
     if (!n) return '<span style="color:#999">noise 판정 없음 (유닛 없음)</span>';
     const pct = (x) => (x == null ? '-' : Math.round(x * 100) + '%');
     let s = `<b style="color:#dc2626">noise</b> 조각 <b>${n.pieces}</b> · 유닛 <b>${n.units}</b>` +
-      ` (전부 noise ${n.allUnits})` + (n.none ? ` · <span style="color:#b45309">미판정 조각 ${n.none}</span>` : '');
+      ` (전부 noise ${n.allUnits} = 평정 제외)` + (n.none ? ` · <span style="color:#b45309">미판정 조각 ${n.none}</span>` : '');
     if (n.status === 'fail') {
       s += `<br><span style="color:#dc2626;font-weight:600">${NOISE_HOW.fail}: ${esc(n.why)}</span>`;
     } else if (n.status === 'site') {

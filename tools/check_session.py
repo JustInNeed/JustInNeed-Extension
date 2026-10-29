@@ -51,8 +51,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          틱이 있는데 scroller 이벤트 없음. 세트 B 이전 파일은 FAIL — 정상.
     [17] 라벨 v2 (라벨_명세_v2.md §8)                 FAIL / WARN
          취소 아닌 마지막 label 이 정답. 라벨 없는 페이지는 '검사 대상 없음'으로 통과.
-         FAIL: v2 아님 · 필수 필드 · ratings ∪ excluded = 전체 유닛(겹침 없음) · 값 5종 ·
-               marks ⊆ 평정 대상(중복 없음) · 설문 3문항 값 · ratingLog 최종값 = ratings ·
+         FAIL: v2 아님 · 필수 필드 · ratings ∪ excluded = 전체 유닛(겹침 없음, excluded = 숨은 유닛 · 전부 noise 유닛) · 값 5종 ·
+               marks ⊆ 평정 대상 ∪ 전부 noise 유닛(중복 없음, 화면에 보여 누를 수 있어서 #13) · 설문 3문항 값 · ratingLog 최종값 = ratings ·
                라벨 모드(label 의 startT..t) 안에 tick/highlight/copy 이벤트.
                (labelask 카드 구간은 기록이 정상 — 카드를 무시하고 읽는 사람 대비, 2026-10-07)
          WARN: 기억 안 남 > 50% · 평정 간격 중앙값 < 300ms (대충 찍기) ·
@@ -863,8 +863,12 @@ def check_label(rep, meta, timeline, ticks):
         probs.append(f"평정 값 {badv[0]!r}")
     if len(marks) != len(set(marks)):
         probs.append("marks 중복")
-    if set(marks) - set(rat):
-        probs.append(f"marks 가 평정 대상 밖 {len(set(marks) - set(rat))}개")
+    # 전부 noise 유닛은 평정에선 빠지지만 화면에 보여 표시(mark)는 할 수 있다 (#13)
+    allnoise = {p["pid"] for p in meta.get("paragraphs", []) if not p.get("retired")
+                and p.get("pieces") and all(q.get("noise") is True for q in p["pieces"])}
+    out = set(marks) - set(rat) - (set(exc) & allnoise)
+    if out:
+        probs.append(f"marks 가 평정 대상 밖 {len(out)}개")
     for k, ok in SURVEY_VALUES.items():
         if lab["survey"].get(k) not in ok:
             probs.append(f"설문 {k}={lab['survey'].get(k)!r}")
