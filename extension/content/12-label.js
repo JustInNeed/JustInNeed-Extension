@@ -25,8 +25,12 @@
  *   [아직] 뒤에는 15초가 지나야 다시 묻고, 또 [아직]이면 간격을 두 배로. 구간이 새로 열리면 초기화.
  *   primary 프레임에서만 (본문을 기록하는 프레임).
  *
- * --- 숨은 유닛 = 평정 대상 아님 -----------------------------------------------------
+ * --- 숨은 유닛 · 전부 noise 유닛 = 평정 대상 아님 -------------------------------------
  *   유닛 Range 의 사각형 중 폭 · 높이 > 0 인 것이 없으면 숨은 유닛 → excluded. 화면에 띄울 수 없어서다.
+ *   조각이 전부 noise=true 인 유닛(본문 상자 밖 메뉴 · 추천 글 · 댓글)도 excluded (#13, 2026-10-29 서현).
+ *   하나라도 noise 아닌 조각이 있으면 평정한다 — 본문 마지막 문단 + 뒤 글이 한 유닛인 경우가 있다.
+ *   새 라벨 필드는 없다. 왜 뺐는지는 같은 기록의 pieces[k].noise 로 다시 안다.
+ *   끝 도달 판정도 같은 목록을 쓰므로 "끝" = 마지막 본문 유닛이 된다. mark 단계는 그대로(어느 유닛이든).
  *
  * --- 클릭 판정 · 가림막 (v1 그대로) ----------------------------------------------------
  *   rate · mark · survey 동안 화면 전체를 투명한 가림막(#rbc-label-shield)으로 덮는다 — 링크로 이동하지 않게
@@ -130,10 +134,16 @@
     return false;
   }
 
+  // 조각이 1개 이상이고 전부 noise=true (미판정 조각은 noise 필드가 없어 해당 안 됨)
+  function allNoise(u) {
+    const p = u.pieces || [];
+    return p.length > 0 && p.every(q => q.noise === true);
+  }
+
   function splitUnits() {
     const all = RBC.units.all().slice().sort((a, b) => a.order - b.order);
     const t = [], x = [];
-    for (const u of all) (isShown(u) ? t : x).push(u.pid);
+    for (const u of all) (!allNoise(u) && isShown(u) ? t : x).push(u.pid);
     return { t, x };
   }
 
