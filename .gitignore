@@ -16,3 +16,6 @@ venv/
 node_modules/
 docs/
 .claude/settings.local.json
+
+# 합본 (build.command 가 만듦, 19)
+build/
