@@ -24,7 +24,7 @@
  *     content script ──page/chunk──▶ put() ──▶ rec:00000001, rec:00000002, ...
  *                                              │
  *                          download 모드: 쌓아뒀다가 export 때 assemble()
- *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현)
+ *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현 — 지금은 쌓기만)
  *
  *   record 형식이 곧 서버 업로드 형식이다. assemble() 은 로그 → bundle 로 바꾸는
  *   순수 함수라서, 서버도 같은 로직으로 같은 bundle 을 만든다.
@@ -140,7 +140,7 @@ const SINKS = {
     after() {
       // TODO(서버 단계): 1초 또는 32~64KB 마다 묶어서 전송 → ACK 받은 seq 삭제.
       // 오프라인이면 로그에 남아 있다가 다음에 보낸다. 로그 형식은 그대로 쓴다.
-      throw new Error('server sink 미구현');
+      // 지금(#19 실사용 껍데기)은 전송 없이 쌓기만 한다 — 실사용 팝업이 "서버 전송 없음"을 띄운다.
     },
   },
 };
