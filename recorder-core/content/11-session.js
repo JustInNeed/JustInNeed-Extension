@@ -125,13 +125,14 @@
   // ==========================================================================
   // 세션 사본 (읽기 전용 — background 의 방송과 hello 응답으로만 갱신)
   // ==========================================================================
-  let session = { recording: false, sessionId: null, epoch: 0, query: null };
+  //   mode = 확장 버전('download' 데이터 수집 · 'server' 실사용, #19). 패널이 머리에 표시한다.
+  let session = { recording: false, sessionId: null, epoch: 0, query: null, mode: null };
 
   function applySession(m) {
     if (!m || (m.rbc !== 'start' && m.rbc !== 'stop')) return;
     session = {
       recording: m.rbc === 'start',
-      sessionId: m.sessionId, epoch: m.epoch, query: m.query || null,
+      sessionId: m.sessionId, epoch: m.epoch, query: m.query || null, mode: m.mode || null,
     };
     bus.emit('session:changed', Object.assign({}, session));
   }

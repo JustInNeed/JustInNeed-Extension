@@ -27,6 +27,8 @@
   .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
   .brand b { display: block; font-size: 15px; }
   .brand small { display: block; color: var(--sub); font-size: 11.5px; line-height: 1.2; }
+  .mode { margin-left: auto; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    color: var(--green-ink); background: var(--green-tint); border: 1px solid var(--green-line); }
 
   .card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 16px; }
   .card p { margin: 0 0 12px; color: var(--sub); }
@@ -94,6 +96,7 @@
       <path d="M22 24.5c-4.2 0-7.2-2.8-7.2-7 4.4 0 7.2 2.9 7.2 7Z" fill="#fff" opacity=".85"/>
     </svg>
     <div><b>JustInNeed</b><small>읽기 행동 수집 테스트</small></div>
+    <span class="mode">데이터 수집용</span>
   </div>
 
   <div id="msg" class="banner" role="alert" hidden></div>

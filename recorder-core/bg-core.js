@@ -307,10 +307,11 @@ async function broadcast(msg) {
   ));
 }
 
+// mode = 이 확장이 어느 버전인지(패널 표시용, #19). 기록 로그에는 안 들어간다.
 function sessionMsg() {
   return {
     rbc: S.recording ? 'start' : 'stop',
-    sessionId: S.sessionId, epoch: S.epoch, query: S.query,
+    sessionId: S.sessionId, epoch: S.epoch, query: S.query, mode: VERSION.mode,
   };
 }
 
