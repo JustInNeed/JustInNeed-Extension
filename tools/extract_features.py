@@ -22,6 +22,8 @@ v2 → v3
   - 라벨 v2(라벨_명세_v2.md §7): label_state = 자기보고 읽기 상태(skip/skim/read/focus/unsure),
     label_n = 0~3(unsure · 없음은 빈 값), label_mark = 중요 표시 1/0, 페이지 단위 설문 · 소요 시간.
     scenario 열 = 읽는 목적. 전부 모델 입력 아님 (정답 · 조건). v1 라벨 파일은 라벨 없음으로 처리.
+  - noise_auto = 확장의 Readability 판정(pieces[k].noise, #11). 조각 하나라도 false 면 False, 전부 true 면 True,
+    그 밖에 필드 없는 조각(미판정 · 옛 기록)이 있으면 빈 값. is_noise(--noise 파일, 팀 정답)와 따로 둔다. 행은 안 뺌.
 
 사용법:
   python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
@@ -159,6 +161,17 @@ def _count_pauses(moved_flags):
 
 def _z(v, mean, std):
     return float((v - mean) / (std + EPS))
+
+
+def noise_auto_of(para):
+    """조각 noise → 유닛 값. 하나라도 false = False(본문 조각이 있으면 나머지가 뭐든 전부 noise 일 수 없음),
+    그 밖에 조각 없음 · 하나라도 미판정 = 빈 값, 전부 true = True."""
+    v = [q.get("noise") for q in para.get("pieces") or []]
+    if any(x is False for x in v):
+        return False
+    if not v or any(x is None for x in v):
+        return np.nan
+    return True
 
 
 def search_query_of(url):
@@ -580,6 +593,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "survey_familiarity": lab_sv.get("familiarity", np.nan),
             "n_labelask_no": n_ask_no,
             "is_noise": (pid in noise_set) if noise_set is not None else np.nan,
+            "noise_auto": noise_auto_of(para),
             "scroll_depth_pct": round(depth, 4) if depth == depth else np.nan,
             "dwell_gvam_sec": round(dwell_gvam, 3),
             "dwell_viewport_sec": round(dwell_view, 2),
@@ -761,6 +775,20 @@ def main():
               f"하이라이트 {r['has_highlight'].sum()} · 복사 {r['has_copy'].sum()} · "
               f"라벨 " + (" ".join(f"{k}{(r['label_state'] == k).sum()}" for k in RATE_N_ALL)
                          + f" · 중요 {int(r['label_mark'].sum())}" if r['page_labeled'].iloc[0] else '없음'))
+        # noise 자동 판정 — CSV 와 같은 행(화면에 안 나온 사라진 유닛 제외)만 센다
+        rv = r[~r["is_retired"] | (r["n_vis_ticks"] > 0)]
+        pmap = {p["pid"]: p for p in m.get("paragraphs", [])}
+        na = rv["noise_auto"]
+        n_mix = sum(1 for pid in rv.loc[na == False, "paragraph_id"]  # noqa: E712  False 중 noise 조각이 섞인 유닛
+                    if any(q.get("noise") is True for q in pmap.get(pid, {}).get("pieces") or []))
+        line = (f"  noise_auto(조각 전부 noise = True): True {int((na == True).sum())} · "  # noqa: E712
+                f"False {int((na == False).sum())}(그중 noise 조각 섞임 {n_mix}) · "  # noqa: E712
+                f"미판정 {int(na.isna().sum())} / 유닛 {len(rv)}")
+        if rv["is_noise"].notna().any():
+            both = rv[rv["is_noise"].notna() & rv["noise_auto"].notna()]
+            agree = int((both["is_noise"].astype(bool) == both["noise_auto"].astype(bool)).sum())
+            line += f" · noise 파일과 일치 {agree} / 불일치 {len(both) - agree}"
+        print(line)
         if r["page_disruptive_rescan"].any():
             print("  ⚠ 본문 교체(disruptive, 옛 확장) 페이지 — 학습 제외 권장")
         if r["is_retired"].any():
@@ -774,7 +802,7 @@ def main():
         with pd.option_context("display.max_columns", None, "display.width", 200):
             cols = ["unit_order", "dwell_gvam_sec", "dwell_viewport_sec", "visit_count", "revisit_count",
                     "viewport_fixed_duration", "scrlfreq", "entry_scrlspeed", "pause_count",
-                    "cursorfreq", "has_highlight", "label_state", "label_mark"]
+                    "cursorfreq", "has_highlight", "label_state", "label_mark", "noise_auto"]
             # CSV 와 같은 행만, 같은 글 순서로 (화면에 안 나온 사라진 유닛 제외)
             show = r[~r["is_retired"] | (r["n_vis_ticks"] > 0)].copy()
             show = reading_order(show.assign(session_id="", page_id=""))
