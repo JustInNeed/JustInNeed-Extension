@@ -775,12 +775,12 @@ def main():
         # noise 자동 판정 — CSV 와 같은 행(화면에 안 나온 사라진 유닛 제외)만 센다
         rv = r[~r["is_retired"] | (r["n_vis_ticks"] > 0)]
         pmap = {p["pid"]: p for p in m.get("paragraphs", [])}
-        nv = [[q.get("noise") for q in pmap.get(pid, {}).get("pieces") or []] for pid in rv["paragraph_id"]]
-        n_all = sum(1 for v in nv if v and all(x is True for x in v))
-        n_mix = sum(1 for v in nv if v and None not in v and True in v and False in v)
-        n_und = sum(1 for v in nv if not v or None in v)
-        line = (f"  noise 자동 판정(조각 전부 noise = True): 전부 {n_all} · 섞임 {n_mix}(False) · "
-                f"미판정 {n_und} / 유닛 {len(rv)}")
+        na = rv["noise_auto"]
+        n_mix = sum(1 for pid in rv.loc[na == False, "paragraph_id"]  # noqa: E712  False 중 noise 조각이 섞인 유닛
+                    if any(q.get("noise") is True for q in pmap.get(pid, {}).get("pieces") or []))
+        line = (f"  noise_auto(조각 전부 noise = True): True {int((na == True).sum())} · "  # noqa: E712
+                f"False {int((na == False).sum())}(그중 noise 조각 섞임 {n_mix}) · "  # noqa: E712
+                f"미판정 {int(na.isna().sum())} / 유닛 {len(rv)}")
         if rv["is_noise"].notna().any():
             both = rv[rv["is_noise"].notna() & rv["noise_auto"].notna()]
             agree = int((both["is_noise"].astype(bool) == both["noise_auto"].astype(bool)).sum())
