@@ -22,8 +22,8 @@ v2 → v3
   - 라벨 v2(라벨_명세_v2.md §7): label_state = 자기보고 읽기 상태(skip/skim/read/focus/unsure),
     label_n = 0~3(unsure · 없음은 빈 값), label_mark = 중요 표시 1/0, 페이지 단위 설문 · 소요 시간.
     scenario 열 = 읽는 목적. 전부 모델 입력 아님 (정답 · 조건). v1 라벨 파일은 라벨 없음으로 처리.
-  - noise_auto = 확장의 Readability 판정(pieces[k].noise, #11). 조각이 전부 true 면 True, 아니면 False,
-    조각 하나라도 필드 없음(미판정 · 옛 기록)이면 빈 값. is_noise(--noise 파일, 팀 정답)와 따로 둔다. 행은 안 뺌.
+  - noise_auto = 확장의 Readability 판정(pieces[k].noise, #11). 조각 하나라도 false 면 False, 전부 true 면 True,
+    그 밖에 필드 없는 조각(미판정 · 옛 기록)이 있으면 빈 값. is_noise(--noise 파일, 팀 정답)와 따로 둔다. 행은 안 뺌.
 
 사용법:
   python3 extract_features.py stepC_base.json [더 많은 bundle ...] -o features.csv
@@ -164,11 +164,14 @@ def _z(v, mean, std):
 
 
 def noise_auto_of(para):
-    """조각 noise → 유닛 값. 전부 true = True, 하나라도 false = False, 조각 없음 · 하나라도 미판정 = 빈 값."""
+    """조각 noise → 유닛 값. 하나라도 false = False(본문 조각이 있으면 나머지가 뭐든 전부 noise 일 수 없음),
+    그 밖에 조각 없음 · 하나라도 미판정 = 빈 값, 전부 true = True."""
     v = [q.get("noise") for q in para.get("pieces") or []]
+    if any(x is False for x in v):
+        return False
     if not v or any(x is None for x in v):
         return np.nan
-    return all(x is True for x in v)
+    return True
 
 
 def search_query_of(url):
