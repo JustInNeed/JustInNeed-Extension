@@ -58,10 +58,11 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          WARN: 기억 안 남 > 50% · 평정 간격 중앙값 < 300ms (대충 찍기) ·
                한 번도 화면에 안 나온 유닛이 read/focus (평가 중 새로 읽음 의심, 명세 §10).
     [18] 같은 글 여러 pid (#17)                       FAIL
-         한 유닛 글(공백 빼고 20자 이상)이 pid 가 다른 유닛 글 안에 통째로 들어 있는 짝.
-         같은 글은 같은 pid 여야 한다(pid 원칙). 화면 근처 글만 DOM 에 두는 사이트(가상화 — 10-07 이후 노션)는
-         보이는 창 시작점마다 유닛 경계가 달라져서 이렇게 된다. splice 가 바뀐 곳마다 따로가 되기 전(10-09 전)
-         기록에서도 나온다. 어느 쪽이든 학습 제외.
+         한 유닛 글(공백 빼고 20자 이상)이 pid 가 다른 유닛 글 안에 통째로 들어 있고, 둘 중 하나 이상이 retired 인 짝.
+         = 기록 중 같은 글이 다른 pid 로 다시 만들어짐(같은 글 두 버전). 둘 다 살아 있는 짝은 안 센다 — 한 글에
+         같은 문장이 두 번 나오면 두 번째는 일부러 `_2` pid 다(2-units). 화면 근처 글만 DOM 에 두는 사이트
+         (가상화 — 10-07 이후 노션)는 보이는 창 시작점마다 유닛 경계가 달라져서 이렇게 된다. splice 가 바뀐 곳마다
+         따로가 되기 전(10-09 전) 기록, 합쳐진 유닛의 앞 문단만 통째로 빠진 경우(예상, 이어받기 안 됨)에도 나온다. 학습 제외.
   세션 단위 추가:
     [S6] stopReason == 'labeled' 이면 취소 아닌 label 이 어느 페이지엔가 있다  FAIL
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
@@ -375,12 +376,13 @@ def check_rescan(rep, timeline, meta=None):
 
 
 def check_dup_text(rep, meta):
-    """[18] 같은 글이 서로 다른 pid 로 기록됐는가. 한 유닛 글이 다른 pid 유닛 글 안에 통째로 들어 있으면 FAIL."""
+    """[18] 같은 글이 서로 다른 pid 로 기록됐는가. 한 유닛 글이 다른 pid 유닛 글 안에 통째로 들어 있고
+    둘 중 하나 이상이 retired 면 FAIL. 둘 다 살아 있으면 한 글 안의 반복 문장(`_2` pid)이라 정상."""
     sq = lambda s: "".join((s or "").split())
     units = [(p["pid"], sq(p.get("text")), p.get("retired")) for p in meta.get("paragraphs", [])]
     units = [u for u in units if len(u[1]) >= 20]    # 'ALT' 같은 짧은 글은 여러 곳에 우연히 들어간다
     pairs = [(a, b) for i, a in enumerate(units) for b in units[i + 1:]
-             if a[0] != b[0] and (a[1] in b[1] or b[1] in a[1])]
+             if a[0] != b[0] and (a[2] or b[2]) and (a[1] in b[1] or b[1] in a[1])]
     if not pairs:
         rep.add(OK, "같은 글 여러 pid", "없음")
         return
@@ -391,7 +393,7 @@ def check_dup_text(rep, meta):
     rep.add(FAIL, "같은 글 여러 pid",
             f"짝 {len(pairs)}개 · 유닛 {n_units}개 (예: {short[0]}({st(short)}) {len(short[1])}자 ⊂ "
             f"{long_[0]}({st(long_)}) {len(long_[1])}자 ⟨{short[1][:20]}⟩) — 화면 근처 글만 DOM 에 두는 사이트"
-            f"(가상화, 10-07 이후 노션) 또는 10-09 전 splice 기록 의심. 학습 제외")
+            f"(가상화, 10-07 이후 노션) · 10-09 전 splice 기록 · 합쳐진 유닛의 앞 문단만 빠짐 의심. 학습 제외")
 
 
 def check_rescan_cost(rep, timeline):
