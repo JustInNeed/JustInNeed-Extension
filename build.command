@@ -11,6 +11,11 @@ versions=("$@")
 fail=0
 
 for v in "${versions[@]}"; do
+  # 아는 버전 이름만 — build/<이름> 을 지우므로 '../x' · 'build' 같은 이름이 레포 폴더를 지우지 않게
+  case "$v" in
+    data-collect|service) ;;
+    *) echo "모르는 버전 이름: $v (data-collect · service 만)" >&2; fail=1; continue ;;
+  esac
   if [ ! -d "$v" ]; then
     [ $# -gt 0 ] && { echo "버전 폴더 없음: $v" >&2; fail=1; }   # 이름을 직접 줬을 때만 오류
     continue
