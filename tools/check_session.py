@@ -65,6 +65,13 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          따로가 되기 전(10-09 전) 기록, 합쳐진 유닛의 앞 문단만 통째로 빠진 경우(예상, 이어받기 안 됨)에도 나온다. 학습 제외.
   세션 단위 추가:
     [S6] stopReason == 'labeled' 이면 취소 아닌 label 이 어느 페이지엔가 있다  FAIL
+    [S7] 파일 이름 (#24)                              PASS / WARN / FAIL
+         데이터 수집 버전 이름 = <링크 3자리>_rbc_<참여 번호>_<조건 태그>_<세션 앞 8자>_<시각 13자리>_<O|X>.json
+         링크 번호 · 정답 여부는 이름에만 있다(JSON 에 없음). 이름에서 읽어 보여 준다.
+         FAIL: 이름의 참여 번호 · 조건 태그 · 세션이 JSON(session.tester · sessionId)과 다름 — 다른 기록의 이름표.
+         WARN: 옛 이름(rbc_<참여 번호>_<세션>_<시각>.json — #24 전 · 디버그 패널 내보내기) · 규칙 밖 이름 ·
+               NOLINK · NOANS · NOID · NOTAG (내보낼 때 값을 몰랐음. NOANS = 평가 없이 정지한 기록).
+         참여 번호에 _ 가 들어갈 수 있어서 뒤에서부터 자른다(조건 태그 · 세션 · 시각 · O/X 에는 _ 가 없다).
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
 사용법:
@@ -80,6 +87,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
 
 import argparse
 import json
+import os
+import re
 import statistics
 import sys
 from urllib.parse import urlsplit
@@ -133,7 +142,7 @@ def all_pids_used(timeline):
 def check_schema(rep, meta):
     """[0] 스키마 v3 파일인가. 아니면 False — 나머지 검사를 돌리지 않는다.
 
-    가장 흔한 사고는 `ls -t ~/Downloads/rbc_*.json | head -1` 이 예전에 받아둔 파일을
+    가장 흔한 사고는 `ls -t ~/Downloads/*rbc_*.json | head -1` 이 예전에 받아둔 파일을
     집는 것 — 새 파일을 mv 로 계속 빼내다 보면 Downloads 에는 옛 파일만 남는다.
     """
     v = meta.get("schemaVersion")
@@ -1016,6 +1025,61 @@ def check_bundle_session(rep, session):
                 ", ".join(f"{d.get('reason')}:{str(d.get('pageId'))[:40]}" for d in dropped[:3]))
 
 
+def safe_name(v):
+    """consent.js 의 safe() 와 같은 규칙: 파일 이름에 못 쓰는 글자는 _."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(v))
+
+
+def parse_file_name(path):
+    """[S7] 파일 이름 → dict. 새 이름이면 kind='new', 옛 이름이면 'old', 그 밖은 None."""
+    base = os.path.basename(path)
+    # 크롬 중복 번호(" (1)") · 윈도우 ".json.json" · 대문자 확장자는 떼고 읽는다
+    stem = re.sub(r"(\.json)+$", "", base, flags=re.I)
+    if stem == base:
+        return None
+    stem = re.sub(r" \(\d+\)$", "", stem)
+    parts = stem.split("_")
+    # 새 이름: 링크 _ rbc _ 참여 번호(… _ 포함 가능) _ 태그 _ 세션 _ 시각 _ O|X
+    if len(parts) >= 7 and parts[1] == "rbc" and parts[-1] in ("O", "X", "NOANS") and re.fullmatch(r"\d{13}", parts[-2]):
+        link = parts[0]
+        if re.fullmatch(r"\d{3}", link) or link == "NOLINK":
+            return {"kind": "new", "link": link, "pno": "_".join(parts[2:-4]), "tag": parts[-4],
+                    "sid": parts[-3], "answer": parts[-1]}
+    # 옛 이름: rbc _ 참여 번호 _ 세션 _ 시각
+    if len(parts) >= 4 and parts[0] == "rbc" and re.fullmatch(r"\d{13}", parts[-1]):
+        return {"kind": "old", "pno": "_".join(parts[1:-2]), "sid": parts[-2]}
+    return None
+
+
+def check_file_name(rep, path, session):
+    """[S7] 파일 이름 — 링크 번호 · 정답 여부를 읽고, 이름 속 값이 JSON 과 같은지 본다."""
+    name = parse_file_name(path)
+    if name is None:
+        rep.add(WARN, "파일 이름", f"규칙 밖 이름 — 링크 번호 · 정답 여부를 알 수 없음 ({os.path.basename(path)})")
+        return
+    tester = session.get("tester") or {}
+    want = {"pno": safe_name(tester.get("participantNo") or "NOID"),
+            "sid": str(session.get("sessionId") or "nosid")[:8]}
+    if name["kind"] == "new":
+        want["tag"] = safe_name(tester.get("tag") or "NOTAG")
+    label = {"pno": "참여 번호", "tag": "조건 태그", "sid": "세션"}
+    diff = [f"{label[k]} 이름 {name[k]} ≠ JSON {v}" for k, v in want.items() if name[k] != v]
+    if diff:
+        rep.add(FAIL, "파일 이름", "다른 기록의 이름표 — " + " · ".join(diff))
+        return
+    if name["kind"] == "old":
+        rep.add(WARN, "파일 이름", "옛 이름(#24 전 · 디버그 패널 내보내기) — 링크 번호 · 정답 여부 없음")
+        return
+    unknown = [k for k in ("NOLINK", "NOANS", "NOID", "NOTAG") if k in (name["link"], name["answer"], name["pno"], name["tag"])]
+    said = {"O": "정답", "X": "오답"}.get(name["answer"], "모름")
+    detail = (f"링크 {name['link']} · 정답 여부 {name['answer']}({said}) · "
+              f"{name['pno']} · {name['tag']} · 이름과 JSON 일치")
+    if unknown:
+        rep.add(WARN, "파일 이름", detail + f" — 내보낼 때 모른 값 {' · '.join(unknown)}")
+    else:
+        rep.add(OK, "파일 이름", detail)
+
+
 def same_article(url_a, url_b):
     """기준선 URL 과 페이지 URL 이 같은 글인가 (호스트 + 경로)."""
     try:
@@ -1109,6 +1173,7 @@ def run(path, baseline=None):
 
     srep = Report(f"{path} [세션 {str(session.get('sessionId'))[:8]}]")
     check_bundle_session(srep, session)
+    check_file_name(srep, path, session)
     srep.show()
     print(f"  -- 페이지 {len(data.get('pages', []))}개 · 방문 {len(session.get('visits', []))}건 · "
           f"focusMs {session.get('focusMs')}")

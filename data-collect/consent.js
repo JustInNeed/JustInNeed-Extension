@@ -4,12 +4,19 @@
  * background 에 요청만 한다. 동의 여부 판정·저장·게이트는 전부 background 소유다.
  *   status   → 어느 화면을 보여줄지 (동의 없음 / 안내 변경 / 참여 중)
  *   consent  → { version, participantNo, name, tag }. version 은 이 페이지 고지문의 버전
- *              참여 번호 = 연구자가 준 번호(필수). testId 는 화면에서 '설치 ID' 로 부른다
+ *              참여 번호 = 연구자가 준 번호(필수). 조건 태그 = Q1 · Q2 중 선택(필수, #24).
+ *              testId 는 화면에서 '설치 ID' 로 부른다
  *   clear    → 기록만 삭제 (기록 중이면 거절)
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
- *   export   → bundle 을 받아 JSON 파일로 저장 (6-frames download() 와 같은 파일명)
+ *   export   → bundle 을 받아 JSON 파일로 저장 (파일 이름은 아래 "파일 이름 (#24)")
  *
- * 주소가 #export 로 열리면(팝업의 내보내기) 첫 status 뒤 한 번 바로 내보낸다.
+ * 파일 이름 (#24): <링크 3자리>_rbc_<참여 번호>_<조건 태그>_<세션 앞 8자>_<시각>_<O|X>.json
+ *   링크 번호 · 정답 여부는 status.linkNo · status.answer(이번 기록의 것 — 정답 / 오답은 평가의 설문 앞 팝업에서
+ *   참가자가 고름, 12-label), 참여 번호 · 태그는 bundle 의 session.tester(기록 시작 때 복사본). JSON 은 그대로(10-31 서현).
+ *   없으면 NOLINK · NOANS · NOID · NOTAG 로 채우고 배너로 알린다(조용히 빼지 않는다). 평가 없이 정지한 기록은 NOANS.
+ *   디버그 패널 [내보내기](6-frames download())는 옛 이름 rbc_<참여 번호>_<세션>_<시각>.json 그대로.
+ *
+ * 주소가 #export 로 열리면(팝업의 내보내기 · 평가 [완료] 뒤 자동) 첫 status 뒤 한 번 바로 내보낸다.
  *
  * 예외: '연구자용 설정'의 디버그 패널 보이기는 chrome.storage.local 'ui:panel' 에 직접 쓴다.
  *   세션 · 동의 데이터가 아닌 화면 설정이라 background 를 거치지 않는다. content 쪽은 11-session 이 읽는다.
@@ -29,6 +36,7 @@
     'no-consent': '동의가 없어 처리할 수 없습니다.',
     'no-participant': '참여 번호를 입력하세요.',
     'no-name': '이름을 입력하세요.',
+    'no-tag': '조건 태그(Q1 · Q2)를 고르세요.',
     'consent-version': '안내 내용이 바뀌었습니다. 이 페이지를 새로고침한 뒤 다시 동의하세요.',
     'recording': '기록 중에는 삭제할 수 없습니다. 먼저 기록을 정지하세요.',
   };
@@ -75,6 +83,27 @@
     return h ? `${h}시간 ${m}분` : `${m}분 ${sec}초`;
   }
 
+  // 조건 태그 선택 (Q1 · Q2 라디오). 안 골랐으면 ''
+  function tagValue() {
+    const r = document.querySelector('input[name="tag"]:checked');
+    return r ? r.value : '';
+  }
+  function setTag(v) {
+    for (const r of document.querySelectorAll('input[name="tag"]')) r.checked = r.value === v;
+  }
+
+  // 파일 이름에 못 쓰는 글자는 _ 로
+  const safe = (v) => String(v).replace(/[^A-Za-z0-9_-]/g, '_');
+  function fileName(bundle) {
+    const t = bundle.session.tester || {};
+    const link = st.linkNo || 'NOLINK';
+    const answer = st.answer || 'NOANS';
+    const pno = safe(t.participantNo || 'NOID');
+    const tag = safe(t.tag || 'NOTAG');
+    const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
+    return `${link}_rbc_${pno}_${tag}_${sid}_${Date.now()}_${answer}.json`;
+  }
+
   function setView(v) {
     if (view === v) return;
     view = v;
@@ -91,12 +120,14 @@
     const c = st.consent;
     if (!c || !c.valid) {
       setView('consent');
-      // 안내 버전이 바뀐 재동의: 아는 값을 채워둔다 (설치 ID 는 background 가 유지)
+      // 다시 동의(안내 버전 변경 · 조건 태그가 Q1/Q2 가 아님): 아는 값을 채워둔다 (설치 ID 는 background 가 유지)
       if (c && !c.valid && !$('f-name').value) {
         $('f-no').value = c.participantNo || '';
         $('f-name').value = c.name || '';
-        $('f-tag').value = c.tag || '';
-        show('안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호를 확인하고 다시 동의하세요.', 'warn');
+        setTag(c.tag);
+        show(c.version === VERSION && !c.tagValid
+          ? '조건 태그를 고르는 방식으로 바뀌었습니다. 조건 태그(Q1 · Q2)를 고르고 다시 동의하세요.'
+          : '안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호를 확인하고 다시 동의하세요.', 'warn');
       }
       syncAgree();
       return;
@@ -106,7 +137,7 @@
     $('j-no').textContent = c.participantNo;
     $('j-id').textContent = c.testId;
     $('j-name').textContent = c.name;
-    $('j-tag').textContent = c.tag || '없음';
+    $('j-tag').textContent = c.tag;
     $('j-at').textContent = fmtDate(c.at);
 
     $('s-dot').classList.toggle('on', st.recording);
@@ -119,6 +150,9 @@
 
     $('btn-export').disabled = st.recording || !st.records;
     $('btn-export').title = st.recording ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
+    // 미리보기는 지금 동의 정보로 만든다. 실제 이름은 기록 시작 때 복사본(bundle tester) — 내보낸 뒤 배너에 실제 이름
+    $('export-name').textContent = st.recording || !st.records ? ''
+      : `파일 이름(예상): ${st.linkNo || 'NOLINK'}_rbc_${safe(c.participantNo)}_${safe(c.tag)}_…_${st.answer || 'NOANS'}.json`;
     $('btn-clear').disabled = st.recording || !st.records;
     $('btn-clear').title = st.recording ? '기록을 정지한 뒤에 지울 수 있습니다' : '';
   }
@@ -138,10 +172,11 @@
   // 동의 폼
   // ---------------------------------------------------------------------------
   function syncAgree() {
-    $('btn-agree').disabled = !($('f-no').value.trim() && $('f-name').value.trim() && $('f-agree').checked);
+    $('btn-agree').disabled = !($('f-no').value.trim() && $('f-name').value.trim() && tagValue() && $('f-agree').checked);
   }
   $('f-no').addEventListener('input', syncAgree);
   $('f-name').addEventListener('input', syncAgree);
+  $('f-tag').addEventListener('change', syncAgree);
   $('f-agree').addEventListener('change', syncAgree);
 
   $('form').addEventListener('submit', async (ev) => {
@@ -150,7 +185,7 @@
     $('btn-agree').disabled = true;
     try {
       const r = await bg({ rbc: 'consent', version: VERSION, participantNo: $('f-no').value,
-                           name: $('f-name').value, tag: $('f-tag').value });
+                           name: $('f-name').value, tag: tagValue() });
       show(`참여 번호 ${r.consent.participantNo} 로 동의했습니다. 이제 기록을 시작할 수 있습니다.`);
       await refresh();
       window.scrollTo(0, 0);
@@ -161,7 +196,7 @@
   });
 
   // ---------------------------------------------------------------------------
-  // 내보내기 — 파일명은 6-frames download() 와 같다 (터미널의 rbc_*.json 규칙 유지)
+  // 내보내기 — 파일 이름 규칙은 맨 위 주석 (#24)
   // ---------------------------------------------------------------------------
   async function exportFile() {
     const bundle = await bg({ rbc: 'export' });
@@ -169,14 +204,16 @@
     const blob = new Blob([JSON.stringify(bundle)], { type: 'application/json' });   // 한 줄 (팀 결정, 용량)
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
-    // 참여 번호를 파일 이름 앞에 (2026-10-11) — 6-frames download() 와 같은 규칙.
-    const pno = String((bundle.session.tester && bundle.session.tester.participantNo) || 'NOID')
-      .replace(/[^A-Za-z0-9_-]/g, '_');
-    a.download = `rbc_${pno}_${sid}_${Date.now()}.json`;
+    const name = fileName(bundle);
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // 탭이라 여유 있게
-    show(`파일로 내보냈습니다: 글 ${bundle.pages.length}개. 다운로드 폴더를 확인하세요.`);
+    const missing = ['NOLINK', 'NOANS', 'NOID', 'NOTAG'].filter((k) => name.includes(k));
+    if (missing.length) {
+      show(`파일로 내보냈지만 이름에 빠진 정보가 있습니다(${missing.join(' · ')}): ${name} — 연구 담당자에게 알려주세요.`, 'warn');
+    } else {
+      show(`파일로 내보냈습니다: ${name} (글 ${bundle.pages.length}개). 다운로드 폴더를 확인하세요.`);
+    }
   }
 
   $('btn-export').addEventListener('click', async () => {
@@ -214,7 +251,7 @@
 
   twoStep($('btn-withdraw'), '한 번 더 누르면 철회', async () => {
     await bg({ rbc: 'withdraw' });
-    $('f-no').value = ''; $('f-name').value = ''; $('f-tag').value = ''; $('f-agree').checked = false;
+    $('f-no').value = ''; $('f-name').value = ''; setTag(''); $('f-agree').checked = false;
     show('동의를 철회했습니다. 이 브라우저의 기록과 참여 정보를 모두 지웠습니다.');
   });
 
@@ -236,7 +273,7 @@
   // ---------------------------------------------------------------------------
   // 시작 · 갱신 (보이는 동안만 1초마다 — 경과 시간과 기록 상태)
   // ---------------------------------------------------------------------------
-  // 팝업의 내보내기로 열렸으면 한 번만 내보낸다 (새로고침해도 반복되지 않게 해시를 지운다)
+  // 내보내기로 열렸으면(팝업 · 평가 [완료] 뒤) 한 번만 내보낸다 (새로고침해도 반복되지 않게 해시를 지운다)
   const wantExport = location.hash === '#export';
   if (wantExport) history.replaceState(null, '', location.pathname);
 

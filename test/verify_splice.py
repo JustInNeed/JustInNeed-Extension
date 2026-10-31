@@ -3,7 +3,7 @@
 사용:
     cd tests && python3 -m http.server 8000      # 다른 터미널
     # 크롬에서 http://localhost:8000/splice_test.html → 기록 → 단계 1~4 → 끝까지 → 평가 → 저장
-    python3 verify_splice.py ~/Downloads/rbc_….json
+    python3 verify_splice.py ~/Downloads/…rbc_….json
 
 보는 것 (각 줄 PASS/WARN/FAIL):
   [1] 재스캔 순서: 단계 1·2·3 = splice, 단계 4 = append. 자체 검증 전부 [0,0], 루트 안 바뀜

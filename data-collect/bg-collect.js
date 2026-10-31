@@ -24,6 +24,14 @@
  *   라벨은 팝업 "다 읽었어요" → label 명령 → 지금 보고 있는 탭으로 전달. 라벨 데이터 자체는
  *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
  *   라벨 [완료] → 그 탭이 stop(reason 'labeled') 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 글 = 한 기록).
+ *
+ * --- 조건 태그 · 링크 번호 (#24) ----------------------------------------------
+ *   조건 태그 = Q1 · Q2 중 하나(필수). 동의 페이지에서 고른다. 다른 값(옛 자유 입력 · 빈 값)이면
+ *   동의가 없는 것으로 봐서 다시 고르게 한다 — testId 는 유지된다.
+ *   링크 번호 = 이번에 읽는 글의 번호(000~300, 세 자리). 팝업이 start 에 linkNo 로 싣는다. 없으면 시작 거절.
+ *   정답 / 오답 = 평가의 설문 앞 팝업에서 참가자가 고른 값(O · X). 평가 [완료]의 stop(reason 'labeled')에 answer 로 온다.
+ *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
+ *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
  * ========================================================================== */
 /* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField */
 'use strict';
@@ -31,12 +39,28 @@
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
 const CONSENT_VERSION = 2;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가)
 
+const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
+const TAGS = ['Q1', 'Q2'];    // 조건 태그로 고를 수 있는 값 (consent.html 의 선택지와 같아야 한다)
+const LINK_MAX = 300;         // 링크 번호 000 ~ LINK_MAX (popup.js 의 목록과 같아야 한다)
+const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
+
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
+let L = null;                 // { linkNo, sessionId, answer } | null
 
 // ============================================================================
 // 동의
 // ============================================================================
-function consentValid() { return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo); }
+function tagValid(tag) { return TAGS.includes(tag); }
+function consentValid() {
+  return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo && tagValid(C.tag));
+}
+
+// '003' 처럼 세 자리 숫자 문자열이고 000 ~ LINK_MAX 안이면 그대로, 아니면 null
+function cleanLink(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (!/^\d{3}$/.test(s)) return null;
+  return Number(s) <= LINK_MAX ? s : null;
+}
 
 // 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
 const ID_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
@@ -52,7 +76,10 @@ function testerInfo() {
 
 Object.assign(VERSION, {
   mode: 'download',
-  ready: chrome.storage.local.get(K_CONSENT).then((r) => { C = r[K_CONSENT] || null; }),
+  ready: chrome.storage.local.get([K_CONSENT, K_LINK]).then((r) => {
+    C = r[K_CONSENT] || null;
+    L = r[K_LINK] || null;
+  }),
   async gate() { return consentValid() ? null : 'no-consent'; },
   tester: testerInfo,
   onStop(reason) {
@@ -64,11 +91,43 @@ Object.assign(VERSION, {
   },
   status() {
     return {
-      consent: C ? Object.assign({ valid: consentValid() }, C) : null,
+      consent: C ? Object.assign({ valid: consentValid(), tagValid: tagValid(C.tag) }, C) : null,
       consentVersion: CONSENT_VERSION,
+      // 이번 세션의 링크 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
+      linkNo: L && L.sessionId === S.sessionId ? L.linkNo : null,
+      answer: L && L.sessionId === S.sessionId ? (L.answer || null) : null,
     };
   },
 });
+
+// 기록 시작에 링크 번호를 요구한다. 엔진 start 는 그대로 부르고, 시작에 성공하면 번호를 'link' 키에 둔다.
+//   동의가 없으면 엔진 gate 의 'no-consent' 가 먼저 나오도록 동의부터 본다.
+const coreStart = handlers.start;
+handlers.start = async (m, sender) => {
+  if (S.recording || !consentValid()) return coreStart(m, sender);
+  const linkNo = cleanLink(m && m.linkNo);
+  if (!linkNo) return { ok: false, why: 'no-link' };
+  const r = await coreStart(m, sender);
+  if (r && r.rbc === 'start') {
+    L = { linkNo, sessionId: S.sessionId };
+    await chrome.storage.local.set({ [K_LINK]: L });
+  }
+  return r;
+};
+
+// 평가 [완료]의 정지에 실려 온 정답 / 오답을 이번 기록의 'link' 칸에 둔다. 정지 자체는 엔진 그대로.
+//   감싼 stop 전체가 serial 한 칸 안에서 돌고 내보내기 페이지의 status · export 도 serial 로 줄을 서므로,
+//   onStop 이 연 내보내기 탭은 언제나 저장이 끝난 뒤의 값을 읽는다.
+const coreStop = handlers.stop;
+handlers.stop = async (m, sender) => {
+  const was = S.recording;
+  const r = await coreStop(m, sender);
+  if (was && m && m.reason === 'labeled' && L && L.sessionId === S.sessionId) {
+    L = Object.assign({}, L, { answer: ANSWERS.includes(m.answer) ? m.answer : null });
+    await chrome.storage.local.set({ [K_LINK]: L });
+  }
+  return r;
+};
 
 Object.assign(handlers, {
   // 팝업 "다 읽었어요": 지금 보고 있는 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
@@ -93,12 +152,13 @@ Object.assign(handlers, {
     if (!participantNo) return { ok: false, why: 'no-participant' };
     const name = cleanField(m.name, 40);
     if (!name) return { ok: false, why: 'no-name' };
+    if (!tagValid(m.tag)) return { ok: false, why: 'no-tag' };
     C = {
       version: CONSENT_VERSION,
       testId: (C && C.testId) || newTestId(),
       participantNo,
       name,
-      tag: cleanField(m.tag, 40) || null,
+      tag: m.tag,
       at: new Date().toISOString(),
     };
     await chrome.storage.local.set({ [K_CONSENT]: C });
@@ -116,7 +176,8 @@ Object.assign(handlers, {
     S = emptyState();
     await saveState();
     C = null;
-    await chrome.storage.local.remove(K_CONSENT);
+    L = null;
+    await chrome.storage.local.remove([K_CONSENT, K_LINK]);
     return { ok: true };
   },
 
@@ -126,6 +187,8 @@ Object.assign(handlers, {
     await removeLog();
     S = emptyState();
     await saveState();
+    L = null;
+    await chrome.storage.local.remove(K_LINK);
     return { ok: true };
   },
 });

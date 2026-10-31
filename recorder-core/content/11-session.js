@@ -116,8 +116,9 @@
   //   라벨을 고른 프레임(primary, iframe 일 수도 있음)이 직접 알린다. 5-recorder 가 같은 label:done 에서
   //   label 이벤트를 먼저 넘기므로(파일 순서상 먼저 구독) 정지 요청보다 라벨 조각이 먼저 도착한다.
   //   취소는 정지하지 않는다 — 계속 읽는다.
+  //   answer(정답 'O' / 오답 'X', #24)는 정지 요청에만 싣는다 — 데이터 수집 버전이 파일 이름에 쓴다. 기록 JSON 에는 없다.
   bus.on('label:done', (d) => {
-    if (d && !d.cancelled) toBg({ rbc: 'stop', reason: 'labeled' });
+    if (d && !d.cancelled) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
   });
 
   if (!IS_TOP) return;          // 이하 전부 최상위 전용
