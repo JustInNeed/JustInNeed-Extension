@@ -9,6 +9,7 @@
 
   팝업의 '파일로 내보내기'는 이 페이지를 #export 로 연다 — 팝업에서 저장하면 저장 창이 뜨는
   순간 팝업이 닫혀 다운로드가 실패할 수 있어서, 파일 저장은 탭인 이 페이지가 맡는다.
+  내보내기 전에 참가자가 [정답] / [오답]을 고른다(#24). 고른 값은 파일 이름 끝(O · X)에만 들어간다.
 
   고지문 버전은 <main data-consent-version> 하나뿐이다. 고지문을 고치면 이 숫자를 올리고
   background.js 의 CONSENT_VERSION 도 같이 올린다. 둘이 다르면 background 가 동의를 거절한다.
@@ -86,6 +87,7 @@
   }
   .seg input:checked + b { background: var(--green); border-color: var(--green); color: #fff; }
   .seg input:focus-visible + b { outline: 3px solid var(--green-line); outline-offset: 2px; }
+  .seg input:disabled + b { color: var(--faint); cursor: not-allowed; }
   input[type=text] {
     width: 100%; max-width: 360px; font: inherit; color: var(--ink);
     padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
@@ -184,9 +186,16 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" id="export-card">
         <div class="action">
-          <p><b>파일로 내보내기</b>쌓인 기록을 JSON 파일 하나로 저장합니다. 이 파일을 연구 담당자에게 전달하세요.</p>
+          <p><b>질문의 답을 맞혔나요?</b>참가자가 직접 고르세요. 골라야 파일로 내보낼 수 있습니다.</p>
+          <div class="seg" id="answer" role="radiogroup" aria-label="정답 여부">
+            <label><input type="radio" name="answer" value="O"><b>정답</b></label>
+            <label><input type="radio" name="answer" value="X"><b>오답</b></label>
+          </div>
+        </div>
+        <div class="action">
+          <p><b>파일로 내보내기</b>쌓인 기록을 JSON 파일 하나로 저장합니다. 이 파일을 연구 담당자에게 전달하세요.<small class="hint" id="export-name"></small></p>
           <button id="btn-export" class="primary" type="button">파일로 내보내기</button>
         </div>
         <div class="action">

@@ -10,7 +10,14 @@
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
  *   export   → bundle 을 받아 JSON 파일로 저장 (6-frames download() 와 같은 파일명)
  *
- * 주소가 #export 로 열리면(팝업의 내보내기) 첫 status 뒤 한 번 바로 내보낸다.
+ * 정답 / 오답 (#24): 내보내기 전에 참가자가 고른다. 고르기 전엔 [파일로 내보내기]가 잠긴다.
+ *   고른 값은 파일 이름 끝(O · X)에만 넣는다 — JSON 은 그대로(10-31 서현). 새 기록(sessionId)이 오면 지운다.
+ * 파일 이름 (#24): <링크 3자리>_rbc_<참여 번호>_<조건 태그>_<세션 앞 8자>_<시각>_<O|X>.json
+ *   링크 번호는 status.linkNo(이번 기록의 것), 참여 번호 · 태그는 bundle 의 session.tester(기록 시작 때 복사본).
+ *   없으면 NOLINK · NOID · NOTAG 로 채우고 배너로 알린다(조용히 빼지 않는다).
+ *   디버그 패널 [내보내기](6-frames download())는 옛 이름 rbc_<참여 번호>_<세션>_<시각>.json 그대로.
+ *
+ * 주소가 #export 로 열리면(팝업의 내보내기 · 평가 [완료] 뒤 자동) 바로 내보내지 않고 정답 / 오답 고르기로 안내한다.
  *
  * 예외: '연구자용 설정'의 디버그 패널 보이기는 chrome.storage.local 'ui:panel' 에 직접 쓴다.
  *   세션 · 동의 데이터가 아닌 화면 설정이라 background 를 거치지 않는다. content 쪽은 11-session 이 읽는다.
@@ -86,6 +93,30 @@
     for (const r of document.querySelectorAll('input[name="tag"]')) r.checked = r.value === v;
   }
 
+  // 정답 / 오답 선택 (O · X 라디오). 안 골랐으면 ''. 새 기록이 오면 지운다
+  let answerSid = null;
+  function answerValue() {
+    const r = document.querySelector('input[name="answer"]:checked');
+    return r ? r.value : '';
+  }
+  function syncAnswer() {
+    if (st && st.sessionId !== answerSid) {
+      answerSid = st.sessionId;
+      for (const r of document.querySelectorAll('input[name="answer"]')) r.checked = false;
+    }
+  }
+
+  // 파일 이름에 못 쓰는 글자는 _ 로
+  const safe = (v) => String(v).replace(/[^A-Za-z0-9_-]/g, '_');
+  function fileName(bundle, answer) {
+    const t = bundle.session.tester || {};
+    const link = st.linkNo || 'NOLINK';
+    const pno = safe(t.participantNo || 'NOID');
+    const tag = safe(t.tag || 'NOTAG');
+    const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
+    return `${link}_rbc_${pno}_${tag}_${sid}_${Date.now()}_${answer}.json`;
+  }
+
   function setView(v) {
     if (view === v) return;
     view = v;
@@ -130,8 +161,15 @@
     else parts.push('쌓인 기록 없음');
     $('s-detail').textContent = parts.join(', ');
 
-    $('btn-export').disabled = st.recording || !st.records;
-    $('btn-export').title = st.recording ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
+    syncAnswer();
+    const ans = answerValue();
+    for (const r of document.querySelectorAll('input[name="answer"]')) r.disabled = st.recording || !st.records;
+    $('btn-export').disabled = st.recording || !st.records || !ans;
+    $('btn-export').title = st.recording ? '기록을 정지한 뒤에 내보낼 수 있습니다'
+      : st.records && !ans ? '정답 / 오답을 먼저 고르세요' : '';
+    $('export-name').textContent = st.recording || !st.records ? ''
+      : !ans ? '정답 / 오답을 고르면 내보낼 수 있습니다.'
+        : `파일 이름: ${st.linkNo || 'NOLINK'}_rbc_${safe(c.participantNo)}_${safe(c.tag)}_…_${ans}.json`;
     $('btn-clear').disabled = st.recording || !st.records;
     $('btn-clear').title = st.recording ? '기록을 정지한 뒤에 지울 수 있습니다' : '';
   }
@@ -175,23 +213,29 @@
   });
 
   // ---------------------------------------------------------------------------
-  // 내보내기 — 파일명은 6-frames download() 와 같다 (터미널의 rbc_*.json 규칙 유지)
+  // 내보내기 — 파일 이름 규칙은 맨 위 주석 (#24)
   // ---------------------------------------------------------------------------
   async function exportFile() {
+    const answer = answerValue();
+    if (!answer) throw new Error('정답 / 오답을 먼저 고르세요.');
     const bundle = await bg({ rbc: 'export' });
     if (!bundle || bundle.kind !== 'rbc-session') throw new Error('내보낼 기록을 만들지 못했습니다. (export: 형식 불일치)');
     const blob = new Blob([JSON.stringify(bundle)], { type: 'application/json' });   // 한 줄 (팀 결정, 용량)
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
-    // 참여 번호를 파일 이름 앞에 (2026-10-11) — 6-frames download() 와 같은 규칙.
-    const pno = String((bundle.session.tester && bundle.session.tester.participantNo) || 'NOID')
-      .replace(/[^A-Za-z0-9_-]/g, '_');
-    a.download = `rbc_${pno}_${sid}_${Date.now()}.json`;
+    const name = fileName(bundle, answer);
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // 탭이라 여유 있게
-    show(`파일로 내보냈습니다: 글 ${bundle.pages.length}개. 다운로드 폴더를 확인하세요.`);
+    const missing = ['NOLINK', 'NOID', 'NOTAG'].filter((k) => name.includes(k));
+    if (missing.length) {
+      show(`파일로 내보냈지만 이름에 빠진 정보가 있습니다(${missing.join(' · ')}): ${name} — 연구 담당자에게 알려주세요.`, 'warn');
+    } else {
+      show(`파일로 내보냈습니다: ${name} (글 ${bundle.pages.length}개). 다운로드 폴더를 확인하세요.`);
+    }
   }
+
+  $('answer').addEventListener('change', () => { if (st) render(); });
 
   $('btn-export').addEventListener('click', async () => {
     $('btn-export').disabled = true;
@@ -250,15 +294,16 @@
   // ---------------------------------------------------------------------------
   // 시작 · 갱신 (보이는 동안만 1초마다 — 경과 시간과 기록 상태)
   // ---------------------------------------------------------------------------
-  // 팝업의 내보내기로 열렸으면 한 번만 내보낸다 (새로고침해도 반복되지 않게 해시를 지운다)
+  // 내보내기로 열렸으면(팝업 · 평가 [완료] 뒤) 정답 / 오답 고르기로 안내한다 (새로고침해도 반복되지 않게 해시를 지운다)
   const wantExport = location.hash === '#export';
   if (wantExport) history.replaceState(null, '', location.pathname);
 
-  refresh().then(async () => {
+  refresh().then(() => {
     if (!wantExport || !st || view !== 'joined') return;
     if (st.recording) { show('기록 중에는 내보낼 수 없습니다. 먼저 기록을 정지하세요.', 'err'); return; }
     if (!st.records) { show('내보낼 기록이 없습니다.', 'warn'); return; }
-    try { await exportFile(); } catch (e) { show(e.message, 'err'); }
+    show('질문의 답을 맞혔는지 [정답] / [오답]을 고른 뒤 [파일로 내보내기]를 누르세요.', 'warn');
+    $('export-card').scrollIntoView({ block: 'center' });
   });
   setInterval(() => { if (!document.hidden) refresh(); }, 1000);
 })();
