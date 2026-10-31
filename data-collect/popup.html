@@ -48,6 +48,11 @@
     border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
   }
   input[type=text]:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-tint); }
+  select {
+    width: 100%; font: inherit; color: var(--ink); padding: 8px 10px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
+  }
+  select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-tint); }
   .qshow { margin-top: 10px; font-size: 13px; color: var(--sub); }
   .qshow b { color: var(--ink); font-weight: 600; }
 
@@ -117,6 +122,11 @@
       <div class="state" id="state">기록 대기</div>
       <div class="meta" id="meta"></div>
 
+      <label class="q" id="l-edit">
+        <span>링크 번호</span>
+        <select id="link"><option value="">골라 주세요</option></select>
+      </label>
+      <div class="qshow" id="l-show" hidden>링크 <b id="l-val"></b></div>
       <label class="q" id="q-edit">
         <span>검색어 (선택)</span>
         <input type="text" id="q" maxlength="80" autocomplete="off" placeholder="이번에 찾아보려는 주제">

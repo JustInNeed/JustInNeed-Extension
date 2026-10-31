@@ -72,9 +72,20 @@
   .banner.err { background: var(--red-tint); border-color: var(--red-line); color: var(--red-ink); }
   .banner code { font-size: 12.5px; word-break: break-all; }
 
-  label.field { display: block; margin-bottom: 16px; }
-  label.field span { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
-  label.field em { font-style: normal; color: var(--faint); font-weight: 400; margin-left: 4px; }
+  .field { display: block; margin-bottom: 16px; }
+  .field > span { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .field em { font-style: normal; color: var(--faint); font-weight: 400; margin-left: 4px; }
+
+  /* 둘 중 하나 고르기 (조건 태그 · 정답/오답) — 라디오를 숨기고 칸 전체를 버튼처럼 */
+  .seg { display: inline-flex; gap: 8px; }
+  .seg label { position: relative; cursor: pointer; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg b {
+    display: block; min-width: 88px; text-align: center; padding: 10px 18px;
+    border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff; font-weight: 600;
+  }
+  .seg input:checked + b { background: var(--green); border-color: var(--green); color: #fff; }
+  .seg input:focus-visible + b { outline: 3px solid var(--green-line); outline-offset: 2px; }
   input[type=text] {
     width: 100%; max-width: 360px; font: inherit; color: var(--ink);
     padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
@@ -260,11 +271,14 @@
           <span>이름</span>
           <input type="text" id="f-name" maxlength="40" autocomplete="off" placeholder="예: 홍길동">
         </label>
-        <label class="field">
-          <span>조건 태그<em>선택</em></span>
-          <input type="text" id="f-tag" maxlength="40" autocomplete="off">
-          <small class="hint">연구 담당자가 알려준 경우에만 입력하세요.</small>
-        </label>
+        <div class="field">
+          <span id="f-tag-label">조건 태그</span>
+          <div class="seg" id="f-tag" role="radiogroup" aria-labelledby="f-tag-label">
+            <label><input type="radio" name="tag" value="Q1"><b>Q1</b></label>
+            <label><input type="radio" name="tag" value="Q2"><b>Q2</b></label>
+          </div>
+          <small class="hint">연구 담당자가 알려준 것을 고르세요. 골라야 참여할 수 있습니다.</small>
+        </div>
         <label class="agree">
           <input type="checkbox" id="f-agree">
           <span>위 내용을 읽었고 테스트 참여에 동의합니다.</span>
