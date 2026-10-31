@@ -694,7 +694,7 @@ def reading_order(g):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("inputs", nargs="+", help="세션 bundle JSON (rbc_*.json)")
+    ap.add_argument("inputs", nargs="+", help="세션 bundle JSON (*rbc_*.json)")
     ap.add_argument("-o", "--output", default="features.csv")
     ap.add_argument("--noise", help="본문 아닌 유닛 파일 {pageId|url: [pid, ...]}")
     ap.add_argument("--no-selection-features", action="store_true",
