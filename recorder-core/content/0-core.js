@@ -22,11 +22,8 @@
 
   // ==========================================================================
   // CONFIG
-  //   TODO(Step 2): TARGET_CHARS / MIN_CHARS / MAX_CHARS / MIN_UNIT_CHARS 는
-  //   패널 슬라이더가 런타임에 덮어쓰는 가변값이다. const 객체 안에 불변값과
-  //   섞여 있는 게 BUG-1의 배경이었다. 2-units.js 를 만들 때 RBC.chunkOpts 로
-  //   분리한다. 지금 옮기면 content.js 쪽도 같이 고쳐야 해서 Step 1의 변경
-  //   범위가 넓어지므로 미룬다.
+  //   청킹 값(TARGET_CHARS · MIN_CHARS · MAX_CHARS · MIN_UNIT_CHARS)은 기본값이다. 패널 슬라이더는
+  //   2-units 의 chunkOpts(target · min · max)를 바꾸고 여기는 안 바뀐다.
   // ==========================================================================
   const CFG = {
     SCHEMA_VERSION: 3,        // [C9] v3 = 감사 §8. 3 미만은 check_session · extract_features 가 거부
@@ -195,7 +192,6 @@
   // 공개
   // ==========================================================================
   window.RBC = {
-    version: 'v2.3-session',
     dup: false,
     CFG,
     IS_TOP,

@@ -92,7 +92,6 @@
     mutTimer = setTimeout(fire, Math.max(0, due - now));
   });
 
-  // [R1] 전: rescan() 이 retargetObserver() 를 직접 호출했다.
   bus.on('units:changed', retarget);
 
   retarget();                       // 최초 부착 (이 시점엔 document 전체)

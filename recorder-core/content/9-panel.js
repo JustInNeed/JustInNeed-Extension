@@ -43,14 +43,10 @@
  *   record:started / record:stopped 는 이제 "구간"의 시작/끝이라 버튼에 쓰면
  *   안 된다. SPA 이동으로 구간이 닫힐 때 버튼이 "기록"으로 돌아가 버린다.
  *
- * --- v2.2 대비 달라진 점 ----------------------------------------------------
- *   [R6]  전: tick() 이 emitStat() → applyStat() 을 직접 호출  → stat 구독
- *   [R7]  전: tick() 이 autostop 에서 renderPanel() 직접 호출  → session:changed 구독
- *   [R9]  전: startRecording/stopRecording 이 renderPanel() 호출 → 위와 동일
- *   [R10] 전: doScan() 이 setStat()/renderPanel() 직접 호출
- *             → scan:progress / scan:failed / scan:done 구독.
- *               6-frames 는 "사실"만 넘기고, 문장으로 만드는 건 여기 몫이다.
- *   uiRecording / uiOverlay 의 소유자도 여기로 옮겼다.
+ * --- 버스로만 움직인다 --------------------------------------------------------
+ *   상태 줄 = stat · 버튼 = session:changed · 스캔 진행 = scan:progress / scan:failed / scan:done.
+ *   6-frames 는 "사실"만 넘기고, 문장으로 만드는 건 여기 몫이다.
+ *   uiRecording / uiOverlay 의 소유자는 여기다.
  *
  * --- BUG-1 / BUG-2 방어 -----------------------------------------------------
  *   세션 중에는 스캔 버튼과 청크 슬라이더를 잠근다. 기록 도중 재청킹이 일어나면
@@ -134,7 +130,7 @@
     const lock = uiRecording ? 'disabled' : '';      // BUG-1 / BUG-2 방어
 
     panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.3</span>
+      <h4>📖 JustInNeed
         <span style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;${uiMode ? 'background:#eef7e9;color:#3b7f2d' : 'background:#fdf3f2;color:#c0392b'}">${uiMode ? esc(MODE_KO[uiMode] || uiMode) : '버전 확인 전'}</span></h4>
       <div>
         <button data-act="scan" ${lock}>스캔</button>
@@ -292,15 +288,14 @@
   }
 
   // ==========================================================================
-  // 구독 — 여기가 R6 · R7 · R9 · R10 을 끊은 자리
+  // 구독 — 역방향 호출을 끊은 자리 (다른 모듈은 사실만 발행, 패널은 듣고 그린다)
   // ==========================================================================
 
-  // [R6] 전: emitStat() 안에서 if (IS_TOP) applyStat(s);
   bus.on('stat', applyStat);
 
   bus.on('units:list', showList);
 
-  // [R7][R9] 버튼은 세션 상태만 따른다. 11-session 이 background 의 방송·hello
+  // 버튼은 세션 상태만 따른다. 11-session 이 background 의 방송·hello
   //   응답을 받을 때마다 발행한다.
   bus.on('session:changed', (d) => {
     const on = !!(d && d.recording);
@@ -377,8 +372,7 @@
     render();
   });
 
-  // [R10] 전: doScan() 안에서 setStat(...) / renderPanel().
-  //   6-frames 는 숫자만 넘기고 문장 조립은 여기서 한다.
+  // 6-frames 는 숫자만 넘기고 문장 조립은 여기서 한다.
   bus.on('scan:progress', (d) => {
     setStat(`본문 탐색 중… (${d.tries}/${d.max})`);
   });
@@ -410,9 +404,7 @@
 
   // ==========================================================================
   // 공개 + 마운트
-  //   init() 이 renderPanel() 을 부르던 것을 자가 마운트로 바꿨다.
-  //   content.js 의 init() 은 readyState 에 따라 9-panel.js 보다 먼저 돌 수 있어서,
-  //   거기서 패널을 부르면 "가끔" undefined 가 된다.
+  //   패널은 스스로 마운트한다(누가 불러 주지 않는다).
   // ==========================================================================
   RBC.panel = { render, setStat };
 

@@ -26,14 +26,12 @@
  *
  * --- 판정 기준 --------------------------------------------------------------
  *   manifest의 js 배열에서 이 파일을 빼도 스캔·기록·정지·JSON이 전부 정상이어야
- *   한다. content.js 는 이 파일의 존재를 몰라야 하고, 실제로 `RBC.overlay` 를
- *   단 한 군데도 참조하지 않는다.
+ *   한다. 엔진의 다른 content 파일은 `RBC.overlay` 를 참조하지 않는다. 데이터 수집 버전의 12-label 만
+ *   `RBC.overlay &&` 로 있는지 확인하고 rangeForUnit 을 쓴다 — 없어도 동작한다.
  *
- * --- v2.2 대비 달라진 점 ----------------------------------------------------
- *   [R2] 전: rescan() 이 paintOverlay() 를 직접 호출  → units:changed 구독
- *   [R5] 전: tick() 이 markCurrent() 를 직접 호출     → tick:done 구독
- *   [R-cmd] 전: handleCmd 가 overlayOn 을 직접 대입   → cmd:overlay 구독
- *   overlayOn 의 소유자도 여기로 옮겼다. content.js 쪽에는 표시용 미러만 둔다
+ * --- 버스로만 움직인다 --------------------------------------------------------
+ *   다시 칠하기 = units:changed · 현재 유닛 표시 = tick:done · 켜고 끄기 = cmd:overlay.
+ *   overlayOn 의 소유자는 여기다. 5-recorder 에는 표시용 미러만 둔다
  *   (overlay:changed 로 갱신). 이 파일이 없으면 미러는 영원히 false 로 남고,
  *   그게 정확히 맞는 동작이다.
  * ========================================================================== */
@@ -276,7 +274,7 @@
     overlayOn = !!on;
     paint(overlayOn);
     if (overlayOn) drawBoxes(); else { hideVis(); hideBoxes(); }
-    // content.js 의 미러를 갱신시킨다. 거기서 ensureTicking() 이 다시 불린다.
+    // 5-recorder 의 미러를 갱신시킨다. 거기서 ensureTicking() 이 다시 불린다.
     bus.emit('overlay:changed', { on: overlayOn });
   }
 
@@ -288,7 +286,6 @@
   // 이 파일이 없으면 이 이벤트는 듣는 사람이 없고, 그냥 아무 일도 안 일어난다.
   bus.on('cmd:overlay', (m) => setOverlay(!!(m && m.on)));
 
-  // [R2] 전: rescan() 안에서 if (overlayOn) paintOverlay(true);
   let labelHide = false;
   bus.on('label:mode', (d) => {
     labelHide = !!(d && d.on);
@@ -298,7 +295,6 @@
 
   bus.on('units:changed', () => { if (overlayOn && !labelHide) { paint(true); drawBoxes(); } });
 
-  // [R5] 전: tick() 안에서 if (overlayOn) markCurrent(centerU, cursorPid);
   bus.on('tick:done', (d) => {
     if (!overlayOn || labelHide || !d) return;
     markCurrent(d.centerU, d.cursorPid);
@@ -306,11 +302,10 @@
     drawBoxes();
   });
 
-  // 전: onResize() 안에서 if (overlayOn) paintOverlay(true);
   bus.on('viewport:resized', () => { if (overlayOn && !labelHide) paint(true); });
 
   // ==========================================================================
-  // 공개 — content.js 는 이걸 안 쓴다. 콘솔에서 손으로 켜볼 때만 쓰는 통로.
+  // 공개 — 콘솔에서 손으로 켜볼 때 쓰는 통로 + 12-label 의 rangeForUnit(있을 때만 부른다).
   // ==========================================================================
   RBC.overlay = {
     isOn() { return overlayOn; },
