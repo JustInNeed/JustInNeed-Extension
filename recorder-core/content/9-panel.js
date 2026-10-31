@@ -130,7 +130,7 @@
     const lock = uiRecording ? 'disabled' : '';      // BUG-1 / BUG-2 방어
 
     panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.3</span>
+      <h4>📖 JustInNeed
         <span style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;${uiMode ? 'background:#eef7e9;color:#3b7f2d' : 'background:#fdf3f2;color:#c0392b'}">${uiMode ? esc(MODE_KO[uiMode] || uiMode) : '버전 확인 전'}</span></h4>
       <div>
         <button data-act="scan" ${lock}>스캔</button>
