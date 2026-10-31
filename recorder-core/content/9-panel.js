@@ -42,7 +42,7 @@
  *   세션은 background 소유다. 버튼은 ui:rec / ui:export 를 발행하고, 11-session 이
  *   background 에 요청한다. 시작/정지는 background 의 방송으로 일어난다.
  *   그래서 버튼 상태(uiRecording)도 낙관적으로 먼저 바꾸지 않고 session:changed
- *   로만 바꾼다. 다른 탭에서 시작한 세션, 30분 무동작 종료, 웹앱에서 온 명령
+ *   로만 바꾼다. 다른 탭에서 시작한 세션, 무동작 자동 정지(#26), 웹앱에서 온 명령
  *   (나중)까지 전부 같은 경로로 버튼에 반영된다.
  *
  *   record:started / record:stopped 는 이제 "구간"의 시작/끝이라 버튼에 쓰면

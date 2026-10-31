@@ -185,9 +185,22 @@ function idleInfo() {
     inMs: IDLE_IN_MS, outMs: IDLE_OUT_MS };
 }
 
+// 시간을 넘겼나. 시계를 고치기 전에 본다 — 알람 사이에 돌아와도 넘긴 시간은 잡힌다.
+function idleOver(now) {
+  if (!S.recording) return false;
+  if (S.awaySince != null) return now - S.awaySince > IDLE_OUT_MS;
+  return now - S.lastActAt > IDLE_IN_MS;
+}
+
+// 자동 정지 = 정지 버튼과 같은 동작. 크롬 안 · 밖 모두 이유는 'idle'(기록 형식의 기존 값, 새 값을 만들지 않는다).
+function idleStop() {
+  return handlers.stop({ reason: 'idle' });
+}
+
 // 움직임이 있었다. 크롬 밖에 있었으면 돌아온 것이다.
 async function moved(now) {
   if (!S.recording) return;
+  if (idleOver(now)) return idleStop();
   if (S.awaySince != null) { S.lastAwayMs = now - S.awaySince; S.awaySince = null; }
   S.lastActAt = now;
   await saveState();
@@ -196,6 +209,7 @@ async function moved(now) {
 // 크롬을 떠났다 (다른 앱으로 · 모든 창이 포커스를 잃음).
 async function wentAway(now) {
   if (!S.recording || S.awaySince != null) return;
+  if (idleOver(now)) return idleStop();
   S.awaySince = now;
   await saveState();
 }
@@ -215,10 +229,13 @@ async function idleCheck() {
   if (!S.recording) { await chrome.alarms.clear(IDLE_ALARM); return; }
   const now = Date.now();
   const w = await chrome.windows.getLastFocused().catch(() => null);
-  if (!w || !w.focused) return wentAway(now);
-  if (S.awaySince != null) return moved(now);              // 돌아왔는데 이벤트를 놓쳤다
-  const [t] = await chrome.tabs.query({ active: true, windowId: w.id });
-  if (t && !(await alive(t.id))) return moved(now);       // 확장이 못 들어가는 탭에 있음 = 움직임
+  if (!w || !w.focused) await wentAway(now);
+  else if (S.awaySince != null) return moved(now);         // 돌아왔는데 이벤트를 놓쳤다
+  else {
+    const [t] = await chrome.tabs.query({ active: true, windowId: w.id });
+    if (t && !(await alive(t.id))) return moved(now);     // 확장이 못 들어가는 탭에 있음 = 움직임
+  }
+  if (idleOver(now)) return idleStop();
 }
 
 function idleAlarmOn() {
@@ -422,7 +439,8 @@ const handlers = {
     S.recording = false;
     await saveState();
     await chrome.alarms.clear(IDLE_ALARM);
-    await broadcast(sessionMsg());
+    // reason 은 방송에만 싣는다 — idle 이면 기록하던 탭이 autostop 이벤트를 남긴다(#26)
+    await broadcast(Object.assign(sessionMsg(), { reason }));
     VERSION.onStop(reason);
     return sessionMsg();
   },

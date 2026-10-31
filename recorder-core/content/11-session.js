@@ -4,7 +4,7 @@
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
  * 발행: session:changed, session:link, export:ready, ui:panel, idle:clock
- * 구독: seg:page, seg:chunk, record:stopped, scan:done, label:done, activity,
+ * 구독: seg:page, seg:chunk, label:mode, scan:done, label:done, activity,
  *       ui:rec, ui:export, ui:query, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
@@ -114,10 +114,11 @@
   // 입력 = 움직임 → background 의 무동작 시계 (#26). 간격은 4-input 이 둔다(CFG.ACTIVITY_PING_MS).
   bus.on('activity', () => toBg({ rbc: 'activity' }));
 
-  // 30분 무동작은 세션 종료다. 기록하던 프레임이 직접 background 에 알린다.
-  // (user 는 background 방송으로 멈춘 것, navigation/demoted 는 구간만 닫은 것)
-  bus.on('record:stopped', (d) => {
-    if (d && d.reason === 'idle') toBg({ rbc: 'stop', reason: 'idle' });
+  // 라벨 모드(테스트 버전 평가) 동안은 자동 정지하면 안 된다 — 평가 중 움직임을 계속 알린다 (#26).
+  let labelKeep = null;
+  bus.on('label:mode', (d) => {
+    clearInterval(labelKeep); labelKeep = null;
+    if (d && d.on) labelKeep = setInterval(() => toBg({ rbc: 'activity' }), CFG.ACTIVITY_PING_MS);
   });
 
   // 테스트 모드: 라벨 [완료] = 이 글을 다 읽음 → 세션을 끝낸다 (한 글 = 한 기록).
@@ -175,7 +176,11 @@
   chrome.runtime.onMessage.addListener((m, _sender, reply) => {
     if (!m || !m.rbc) return false;
     if (m.rbc === 'start') { applySession(m); joinIfRecording(); }
-    else if (m.rbc === 'stop') { applySession(m); RBC.frames.send('stop', { reason: 'user' }); }
+    else if (m.rbc === 'stop') {
+      applySession(m);
+      // idle = background 무동작 자동 정지(#26) → 5-recorder 가 autostop 이벤트를 남긴다
+      RBC.frames.send('stop', { reason: m.reason === 'idle' ? 'idle' : 'user' });
+    }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
     else if (m.rbc === 'alive') reply({ ok: true });  // 무동작 시계: 확장이 들어간 탭인지 (#26)
     else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)

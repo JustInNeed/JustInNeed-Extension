@@ -4,8 +4,8 @@
  * 소유: isPrimary, primaryTag, seenMsg, scanBucket/Timer/Tries
  * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 5-recorder
  * 발행: cmd:*, primary:changed, scan:progress, scan:failed, scan:done
- * 구독: units:scanned, units:list, stat, export:ready, record:stopped,
- *       activity, focus:broadcast, settle:empty
+ * 구독: units:scanned, units:list, stat, export:ready,
+ *       focus:broadcast, settle:empty
  *
  * --- export 는 여기서 저장만 한다 --------------------------------------------
  *   세션 bundle 은 background 가 만들고 11-session(최상위)이 받아 export:ready
@@ -84,7 +84,6 @@
 
       // 전 프레임이 알아야 하는 것
       case 'focus':    bus.emit('cmd:focus', m); break;      // [C2]
-      case 'activity': bus.emit('cmd:activity'); break;      // [C5]
       case 'query':    bus.emit('cmd:query', m); break;      // [C8]
 
       case 'chunk':
@@ -118,7 +117,6 @@
     else if (m.res === 'stat') bus.emit('stat', m);
     else if (m.res === 'reelect') reelect();
     else if (m.res === 'list') bus.emit('units:list', m.list);
-    else if (m.res === 'autostop') bus.emit('record:stopped', { reason: 'idle' });
   });
 
   // ==========================================================================
@@ -220,15 +218,9 @@
 
   bus.on('export:ready', (payload) => { if (IS_TOP) download(payload); });
 
-  // 자동 종료는 최상위 패널이 알아야 버튼이 돌아온다.
-  bus.on('record:stopped', (d) => {
-    if (!IS_TOP && d && d.reason === 'idle') toTop({ res: 'autostop' });
-  });
-
   // 최상위의 활동·포커스를 하위 프레임으로 브로드캐스트한다.
   bus.on('settle:empty', () => { if (IS_TOP) reelect(); else toTop({ res: 'reelect' }); });
 
-  bus.on('activity', () => send('activity'));
   bus.on('focus:broadcast', (d) => send('focus', { on: d.on }));
 
   // ==========================================================================

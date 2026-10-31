@@ -65,8 +65,8 @@
     SETTLE_EMPTY_POLL_MS: 1000,     // 최대 대기를 넘겨도 유닛 0개면 이 간격으로 계속 확인 (빈 페이지 비용 줄이기)
 
     // --- 세션 ---
-    IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
-    ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기
+    IDLE_TIMEOUT_MS: 10 * 60 * 1000,   // [C5] 크롬 안 10분 무동작 → 자동 종료. 판정은 background(bg-core IDLE_IN_MS 와 같아야 함), 여기 값은 meta 기록용
+    ACTIVITY_PING_MS: 5000,            // [C5] 입력을 background 무동작 시계에 알리는 최소 간격 (프레임마다, #26)
     IDLE_POLL_MS: 3000,                // 패널이 켜져 있을 때 background 무동작 시계를 다시 받는 주기 (#26)
 
     // --- 세션 · 페이지 구간 (background 연동) ---
