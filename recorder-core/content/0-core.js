@@ -67,6 +67,7 @@
     // --- 세션 ---
     IDLE_TIMEOUT_MS: 30 * 60 * 1000,   // [C5] 30분 무동작 → 자동 종료
     ACTIVITY_PING_MS: 5000,            // [C5] 최상위 프레임의 활동을 primary에 알리는 주기
+    IDLE_POLL_MS: 3000,                // 패널이 켜져 있을 때 background 무동작 시계를 다시 받는 주기 (#26)
 
     // --- 세션 · 페이지 구간 (background 연동) ---
     FLUSH_MS: 1000,           // timeline 조각을 background 로 넘기는 주기. 데이터 해상도와 무관

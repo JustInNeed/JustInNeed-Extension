@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned
+ *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned, idle:clock
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -23,6 +23,11 @@
  * --- noise 줄 · 본문 문턱 (#11) ----------------------------------------------
  *   stat.noise 로 noise 조각 · 유닛 개수, 판정 방식(Readability / 플랫폼 생략 / 실패 원문), 되찾은 상자 이름,
  *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. "전부 noise" 유닛 수 = 테스트 모드 평정에서 빠지는 수(#13). 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
+ *
+ * --- 무동작 시계 줄 (#26) ---------------------------------------------------
+ *   시계는 background 것이다. idle:clock 으로 받은 시각에서 1초마다 여기서 경과만 센다.
+ *   탭은 입력을 몇 초 간격(CFG.ACTIVITY_PING_MS)으로만 알리므로 몇 초 늦게 0 으로 돌아가는 건 정상이다.
+ *   크롬 밖 시간은 떠나 있는 동안 볼 수 없으니, 돌아온 뒤 "지난번 크롬 밖"으로 보여 준다.
  *
  * --- 연결 끊김 표시 ----------------------------------------------------------
  *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
@@ -73,6 +78,7 @@
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
   let noiseMinPct = 30;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
   let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
+  let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -156,6 +162,7 @@
         <span id="rbc-noiseminval">${noiseMinPct}%</span>
       </div>
       <div class="rbc-stat" id="rbc-noise">${noiseHtml}</div>
+      <div class="rbc-stat" id="rbc-idle">${idleHtml()}</div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-stat" id="rbc-rescan">${rescanHtml}</div>
@@ -349,6 +356,29 @@
     const el = panelEl && panelEl.querySelector('#rbc-rescan');
     if (el) el.innerHTML = rescanHtml;
   });
+
+  // 무동작 시계 (#26). 숫자는 background 값, 문장은 여기서.
+  function mmss(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  function idleHtml() {
+    const c = idleClock;
+    if (!uiRecording || !c || !c.lastActAt) return '<span style="color:#999">무동작 시계: 기록 중이 아님</span>';
+    const idle = Date.now() - c.lastActAt;
+    const near = idle > c.inMs * 0.8;
+    return `무동작 <b style="color:${near ? '#dc2626' : '#111'}">${mmss(idle)}</b> / ${mmss(c.inMs)}` +
+      ` · 크롬 밖 지난번 ${c.lastAwayMs != null ? mmss(c.lastAwayMs) : '없음'} / ${mmss(c.outMs)}`;
+  }
+  bus.on('idle:clock', (d) => {
+    idleClock = d;
+    const el = panelEl && panelEl.querySelector('#rbc-idle');
+    if (el) el.innerHTML = idleHtml();
+  });
+  setInterval(() => {
+    const el = visible && panelEl && panelEl.querySelector('#rbc-idle');
+    if (el) el.innerHTML = idleHtml();
+  }, 1000);
 
   bus.on('ui:panel', (d) => {
     const on = !!(d && d.on);

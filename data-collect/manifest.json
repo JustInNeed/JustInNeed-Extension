@@ -25,7 +25,8 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "activeTab"
+    "activeTab",
+    "alarms"
   ],
   "content_scripts": [
     {

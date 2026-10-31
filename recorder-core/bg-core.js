@@ -50,6 +50,17 @@
  *   pages 의 각 원소는 기존 v2 payload 그대로다. extract_features.py 는 피처
  *   계산을 안 바꾸고, 읽을 때 pages 를 풀기만 하면 된다.
  *
+ * --- 무동작 시계 (#26) -------------------------------------------------------
+ *   세션을 끝내는 규칙이라 세션 주인인 여기가 시계를 갖는다. 탭은 숨거나 크롬 밖에 있으면
+ *   틱이 멈춰서 그 시간을 셀 수 없다.
+ *     크롬 안 : 마지막 움직임에서 IDLE_IN_MS 를 넘기면 자동 정지
+ *     크롬 밖 : 창 포커스가 없어진 때부터 IDLE_OUT_MS 를 넘기면 자동 정지. 그 안에 돌아오면 이어짐
+ *   움직임 = 탭의 입력(activity 명령, 기록 안 하는 탭 · iframe 포함) · 탭 전환 · 크롬으로 돌아옴 ·
+ *            확장이 못 들어가는 탭(크롬 설정 · 웹스토어 등)에 있는 것 자체.
+ *   다른 탭의 소리 · 영상은 안 친다. 손대지 않고 영상만 보는 경우를 어떻게 볼지는 팀 논의 필요(10-31).
+ *   service worker 는 쉬면 꺼지므로 시각은 S 에 저장하고, 알람으로 30초마다 깨어 본다.
+ *   움직임이 오면 시계를 고치기 전에 먼저 넘겼는지 본다 — 알람 사이에 돌아와도 넘긴 시간은 잡힌다.
+ *
  * --- service worker 라서 지키는 것 --------------------------------------------
  *   1) 유휴 30초면 종료된다. 메모리 상태는 캐시, 원본은 storage.
  *   2) 리스너는 최상위에서 동기적으로 등록해야 깨어날 때 이벤트를 받는다.
@@ -60,6 +71,9 @@
 const TICK_MS = 150;          // 0-core CFG.TICK_MS 와 같아야 한다
 const K_SESS = 'sess:cur';    // 세션 상태 (작은 것만)
 const REC = 'rec:';           // 기록 로그. 키 = 'rec:' + seq 8자리
+const IDLE_IN_MS = 10 * 60 * 1000;    // 크롬 안 무동작 → 자동 정지. 0-core CFG.IDLE_TIMEOUT_MS 와 같아야 한다
+const IDLE_OUT_MS = 30 * 60 * 1000;   // 크롬 밖(창 포커스 없음) → 자동 정지
+const IDLE_ALARM = 'rbc-idle';        // 무동작 검사 알람 (30초마다, 기록 중에만)
 
 // ============================================================================
 // 버전 자리 — 버전 파일이 Object.assign(VERSION, {...}) 로 채운다
@@ -88,6 +102,9 @@ function emptyState() {
     tabSeg: {},          // tabId → segId  (지금 그 탭에서 열린 구간)
     lastVisit: null,     // 같은 곳 연속 기록 방지용
     pagePids: {},        // pageId → [pid] (팝업 진행 표시용. 기록 데이터 아님)
+    lastActAt: 0,        // 무동작 시계: 마지막 움직임 시각 (기록 데이터 아님)
+    awaySince: null,     // 크롬을 떠난 시각. null = 크롬 안
+    lastAwayMs: null,    // 지난번 크롬 밖에 있던 시간 (패널 표시용)
   };
 }
 
@@ -158,6 +175,57 @@ function visit(tabId, reason) {
   if (S.lastVisit === key) return null;
   S.lastVisit = key;
   return put({ k: 'visit', t: tNow(), pageId, segId, tabId, reason });
+}
+
+// ============================================================================
+// 무동작 시계 (#26, 헤더 참고)
+// ============================================================================
+function idleInfo() {
+  return { lastActAt: S.lastActAt, awaySince: S.awaySince, lastAwayMs: S.lastAwayMs,
+    inMs: IDLE_IN_MS, outMs: IDLE_OUT_MS };
+}
+
+// 움직임이 있었다. 크롬 밖에 있었으면 돌아온 것이다.
+async function moved(now) {
+  if (!S.recording) return;
+  if (S.awaySince != null) { S.lastAwayMs = now - S.awaySince; S.awaySince = null; }
+  S.lastActAt = now;
+  await saveState();
+}
+
+// 크롬을 떠났다 (다른 앱으로 · 모든 창이 포커스를 잃음).
+async function wentAway(now) {
+  if (!S.recording || S.awaySince != null) return;
+  S.awaySince = now;
+  await saveState();
+}
+
+// 이 탭에 content script 가 있나. 없으면 확장이 못 들어가는 탭(크롬 설정 · 웹스토어 · PDF 등)이다.
+async function alive(tabId) {
+  try {
+    const r = await chrome.tabs.sendMessage(tabId, { rbc: 'alive' }, { frameId: 0 });
+    return !!(r && r.ok);
+  } catch (e) {
+    return false;
+  }
+}
+
+// 알람마다: 크롬 안팎을 다시 확인한다. 포커스 이벤트를 놓쳤어도(서비스 워커가 꺼져 있었음) 여기서 맞춰진다.
+async function idleCheck() {
+  if (!S.recording) { await chrome.alarms.clear(IDLE_ALARM); return; }
+  const now = Date.now();
+  const w = await chrome.windows.getLastFocused().catch(() => null);
+  if (!w || !w.focused) return wentAway(now);
+  if (S.awaySince != null) return moved(now);              // 돌아왔는데 이벤트를 놓쳤다
+  const [t] = await chrome.tabs.query({ active: true, windowId: w.id });
+  if (t && !(await alive(t.id))) return moved(now);       // 확장이 못 들어가는 탭에 있음 = 움직임
+}
+
+function idleAlarmOn() {
+  // create 는 이미 있는 알람의 주기를 처음부터 다시 잰다 — 깨어날 때마다 부르면 알람이 영영 안 울릴 수 있어서 없을 때만
+  return chrome.alarms.get(IDLE_ALARM).then((a) => {
+    if (!a) return chrome.alarms.create(IDLE_ALARM, { periodInMinutes: 0.5 });
+  });
 }
 
 // ============================================================================
@@ -312,6 +380,7 @@ function sessionMsg() {
   return {
     rbc: S.recording ? 'start' : 'stop',
     sessionId: S.sessionId, epoch: S.epoch, query: S.query, mode: VERSION.mode,
+    idle: idleInfo(),                                      // 패널의 무동작 시계 표시용 (#26)
   };
 }
 
@@ -339,6 +408,8 @@ const handlers = {
     S.recording = true;
     S.query = (m && m.query) || null;
     S.scenario = cleanField(m && m.scenario, 200) || null;
+    S.lastActAt = S.epoch;                                 // 시작 버튼 = 움직임
+    await idleAlarmOn();
     await put({ k: 'start', t: 0, query: S.query, scenario: S.scenario, mode: VERSION.mode, tester: VERSION.tester() });
     await broadcast(sessionMsg());
     return sessionMsg();
@@ -350,6 +421,7 @@ const handlers = {
     await put({ k: 'stop', t: tNow(), reason });
     S.recording = false;
     await saveState();
+    await chrome.alarms.clear(IDLE_ALARM);
     await broadcast(sessionMsg());
     VERSION.onStop(reason);
     return sessionMsg();
@@ -386,6 +458,18 @@ const handlers = {
     const tabId = sender.tab ? sender.tab.id : null;
     await put({ k: 'chunk', pageId: m.pageId, segId: m.segId, n: m.n, tabId, events: m.events });
     return { ok: true };
+  },
+
+  // 탭의 입력이 있었다 (#26). 모든 탭 · 프레임이 보낸다 — 기록 중이 아니면 아무것도 안 한다.
+  //   탭 · URL 은 보지 않고 저장하지 않는다. 시각만 고친다.
+  async activity() {
+    await moved(Date.now());
+    return { ok: true };
+  },
+
+  // 패널의 무동작 시계 표시 (#26). 읽기만 한다.
+  async idle() {
+    return Object.assign({ ok: true, recording: S.recording }, idleInfo());
   },
 
   // 내보내기 = 로그 → bundle. 실사용 버전에도 둔다(10-31 서현) — 패널 [내보내기] 가 쓴다.
@@ -426,16 +510,30 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   return true;                                    // 비동기 응답
 });
 
-// 방문 순서: 탭 전환. null = 수집 안 되는 페이지로 감
-chrome.tabs.onActivated.addListener(({ tabId }) => serial(() => visit(tabId, 'tab')));
+// 방문 순서: 탭 전환. null = 수집 안 되는 페이지로 감. 탭 전환은 움직임이다(#26).
+chrome.tabs.onActivated.addListener(({ tabId }) => serial(async () => {
+  await moved(Date.now());
+  return visit(tabId, 'tab');
+}));
 
-// 방문 순서: 창 전환 (다른 앱으로 가면 windowId = NONE)
+// 방문 순서: 창 전환 (다른 앱으로 가면 windowId = NONE). 무동작 시계의 크롬 안팎도 여기서(#26).
 chrome.windows.onFocusChanged.addListener((windowId) => serial(async () => {
   if (!S.recording) return;
-  if (windowId === chrome.windows.WINDOW_ID_NONE) return visit(null, 'window-blur');
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    await wentAway(Date.now());
+    return visit(null, 'window-blur');
+  }
+  await moved(Date.now());
   const [t] = await chrome.tabs.query({ active: true, windowId });
   if (t) return visit(t.id, 'window');
 }));
+
+// 무동작 검사 (#26). 리스너는 최상위 동기 등록 — 알람이 꺼진 서비스 워커를 깨운다.
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === IDLE_ALARM) serial(idleCheck);
+});
+// 브라우저를 다시 켜면 알람이 없을 수 있다(예상). 기록 중이면 다시 건다.
+ready.then(() => { if (S.recording) return idleAlarmOn(); }).catch((e) => console.warn('[RBC] 무동작 알람', e));
 
 chrome.tabs.onRemoved.addListener((tabId) => serial(async () => {
   if (S.tabPage[tabId] === undefined) return;
