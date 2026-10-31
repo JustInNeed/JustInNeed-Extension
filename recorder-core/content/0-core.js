@@ -22,8 +22,8 @@
 
   // ==========================================================================
   // CONFIG
-  //   TARGET_CHARS · MIN_UNIT_CHARS 등 청킹 값은 기본값이다. 패널 슬라이더가 바꾸는 것은
-  //   2-units 의 opts 사본이고 여기는 안 바뀐다.
+  //   청킹 값(TARGET_CHARS · MIN_CHARS · MAX_CHARS · MIN_UNIT_CHARS)은 기본값이다. 패널 슬라이더는
+  //   2-units 의 chunkOpts(target · min · max)를 바꾸고 여기는 안 바뀐다.
   // ==========================================================================
   const CFG = {
     SCHEMA_VERSION: 3,        // [C9] v3 = 감사 §8. 3 미만은 check_session · extract_features 가 거부
