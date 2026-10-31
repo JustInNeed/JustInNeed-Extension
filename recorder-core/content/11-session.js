@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, 6-frames
  * 발행: session:changed, session:link, export:ready, ui:panel, idle:clock
  * 구독: seg:page, seg:chunk, label:mode, scan:done, label:done, activity,
- *       ui:rec, ui:export, ui:query, stat
+ *       ui:rec, ui:export, ui:query, ui:idletest, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   content script 와 background 사이의 유일한 통로다. chrome.runtime 은
@@ -248,6 +248,11 @@
   });
 
   bus.on('ui:query', (d) => toBg({ rbc: 'query', q: (d && d.q) || null }));
+
+  // 패널 "빠른 시험" (#26) — 무동작 한도를 20초 · 40초로 줄인다. 이번 세션에만.
+  bus.on('ui:idletest', (d) => {
+    toBg({ rbc: 'idletest', on: !!(d && d.on) }).then((r) => { if (r && r.ok) bus.emit('idle:clock', r); });
+  });
 
   bus.on('ui:export', () => {
     toBg({ rbc: 'export' }).then((bundle) => {

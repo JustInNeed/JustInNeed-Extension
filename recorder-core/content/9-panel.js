@@ -3,7 +3,7 @@
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay, visible
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
- * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
+ * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest
  * 구독: stat, units:list, session:changed, session:link,
  *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned, idle:clock
  *
@@ -28,6 +28,8 @@
  *   시계는 background 것이다. idle:clock 으로 받은 시각에서 1초마다 여기서 경과만 센다.
  *   탭은 입력을 몇 초 간격(CFG.ACTIVITY_PING_MS)으로만 알리므로 몇 초 늦게 0 으로 돌아가는 건 정상이다.
  *   크롬 밖 시간은 떠나 있는 동안 볼 수 없으니, 돌아온 뒤 "지난번 크롬 밖"으로 보여 준다.
+ *   [빠른 시험] = 한도를 20초 · 40초로 줄여 자동 정지를 바로 눈으로 본다. 기록 중에만 누를 수 있고,
+ *   다음 기록 시작 때 background 가 끈다. 검사는 30초마다라 20초를 넘긴 뒤 최대 30초 더 걸릴 수 있다.
  *
  * --- 연결 끊김 표시 ----------------------------------------------------------
  *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
@@ -162,6 +164,11 @@
         <span id="rbc-noiseminval">${noiseMinPct}%</span>
       </div>
       <div class="rbc-stat" id="rbc-noise">${noiseHtml}</div>
+      <div class="rbc-row">
+        <span>무동작</span>
+        <button data-act="idletest" class="${idleTest() ? 'on' : ''}" ${uiRecording ? '' : 'disabled'}
+                title="이번 세션만 한도를 크롬 안 20초 · 크롬 밖 40초로 줄인다">빠른 시험 (20초 · 40초)</button>
+      </div>
       <div class="rbc-stat" id="rbc-idle">${idleHtml()}</div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
@@ -196,6 +203,7 @@
 
     // 세션 bundle 은 background 가 만든다. 받아서 저장하는 건 11-session → 6-frames.
     panelEl.querySelector('[data-act="exp"]').onclick = () => bus.emit('ui:export');
+    panelEl.querySelector('[data-act="idletest"]').onclick = () => bus.emit('ui:idletest', { on: !idleTest() });
 
     // 검색어는 두 군데로 간다: 페이지 meta 에 넣는 recorder(모든 프레임)와,
     // 세션 검색어를 기록하는 background.
@@ -362,16 +370,20 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
+  function idleTest() { return !!(uiRecording && idleClock && idleClock.test); }
   function idleHtml() {
     const c = idleClock;
     if (!uiRecording || !c || !c.lastActAt) return '<span style="color:#999">무동작 시계: 기록 중이 아님</span>';
     const idle = Date.now() - c.lastActAt;
     const near = idle > c.inMs * 0.8;
     return `무동작 <b style="color:${near ? '#dc2626' : '#111'}">${mmss(idle)}</b> / ${mmss(c.inMs)}` +
-      ` · 크롬 밖 지난번 ${c.lastAwayMs != null ? mmss(c.lastAwayMs) : '없음'} / ${mmss(c.outMs)}`;
+      ` · 크롬 밖 지난번 ${c.lastAwayMs != null ? mmss(c.lastAwayMs) : '없음'} / ${mmss(c.outMs)}` +
+      (c.test ? ' <b style="color:#dc2626">· 빠른 시험 켜짐</b>' : '');
   }
   bus.on('idle:clock', (d) => {
+    const wasTest = idleTest();
     idleClock = d;
+    if (idleTest() !== wasTest) { render(); return; }      // 버튼 색
     const el = panelEl && panelEl.querySelector('#rbc-idle');
     if (el) el.innerHTML = idleHtml();
   });

@@ -74,6 +74,7 @@ const REC = 'rec:';           // 기록 로그. 키 = 'rec:' + seq 8자리
 const IDLE_IN_MS = 10 * 60 * 1000;    // 크롬 안 무동작 → 자동 정지. 0-core CFG.IDLE_TIMEOUT_MS 와 같아야 한다
 const IDLE_OUT_MS = 30 * 60 * 1000;   // 크롬 밖(창 포커스 없음) → 자동 정지
 const IDLE_ALARM = 'rbc-idle';        // 무동작 검사 알람 (30초마다, 기록 중에만)
+const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험" 때의 값. 기록을 시작할 때마다 꺼진다
 
 // ============================================================================
 // 버전 자리 — 버전 파일이 Object.assign(VERSION, {...}) 로 채운다
@@ -105,6 +106,7 @@ function emptyState() {
     lastActAt: 0,        // 무동작 시계: 마지막 움직임 시각 (기록 데이터 아님)
     awaySince: null,     // 크롬을 떠난 시각. null = 크롬 안
     lastAwayMs: null,    // 지난번 크롬 밖에 있던 시간 (패널 표시용)
+    idleTest: false,     // 패널 "빠른 시험" (디버그). 새 세션은 언제나 꺼진 채 시작
   };
 }
 
@@ -182,14 +184,16 @@ function visit(tabId, reason) {
 // ============================================================================
 function idleInfo() {
   return { lastActAt: S.lastActAt, awaySince: S.awaySince, lastAwayMs: S.lastAwayMs,
-    inMs: IDLE_IN_MS, outMs: IDLE_OUT_MS };
+    inMs: S.idleTest ? IDLE_TEST.in : IDLE_IN_MS, outMs: S.idleTest ? IDLE_TEST.out : IDLE_OUT_MS,
+    test: !!S.idleTest };
 }
 
 // 시간을 넘겼나. 시계를 고치기 전에 본다 — 알람 사이에 돌아와도 넘긴 시간은 잡힌다.
 function idleOver(now) {
   if (!S.recording) return false;
-  if (S.awaySince != null) return now - S.awaySince > IDLE_OUT_MS;
-  return now - S.lastActAt > IDLE_IN_MS;
+  const c = idleInfo();
+  if (S.awaySince != null) return now - S.awaySince > c.outMs;
+  return now - S.lastActAt > c.inMs;
 }
 
 // 자동 정지 = 정지 버튼과 같은 동작. 크롬 안 · 밖 모두 이유는 'idle'(기록 형식의 기존 값, 새 값을 만들지 않는다).
@@ -487,6 +491,17 @@ const handlers = {
 
   // 패널의 무동작 시계 표시 (#26). 읽기만 한다.
   async idle() {
+    return Object.assign({ ok: true, recording: S.recording }, idleInfo());
+  },
+
+  // 패널 "빠른 시험" 켜기 · 끄기 (#26, 디버그). 기록 중에만 — 시작할 때마다 꺼지므로 참가자 기록에 남지 않는다.
+  //   켜고 끄는 것도 움직임으로 친다(누른 순간부터 잰다).
+  async idletest(m) {
+    if (S.recording) {
+      S.idleTest = !!(m && m.on);
+      S.lastActAt = Date.now();
+      await saveState();
+    }
     return Object.assign({ ok: true, recording: S.recording }, idleInfo());
   },
 
