@@ -37,7 +37,7 @@
 'use strict';
 
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
-const CONSENT_VERSION = 2;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가)
+const CONSENT_VERSION = 3;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가, 3 = 연구 담당 연락처 · 철회 요청 방법)
 
 const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
 const TAGS = ['Q1', 'Q2'];    // 조건 태그로 고를 수 있는 값 (consent.html 의 선택지와 같아야 한다)
