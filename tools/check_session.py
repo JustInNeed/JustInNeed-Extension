@@ -1033,9 +1033,12 @@ def safe_name(v):
 def parse_file_name(path):
     """[S7] 파일 이름 → dict. 새 이름이면 kind='new', 옛 이름이면 'old', 그 밖은 None."""
     base = os.path.basename(path)
-    if not base.endswith(".json"):
+    # 크롬 중복 번호(" (1)") · 윈도우 ".json.json" · 대문자 확장자는 떼고 읽는다
+    stem = re.sub(r"(\.json)+$", "", base, flags=re.I)
+    if stem == base:
         return None
-    parts = base[:-len(".json")].split("_")
+    stem = re.sub(r" \(\d+\)$", "", stem)
+    parts = stem.split("_")
     # 새 이름: 링크 _ rbc _ 참여 번호(… _ 포함 가능) _ 태그 _ 세션 _ 시각 _ O|X
     if len(parts) >= 7 and parts[1] == "rbc" and parts[-1] in ("O", "X") and re.fullmatch(r"\d{13}", parts[-2]):
         link = parts[0]

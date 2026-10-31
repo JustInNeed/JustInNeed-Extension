@@ -8,7 +8,7 @@
  *              testId 는 화면에서 '설치 ID' 로 부른다
  *   clear    → 기록만 삭제 (기록 중이면 거절)
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
- *   export   → bundle 을 받아 JSON 파일로 저장 (6-frames download() 와 같은 파일명)
+ *   export   → bundle 을 받아 JSON 파일로 저장 (파일 이름은 아래 "파일 이름 (#24)")
  *
  * 정답 / 오답 (#24): 내보내기 전에 참가자가 고른다. 고르기 전엔 [파일로 내보내기]가 잠긴다.
  *   고른 값은 파일 이름 끝(O · X)에만 넣는다 — JSON 은 그대로(10-31 서현). 새 기록(sessionId)이 오면 지운다.
@@ -169,7 +169,8 @@
       : st.records && !ans ? '정답 / 오답을 먼저 고르세요' : '';
     $('export-name').textContent = st.recording || !st.records ? ''
       : !ans ? '정답 / 오답을 고르면 내보낼 수 있습니다.'
-        : `파일 이름: ${st.linkNo || 'NOLINK'}_rbc_${safe(c.participantNo)}_${safe(c.tag)}_…_${ans}.json`;
+        // 미리보기는 지금 동의 정보로 만든다. 실제 이름은 기록 시작 때 복사본(bundle tester) — 내보낸 뒤 배너에 실제 이름
+        : `파일 이름(예상): ${st.linkNo || 'NOLINK'}_rbc_${safe(c.participantNo)}_${safe(c.tag)}_…_${ans}.json`;
     $('btn-clear').disabled = st.recording || !st.records;
     $('btn-clear').title = st.recording ? '기록을 정지한 뒤에 지울 수 있습니다' : '';
   }
