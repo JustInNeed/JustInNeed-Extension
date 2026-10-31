@@ -7,6 +7,9 @@
  * 새 기록 시작은 이전 기록을 지운다 (background start, 서버 전송이 없는 동안). 쌓인 기록이 있으면
  * 두 번 눌러야 시작한다. 정지는 한 번 — 실사용 버전에는 평가가 없어 정지로 잃는 것이 없다.
  *
+ * 기록 시작 뒤 "본문 준비 중": 데이터 수집 버전 popup.js 와 같은 규칙(#19 서현 요청). 시작을 누르면 바로 닫지 않고
+ *   이 탭에 ping 을 보내 기록이 실제로 시작되면(recording && !settling) 닫힌다. ping 실패 · PREP_MAX_MS 지남도 닫힌다.
+ *
  * 디버그 패널 보이기는 데이터 수집 버전의 참여 정보 페이지와 같은 키(chrome.storage.local 'ui:panel')에
  *   직접 쓴다. 11-session 이 그 키를 보고 패널을 켠다. 실사용 버전에는 그 페이지가 없어 여기 둔다.
  *
@@ -38,6 +41,8 @@
 
   let st = null;
   let armTimer = null;
+  let preparing = false;      // 기록 시작 뒤 본문 준비 중 (이 창이 닫히기 전까지)
+  let tabId = null;           // 지금 창의 활성 탭 — 본문 준비 확인(ping) 대상
 
   function render() {
     $('loading').hidden = true;
@@ -49,6 +54,12 @@
       const btn = $('btn-rec');
       btn.className = st.recording ? '' : 'primary';
       btn.textContent = st.recording ? '기록 정지' : '기록 시작';
+    }
+    if (preparing) {
+      $('dot').classList.remove('on');
+      $('state').textContent = '본문 준비 중…';
+      $('meta').textContent = '페이지가 다 그려질 때까지 잠깐 기다려요. 이 창이 저절로 닫히면 그때부터 읽으세요.';
+      $('btn-rec').disabled = true;
     }
   }
 
@@ -82,12 +93,34 @@
         }
         disarm();
         await bg({ rbc: 'start' });
+        waitReady();                      // 본문 준비가 끝나면 닫힌다 — 시작 = 페이지로 돌아감
+        return;
       }
     } catch (e) {
       show(e.message);
     }
     await refresh();
   });
+
+  // 기록 시작 뒤: 이 탭이 실제로 기록을 시작할 때까지 기다렸다 닫는다 (데이터 수집 popup.js 와 같은 값).
+  //   페이지 쪽 최대 대기(SETTLE_MAX_MS 6초)보다 길게 — 그 안에 대개 풀린다.
+  const PREP_MAX_MS = 8000, PREP_POLL_MS = 300;
+  function waitReady() {
+    preparing = true;
+    if (st) render();
+    const t0 = Date.now();
+    const poll = async () => {
+      let r = null;
+      try { if (tabId != null) r = await chrome.tabs.sendMessage(tabId, { rbc: 'ping' }); } catch (e) { r = null; }
+      if (!r || !r.ok || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
+      setTimeout(poll, PREP_POLL_MS);
+    };
+    setTimeout(poll, PREP_POLL_MS);
+  }
+
+  chrome.tabs.query({ active: true, currentWindow: true })
+    .then(([t]) => { tabId = t ? t.id : null; })
+    .catch((e) => show(`지금 탭을 찾지 못했습니다. (tabs.query: ${e.message || e})`));
 
   chrome.storage.local.get(K_PANEL)
     .then((r) => { $('f-panel').checked = r[K_PANEL] === true; })
