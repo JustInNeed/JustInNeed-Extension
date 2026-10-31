@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>JustInNeed</title>
+<!--
+  popup.html — 실사용 버전 기록 제어 (확장 아이콘 클릭)
+  색 · 모양은 데이터 수집 버전 popup.html 과 같은 값을 쓴다 (버전 폴더끼리 CSS 를 공유하지 않는다).
+  동작은 popup.js. 동의 · 읽는 목적 · 평가 · 참여 정보가 없다(실사용 버전).
+-->
+<style>
+  :root {
+    --line: #e4e7e2; --ink: #1e211f; --sub: #6a706b; --faint: #9aa09b;
+    --green: #4caf3f; --green-ink: #3b7f2d; --green-tint: #eef7e9; --green-line: #cfe6c2;
+    --red-ink: #c0392b; --red-line: #f0cdc8; --red-tint: #fdf3f2;
+    --radius-card: 14px; --radius-ctl: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    width: 320px; padding: 16px; background: #f8f9f7; color: var(--ink);
+    font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+      "Noto Sans KR", "Noto Sans CJK KR", sans-serif;
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .brand b { display: block; font-size: 15px; }
+  .brand small { display: block; color: var(--sub); font-size: 11.5px; line-height: 1.2; }
+  .mode { margin-left: auto; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+    color: var(--green-ink); background: var(--green-tint); border: 1px solid var(--green-line); }
+
+  .card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 16px; }
+  .card p { margin: 0; color: var(--sub); }
+
+  .head { display: flex; justify-content: space-between; align-items: center; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c7ccc6; }
+  .dot.on { background: var(--green); box-shadow: 0 0 0 4px var(--green-tint); }
+  .state { font-size: 17px; font-weight: 700; margin-top: 6px; }
+  .meta { color: var(--sub); font-size: 13px; min-height: 20px; font-variant-numeric: tabular-nums; }
+
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; width: 100%; margin-top: 14px;
+    padding: 10px 14px; border-radius: var(--radius-ctl);
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+  }
+  button:focus-visible { outline: 3px solid var(--green-line); outline-offset: 2px; }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+  button.armed { background: var(--red-ink); border-color: var(--red-ink); color: #fff; }
+
+  .hint { margin-top: 10px; font-size: 12.5px; color: var(--sub); }
+  .opt { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--sub); }
+
+  .banner {
+    margin-bottom: 12px; padding: 10px 12px; border-radius: var(--radius-ctl); font-size: 13px;
+    background: var(--red-tint); border: 1px solid var(--red-line); color: var(--red-ink); word-break: break-all;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 44 44" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#78c957"/><stop offset="1" stop-color="#4caf3f"/></linearGradient></defs>
+      <rect width="44" height="44" rx="12" fill="url(#g)"/>
+      <path d="M22 33V21" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M22 22c0-5 3.4-8.4 8.6-8.4 0 5.2-3.6 8.4-8.6 8.4Z" fill="#fff"/>
+      <path d="M22 24.5c-4.2 0-7.2-2.8-7.2-7 4.4 0 7.2 2.9 7.2 7Z" fill="#fff" opacity=".85"/>
+    </svg>
+    <div><b>JustInNeed</b><small>읽기 행동 기록</small></div>
+    <span class="mode">실사용</span>
+  </div>
+
+  <div id="msg" class="banner" role="alert" hidden></div>
+
+  <!-- popup.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
+  <div id="loading" class="card"><p>불러오는 중…</p></div>
+
+  <section id="v-main" class="card" hidden>
+    <div class="head"><i class="dot" id="dot"></i></div>
+    <div class="state" id="state">기록 대기</div>
+    <div class="meta" id="meta"></div>
+    <button id="btn-rec" type="button">기록 시작</button>
+    <div class="hint">서버 전송은 아직 없습니다. 기록은 이 브라우저에만 쌓이고, 새로 시작하면 지워집니다.
+      파일로 남기려면 디버그 패널의 [내보내기]를 누르세요.</div>
+    <label class="opt"><input type="checkbox" id="f-panel"> 디버그 패널 보이기</label>
+  </section>
+
+<script src="popup.js"></script>
+</body>
+</html>

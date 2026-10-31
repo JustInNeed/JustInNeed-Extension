@@ -1,9 +1,16 @@
 /* =============================================================================
- * background.js — 세션 소유자 · 기록 로그 · sink (service worker)
+ * bg-core.js — 세션 소유자 · 기록 로그 · sink (service worker 의 엔진 부분)
  *
  * 소유: 세션(sessionId, epoch, recording, 검색어), 탭 → 페이지 대응표,
  *       기록 로그(rec:*)
  * 저장: chrome.storage.local
+ *
+ * --- 엔진과 버전 파일 (#19) ----------------------------------------------------
+ *   service worker 는 버전 폴더의 background.js 하나다. 그 파일이 importScripts 로
+ *   이 엔진(bg-core.js)과 버전 파일(data-collect/bg-collect.js 등)을 차례로 올린다.
+ *   classic script 라 최상위 이름(S · put · handlers ...)을 서로 같이 본다.
+ *   버전마다 다른 것은 VERSION 자리(mode · 시작 허락 · tester · 정지 뒤 · status 덧붙임)와
+ *   handlers 에 더하는 명령뿐이다. 엔진은 버전 파일을 모른다 — VERSION 만 부른다.
  *
  * --- 왜 세션이 여기로 왔나 --------------------------------------------------
  *   content script 는 페이지마다 새로 뜨고 페이지와 함께 죽는다. 세션을 거기
@@ -17,7 +24,7 @@
  *     content script ──page/chunk──▶ put() ──▶ rec:00000001, rec:00000002, ...
  *                                              │
  *                          download 모드: 쌓아뒀다가 export 때 assemble()
- *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현)
+ *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현 — 지금은 쌓기만)
  *
  *   record 형식이 곧 서버 업로드 형식이다. assemble() 은 로그 → bundle 로 바꾸는
  *   순수 함수라서, 서버도 같은 로직으로 같은 bundle 을 만든다.
@@ -43,26 +50,6 @@
  *   pages 의 각 원소는 기존 v2 payload 그대로다. extract_features.py 는 피처
  *   계산을 안 바꾸고, 읽을 때 pages 를 풀기만 하면 된다.
  *
- * --- 동의 (테스트 참가자) -----------------------------------------------------
- *   동의가 없으면 start 를 거절한다. 강제는 여기 한 곳뿐이다 — 팝업·패널·나중의
- *   웹앱은 요청만 하고, 거절 사유(why: 'no-consent')를 받아서 보여주기만 한다.
- *   동의 기록은 'consent' 키에 둔다. 'rec:' 로 시작하지 않으므로 새 세션 시작 때
- *   로그를 지워도 남는다. version 이 CONSENT_VERSION 과 다르면 없는 것으로 본다
- *   (고지문을 바꾸면 다시 받는다). 동의 페이지는 자기가 보여준 고지문의 version 을
- *   보내고, 여기서 다르면 거절한다 — 옛 페이지로 새 동의가 들어오는 것을 막는다.
- *   참가자 정보(참여 번호·testId·이름·조건 태그)는 start 기록에 복사된다. 그래서 bundle 의
- *   session.tester 도 assemble() 이 로그만 보고 만든다(순수 함수 유지).
- *   참여 번호(participantNo) = 연구자가 정해 준 사람 식별자 (필수, 공백 정리 · 대문자 · 20자).
- *   testId = 이 설치의 난수 ID. 같은 사람이 재설치 · 철회 뒤 재동의하면 testId 는 바뀌고
- *   참여 번호는 같다 → 분석의 사람 키는 참여 번호.
- *   철회(withdraw) = 정지 + 로그 삭제 + 동의 삭제. 다시 동의하면 새 testId.
- *
- * --- 테스트 모드: 읽는 목적 · 라벨 ---------------------------------------------
- *   읽는 목적(scenario)은 기록 시작 전에 팝업에서 받아 start 기록에 싣는다 → session.scenario.
- *   라벨은 팝업 "다 읽었어요" → label 명령 → 지금 보고 있는 탭으로 전달. 라벨 데이터 자체는
- *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
- *   라벨 [완료] → 그 탭이 stop(reason 'labeled') 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 글 = 한 기록).
- *
  * --- service worker 라서 지키는 것 --------------------------------------------
  *   1) 유휴 30초면 종료된다. 메모리 상태는 캐시, 원본은 storage.
  *   2) 리스너는 최상위에서 동기적으로 등록해야 깨어날 때 이벤트를 받는다.
@@ -70,12 +57,21 @@
  * ========================================================================== */
 'use strict';
 
-const MODE = 'download';      // 'download' | 'server'  — 빌드 타깃이 바꾸는 유일한 값
 const TICK_MS = 150;          // 0-core CFG.TICK_MS 와 같아야 한다
 const K_SESS = 'sess:cur';    // 세션 상태 (작은 것만)
 const REC = 'rec:';           // 기록 로그. 키 = 'rec:' + seq 8자리
-const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
-const CONSENT_VERSION = 2;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가)
+
+// ============================================================================
+// 버전 자리 — 버전 파일이 Object.assign(VERSION, {...}) 로 채운다
+// ============================================================================
+const VERSION = {
+  mode: null,                       // 'download' | 'server' — start 기록의 mode, sink 선택. 안 채우면 put 이 오류
+  ready: Promise.resolve(),         // 버전 파일이 storage 에서 읽을 것이 있으면 그 약속
+  async gate() { return null; },    // 기록 시작 거절 사유(why) 또는 null
+  tester() { return null; },        // start 기록의 tester
+  onStop() {},                      // 정지 뒤 할 일 (reason 을 받는다)
+  status() { return {}; },          // status 응답에 덧붙일 것
+};
 
 // ============================================================================
 // 세션 상태
@@ -96,15 +92,13 @@ function emptyState() {
 }
 
 let S = emptyState();
-let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
-const ready = chrome.storage.local.get([K_SESS, K_CONSENT]).then((r) => {
+const ready = chrome.storage.local.get(K_SESS).then((r) => {
   if (r[K_SESS]) S = Object.assign(emptyState(), r[K_SESS]);   // 필드가 늘어난 뒤의 옛 상태 대비
-  C = r[K_CONSENT] || null;
 });
 
 let chain = Promise.resolve();
 function serial(fn) {
-  const p = chain.then(() => ready).then(fn);
+  const p = chain.then(() => ready).then(() => VERSION.ready).then(fn);
   chain = p.catch(() => {});
   return p;
 }
@@ -120,7 +114,7 @@ async function put(rec) {
   S.seq++;
   await chrome.storage.local.set({ [REC + String(r.seq).padStart(8, '0')]: r });
   await saveState();
-  SINK.after(r);
+  SINKS[VERSION.mode].after(r);
   return r;
 }
 
@@ -146,28 +140,10 @@ const SINKS = {
     after() {
       // TODO(서버 단계): 1초 또는 32~64KB 마다 묶어서 전송 → ACK 받은 seq 삭제.
       // 오프라인이면 로그에 남아 있다가 다음에 보낸다. 로그 형식은 그대로 쓴다.
-      throw new Error('server sink 미구현');
+      // 지금(#19 실사용 껍데기)은 전송 없이 쌓기만 한다 — 실사용 팝업이 "서버 전송 없음"을 띄운다.
     },
   },
 };
-const SINK = SINKS[MODE];
-
-// ============================================================================
-// 동의
-// ============================================================================
-function consentValid() { return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo); }
-
-// 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
-const ID_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-function newTestId() {
-  const b = crypto.getRandomValues(new Uint8Array(6));
-  return 't-' + [...b].map((x) => ID_CHARS[x % ID_CHARS.length]).join('');
-}
-
-function testerInfo() {
-  return { participantNo: C.participantNo, testId: C.testId, name: C.name, tag: C.tag,
-           consentVersion: C.version, consentAt: C.at };
-}
 
 function cleanField(v, max) {
   const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '';
@@ -331,10 +307,11 @@ async function broadcast(msg) {
   ));
 }
 
+// mode = 이 확장이 어느 버전인지(패널 표시용, #19). 기록 로그에는 안 들어간다.
 function sessionMsg() {
   return {
     rbc: S.recording ? 'start' : 'stop',
-    sessionId: S.sessionId, epoch: S.epoch, query: S.query,
+    sessionId: S.sessionId, epoch: S.epoch, query: S.query, mode: VERSION.mode,
   };
 }
 
@@ -349,8 +326,9 @@ const handlers = {
 
   async start(m) {
     if (S.recording) return sessionMsg();
-    // 동의 게이트. 명령 출처(팝업·패널·웹앱)와 무관하게 여기서만 막는다.
-    if (!consentValid()) return { ok: false, why: 'no-consent' };
+    // 시작 허락(데이터 수집 버전 = 동의 게이트). 명령 출처(팝업·패널·웹앱)와 무관하게 여기서만 막는다.
+    const why = await VERSION.gate();
+    if (why) return { ok: false, why };
     // download 모드: 직전 세션 로그는 여기서 버린다. export 는 그 전에 할 것.
     // (server 모드에서는 ACK 안 된 로그를 지우면 안 된다 — 서버 단계에서 바꿀 것)
     await removeLog();
@@ -361,7 +339,7 @@ const handlers = {
     S.recording = true;
     S.query = (m && m.query) || null;
     S.scenario = cleanField(m && m.scenario, 200) || null;
-    await put({ k: 'start', t: 0, query: S.query, scenario: S.scenario, mode: MODE, tester: testerInfo() });
+    await put({ k: 'start', t: 0, query: S.query, scenario: S.scenario, mode: VERSION.mode, tester: VERSION.tester() });
     await broadcast(sessionMsg());
     return sessionMsg();
   },
@@ -373,11 +351,7 @@ const handlers = {
     S.recording = false;
     await saveState();
     await broadcast(sessionMsg());
-    // 테스트 모드: 라벨 [완료]로 끝났으면 바로 파일로 저장한다. 다음 "기록 시작"이 로그를 지우므로
-    //   내보내기를 잊으면 데이터가 사라진다. 1.5초 = 정지 방송 뒤 마지막 조각(segend)이 도착할 시간.
-    if (reason === 'labeled') {
-      setTimeout(() => chrome.tabs.create({ url: chrome.runtime.getURL('consent.html#export') }), 1500);
-    }
+    VERSION.onStop(reason);
     return sessionMsg();
   },
 
@@ -414,32 +388,17 @@ const handlers = {
     return { ok: true };
   },
 
-  // 팝업 "다 읽었어요": 지금 보고 있는 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
-  //   탭이 기록 중인지는 그 탭이 판단한다(아니면 안내 문구). 여기서는 세션만 본다.
-  async label() {
-    if (!S.recording) return { ok: false, why: 'not-recording' };
-    const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!t) return { ok: false, why: 'no-tab' };
-    try {
-      await chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 });
-    } catch (e) {
-      return { ok: false, why: 'no-content' };      // content script 없음(새로고침 전 · chrome:// 등)
-    }
-    return { ok: true };
-  },
-
+  // 내보내기 = 로그 → bundle. 실사용 버전에도 둔다(10-31 서현) — 패널 [내보내기] 가 쓴다.
   async export() {
-    if (MODE !== 'download') return { ok: false, why: 'not-download-mode' };
     return assemble(await readLog());
   },
 
-  // 팝업이 1초마다 묻는다. 로그를 읽지 않는다 (S 와 C 만).
+  // 팝업이 1초마다 묻는다. 로그를 읽지 않는다 (S 와 버전 파일의 상태만).
   async status() {
     const pids = Object.values(S.pagePids);
-    return {
+    return Object.assign({
       ok: true,
-      consent: C ? Object.assign({ valid: consentValid() }, C) : null,
-      consentVersion: CONSENT_VERSION,
+      mode: VERSION.mode,
       recording: S.recording,
       sessionId: S.sessionId,
       startedAt: S.epoch || null,
@@ -448,51 +407,7 @@ const handlers = {
       pages: pids.length,
       units: pids.reduce((n, a) => n + a.length, 0),
       records: S.seq,
-    };
-  },
-
-  // 동의 페이지가 보낸다. version = 그 페이지가 보여준 고지문 버전.
-  //   재동의(고지문 버전 변경)는 testId 를 유지한다. 철회 뒤 동의는 새 testId.
-  async consent(m) {
-    if (!m || m.version !== CONSENT_VERSION) return { ok: false, why: 'consent-version' };
-    const participantNo = cleanField(m.participantNo, 20).toUpperCase();   // p01 과 P01 이 갈리지 않게
-    if (!participantNo) return { ok: false, why: 'no-participant' };
-    const name = cleanField(m.name, 40);
-    if (!name) return { ok: false, why: 'no-name' };
-    C = {
-      version: CONSENT_VERSION,
-      testId: (C && C.testId) || newTestId(),
-      participantNo,
-      name,
-      tag: cleanField(m.tag, 40) || null,
-      at: new Date().toISOString(),
-    };
-    await chrome.storage.local.set({ [K_CONSENT]: C });
-    return { ok: true, consent: Object.assign({ valid: true }, C) };
-  },
-
-  // 철회: 기록 중이면 정지 방송 → 로그 · 세션 상태 · 동의 전부 삭제.
-  //   정지 직후 늦게 오는 조각은 sessionId 가 null 이 됐으므로 stale-session 으로 거절된다.
-  async withdraw() {
-    if (S.recording) {
-      S.recording = false;
-      await broadcast(sessionMsg());
-    }
-    await removeLog();
-    S = emptyState();
-    await saveState();
-    C = null;
-    await chrome.storage.local.remove(K_CONSENT);
-    return { ok: true };
-  },
-
-  // 기록 삭제 (동의는 유지). 기록 중에는 거절 — 정지 먼저.
-  async clear() {
-    if (S.recording) return { ok: false, why: 'recording' };
-    await removeLog();
-    S = emptyState();
-    await saveState();
-    return { ok: true };
+    }, VERSION.status());
   },
 };
 
@@ -529,10 +444,5 @@ chrome.tabs.onRemoved.addListener((tabId) => serial(async () => {
   await saveState();
 }));
 
-// 새로 설치하면 동의 페이지를 연다. 업데이트·확장 새로고침(reason 'update')에서는 안 연다.
-chrome.runtime.onInstalled.addListener(({ reason }) => {
-  if (reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('consent.html') });
-});
-
 // 콘솔 점검용: 서비스 워커 콘솔에서 await RBCBG.handle({ rbc: 'start' })
-self.RBCBG = { handle, state: () => S, consent: () => C, readLog, assemble };
+self.RBCBG = { handle, state: () => S, readLog, assemble };

@@ -69,6 +69,8 @@
   // --- 이 파일이 소유하는 상태 ---
   let panelEl = null, listEl = null;
   let uiRecording = false;               // 세션 상태의 표시용 사본. session:changed 로만 바뀐다
+  let uiMode = null;                     // 확장 버전 (session:changed 의 mode, #19). 첫 hello 전에는 null
+  const MODE_KO = { download: '데이터 수집용', server: '실사용' };
   let uiOverlay = false;
   let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
   let rescanHtml = '';                   // 마지막 재스캔 한 줄 (기록 중 splice 를 눈으로 보려고, 0-B)
@@ -132,7 +134,8 @@
     const lock = uiRecording ? 'disabled' : '';      // BUG-1 / BUG-2 방어
 
     panelEl.innerHTML = `
-      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.3</span></h4>
+      <h4>📖 Reading Behavior Collector <span style="color:#999;font-weight:400">v2.3</span>
+        <span style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;${uiMode ? 'background:#eef7e9;color:#3b7f2d' : 'background:#fdf3f2;color:#c0392b'}">${uiMode ? esc(MODE_KO[uiMode] || uiMode) : '버전 확인 전'}</span></h4>
       <div>
         <button data-act="scan" ${lock}>스캔</button>
         <button data-act="rec" class="${uiRecording ? 'on' : ''}">${uiRecording ? '■ 정지' : '● 기록'}</button>
@@ -301,8 +304,10 @@
   //   응답을 받을 때마다 발행한다.
   bus.on('session:changed', (d) => {
     const on = !!(d && d.recording);
-    if (on === uiRecording) return;
+    const mode = (d && d.mode) || null;
+    if (on === uiRecording && mode === uiMode) return;
     uiRecording = on;
+    uiMode = mode;
     render();
   });
 
