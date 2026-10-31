@@ -79,7 +79,7 @@
     // 기록은 iframe 이 하는 경우 — 네이버 블로그 — 가 있으므로).
     if (IS_TOP && Date.now() - lastActivityPing > CFG.ACTIVITY_PING_MS) {
       lastActivityPing = Date.now();
-      bus.emit('activity');          // [R12] 전: send('activity') 직접 호출
+      bus.emit('activity');
     }
   }
 

@@ -611,7 +611,6 @@
     flush();
   });
 
-  // [R3] 전: rescan() 이 timeline.push 를 직접 호출했다.
   // 유닛이 늘거나 바뀌었으면(append/full) 유닛 목록도 다시 보낸다. 안 보내면 새 pid 가
   // timeline 에만 있고 meta.paragraphs 에는 없어서 pid 정합성이 깨진다.
   // 글이 안 바뀐 재스캔(mode 'same')은 횟수 · 시간만 모아 두고 다음 기록 이벤트에 얹는다 —
