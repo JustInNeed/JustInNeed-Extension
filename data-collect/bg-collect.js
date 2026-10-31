@@ -116,7 +116,8 @@ handlers.start = async (m, sender) => {
 };
 
 // 평가 [완료]의 정지에 실려 온 정답 / 오답을 이번 기록의 'link' 칸에 둔다. 정지 자체는 엔진 그대로.
-//   onStop 이 1.5초 뒤 내보내기 탭을 여므로, 그 전에(같은 serial 안에서) 저장이 끝난다.
+//   감싼 stop 전체가 serial 한 칸 안에서 돌고 내보내기 페이지의 status · export 도 serial 로 줄을 서므로,
+//   onStop 이 연 내보내기 탭은 언제나 저장이 끝난 뒤의 값을 읽는다.
 const coreStop = handlers.stop;
 handlers.stop = async (m, sender) => {
   const was = S.recording;

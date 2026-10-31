@@ -573,10 +573,10 @@
     if (HL_OK) for (const k of Object.keys(HL)) HL[k].clear();
   }
 
-  function answerAsk(answer) {
+  function answerAsk(reply) {
     if (phase !== 'ask') return;
-    bus.emit('label:ask', { answer, shownMs: Math.round(performance.now() - askT) });   // 5-recorder: labelask
-    if (answer === 'yes') {
+    bus.emit('label:ask', { answer: reply, shownMs: Math.round(performance.now() - askT) });   // 5-recorder: labelask
+    if (reply === 'yes') {
       t0 = performance.now();                        // 평정 시각(ratingLog)은 라벨 모드 시작부터
       setMode(true);
       go('rate');
