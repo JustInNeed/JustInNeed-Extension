@@ -277,7 +277,6 @@
         .bar{ pointer-events:auto; margin-bottom:56px; padding:12px 16px; border-radius:12px; background:#fff;
           color:#1f2a1c; font:14px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;
           box-shadow:0 6px 24px rgba(0,0,0,.2); border:1px solid #d9e8d2; max-width:calc(100vw - 24px); }
-        .bar.pop{ margin-bottom:calc(50vh - 90px); padding:18px 22px; border-width:2px; border-color:#4caf3f; }
         .pick button{ min-width:96px; padding:10px 18px; font-size:14px; }
         .hd{ display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
         .hd b{ font-size:14px; } .hd small{ color:#5d6b58; font-size:12px; }
@@ -303,8 +302,7 @@
   function render() {
     if (!root) return;
     const bar = root.querySelector('.bar');
-    const pop = phase === 'survey' && !answerOk;     // 설문 앞 정답 / 오답 팝업 (화면 가운데)
-    bar.classList.toggle('pop', pop);
+    const pop = phase === 'survey' && !answerOk;     // 설문 앞 정답 / 오답 팝업 (다른 단계와 같은 아래 바)
     let h = '';
     if (phase === 'ask') {
       h = `<div class="hd"><b>이 글을 다 읽었나요?</b><small>예를 누르면 짧은 평가가 시작돼요 (1~2분)</small></div>
