@@ -3,9 +3,9 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel
- * 구독: seg:page, seg:chunk, record:stopped, scan:done, label:done,
- *       ui:rec, ui:export, ui:query, stat
+ * 발행: session:changed, session:link, export:ready, ui:panel, idle:clock
+ * 구독: seg:page, seg:chunk, label:mode, scan:done, label:done, activity,
+ *       ui:rec, ui:export, ui:query, ui:idletest, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   content script 와 background 사이의 유일한 통로다. chrome.runtime 은
@@ -49,6 +49,11 @@
  *   세션과 어긋난 채로 남는다. 그래서 탭이 보이게 될 때마다 hello 로 다시
  *   물어서 놓친 시작/정지를 따라잡는다. start 는 이미 기록 중이면 무시되므로
  *   여러 번 불러도 구간이 중복으로 열리지 않는다.
+ *
+ * --- 무동작 시계 (#26) -------------------------------------------------------
+ *   시계는 background 가 갖는다(bg-core 헤더). 여기서는 4-input 의 activity 를 background 로
+ *   실어 나르고(모든 프레임 · 기록 안 하는 탭도),
+ *   background 가 알려 준 시계 값을 idle:clock 으로 패널에 넘긴다.
  * ========================================================================== */
 (() => {
   'use strict';
@@ -106,10 +111,14 @@
   bus.on('seg:page', (d) => toBg(Object.assign({ rbc: 'page' }, d)));
   bus.on('seg:chunk', (d) => toBg(Object.assign({ rbc: 'flush' }, d)));
 
-  // 30분 무동작은 세션 종료다. 기록하던 프레임이 직접 background 에 알린다.
-  // (user 는 background 방송으로 멈춘 것, navigation/demoted 는 구간만 닫은 것)
-  bus.on('record:stopped', (d) => {
-    if (d && d.reason === 'idle') toBg({ rbc: 'stop', reason: 'idle' });
+  // 입력 = 움직임 → background 의 무동작 시계 (#26). 간격은 4-input 이 둔다(CFG.ACTIVITY_PING_MS).
+  bus.on('activity', () => toBg({ rbc: 'activity' }));
+
+  // 라벨 모드(테스트 버전 평가) 동안은 자동 정지하면 안 된다 — 평가 중 움직임을 계속 알린다 (#26).
+  let labelKeep = null;
+  bus.on('label:mode', (d) => {
+    clearInterval(labelKeep); labelKeep = null;
+    if (d && d.on) labelKeep = setInterval(() => toBg({ rbc: 'activity' }), CFG.ACTIVITY_PING_MS);
   });
 
   // 테스트 모드: 라벨 [완료] = 이 글을 다 읽음 → 세션을 끝낸다 (한 글 = 한 기록).
@@ -136,6 +145,7 @@
       sessionId: m.sessionId, epoch: m.epoch, query: m.query || null, mode: m.mode || null,
     };
     bus.emit('session:changed', Object.assign({}, session));
+    if (m.idle) bus.emit('idle:clock', m.idle);
   }
 
   function joinIfRecording() {
@@ -166,7 +176,11 @@
   chrome.runtime.onMessage.addListener((m, _sender, reply) => {
     if (!m || !m.rbc) return false;
     if (m.rbc === 'start') { applySession(m); joinIfRecording(); }
-    else if (m.rbc === 'stop') { applySession(m); RBC.frames.send('stop', { reason: 'user' }); }
+    else if (m.rbc === 'stop') {
+      applySession(m);
+      // idle = background 무동작 자동 정지(#26) → 5-recorder 가 autostop 이벤트를 남긴다
+      RBC.frames.send('stop', { reason: m.reason === 'idle' ? 'idle' : 'user' });
+    }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
     else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)
       //   settling = 본문 준비 중 대기. 팝업은 기록 시작 뒤 이게 풀리고 recording 이 될 때까지 기다렸다 닫힌다.
@@ -213,6 +227,15 @@
     });
   } catch (e) { /* 고아 탭: 패널은 숨김 그대로 */ }
 
+  // 패널이 켜져 있고 기록 중이면 무동작 시계를 몇 초마다 다시 받는다 (#26).
+  //   iframe(블로그 PC 본문)의 입력은 이 프레임을 거치지 않고 background 로 가므로, 여기서 다시 물어야 패널이 맞는다.
+  let panelOn = false;
+  bus.on('ui:panel', (d) => { panelOn = !!(d && d.on); });
+  setInterval(() => {
+    if (!panelOn || !session.recording || document.hidden) return;
+    toBg({ rbc: 'idle' }).then((r) => { if (r && r.ok) bus.emit('idle:clock', r); });
+  }, CFG.IDLE_POLL_MS);
+
   // ==========================================================================
   // 버튼 → background (9-panel 이 발행)
   // ==========================================================================
@@ -224,6 +247,11 @@
   });
 
   bus.on('ui:query', (d) => toBg({ rbc: 'query', q: (d && d.q) || null }));
+
+  // 패널 "빠른 시험" (#26) — 무동작 한도를 20초 · 40초로 줄인다. 이번 세션에만.
+  bus.on('ui:idletest', (d) => {
+    toBg({ rbc: 'idletest', on: !!(d && d.on) }).then((r) => { if (r && r.ok) bus.emit('idle:clock', r); });
+  });
 
   bus.on('ui:export', () => {
     toBg({ rbc: 'export' }).then((bundle) => {

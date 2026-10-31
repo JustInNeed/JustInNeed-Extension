@@ -179,17 +179,10 @@
       return;
     }
 
-    // 라벨 모드: 틱을 찍지 않는다. 무동작 판정보다 먼저 — 라벨 중에 자동 종료되면 안 된다.
+    // 라벨 모드: 틱을 찍지 않는다. (라벨 중 자동 종료 막기는 11-session 이 background 에 움직임을 알려서 한다, #26)
     if (recording && labeling) {
       RBC.input.drain();
       prevTickTime = null;
-      return;
-    }
-
-    // [C5] 30분 무동작 → 자동 종료 (세션 종료는 11-session 이 background 로 올린다)
-    if (recording && RBC.input.idleMs() > CFG.IDLE_TIMEOUT_MS) {
-      push({ type: 'autostop', t: tNow(), reason: 'idle', segId });
-      stop('idle');
       return;
     }
 
@@ -446,7 +439,6 @@
     lastScrollerEl = undefined;
     RBC.input.seedScroller();                           // 첫 스크롤 전 주체
 
-    RBC.input.bump();                                   // idle 타이머 초기화
     recording = true;
     noteScroller(RBC.input.scroller());                 // 구간 시작 때 첫 값
     if (settled) push({ type: 'settle', t: tNow(), segId, ms: settled.ms, how: settled.how, changes: settled.changes });
@@ -458,10 +450,11 @@
   }
 
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
-  // reason: 'user'(세션 정지 방송) | 'idle' | 'demoted' | 'navigation'(11-session)
+  // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
     if (!recording && cancelSettle()) return;         // 대기 중이었음: 구간을 연 적이 없다
     if (recording) {
+      if (reason === 'idle') push({ type: 'autostop', t: tNow(), reason: 'idle', segId });   // [C5] 형식은 #26 전과 같다
       const e = { type: 'segend', t: tNow(), segId, reason: reason || 'user' };
       if (sameN) { e.same = [sameN, sameMs, sameMax]; sameN = 0; sameMs = 0; sameMax = 0; }
       push(e);
@@ -557,7 +550,7 @@
     push({ type: 'copy', t: tNow(), segId, ranges: d.ranges, text: d.text });
   });
 
-  // 라벨 모드 (12-label). 끝나면 공백 동안 쌓인 입력을 버리고 무동작 타이머를 새로 잰다.
+  // 라벨 모드 (12-label). 끝나면 공백 동안 쌓인 입력을 버린다.
   bus.on('label:mode', (d) => {
     const on = !!(d && d.on);
     if (on === labeling) return;
@@ -566,7 +559,6 @@
       labelStartT = recording ? tNow() : 0;
     } else {
       RBC.input.drain();
-      RBC.input.bump();
       prevTickTime = null;
     }
   });

@@ -2,11 +2,11 @@
  * 4-input.js — DOM 이벤트 → 원시 신호
  *
  * 소유: latestCursor, 틱 사이 카운터(scroll · scrollOther · mouse · mdx · mdy · edits),
- *       scrollerEl(본문 스크롤 주체), lastSelText, winFocused, lastActivityAt, lastActivityPing
+ *       scrollerEl(본문 스크롤 주체), lastSelText, winFocused, lastActivityPing
  * 의존(직접 호출): 0-core, 1-stream(root), 2-units, 3-hittest(locate) — 스크롤 주체 판정
  * 발행: sel:highlight({ranges,text}), sel:copy({ranges,text}), visibility, focus, pagehide, activity,
  *       viewport:resized
- * 구독: cmd:focus, cmd:activity
+ * 구독: cmd:focus
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   브라우저 이벤트를 받아 "무슨 일이 있었다"만 남긴다.
@@ -60,7 +60,6 @@
   let scrollerEl = null;          // 본문 스크롤 주체. null = window
   let lastSelText = '';
   let winFocused = true;          // [C2] 최상위 프레임이 소유, 하위로 브로드캐스트
-  let lastActivityAt = Date.now();
   let lastActivityPing = 0;
 
   // 디버그 패널 위의 선택·복사는 수집 대상이 아니다.
@@ -71,13 +70,12 @@
   }
 
   // ==========================================================================
-  // 활동 기록 [C5] — 30분 무동작 자동 종료의 입력
+  // 활동 기록 [C5] — 무동작 자동 종료의 입력 (#26)
+  //   시계는 background 에 있다. 모든 프레임이 자기 입력을 알린다(11-session 이 background 로 나른다).
+  //   기록 중이 아닌 탭 · 광고 iframe 의 입력도 "크롬 안에서 움직임"이다.
   // ==========================================================================
   function bump() {
-    lastActivityAt = Date.now();
-    // 최상위 프레임의 활동을 primary 프레임에 알린다(사용자는 top 에서 스크롤하는데
-    // 기록은 iframe 이 하는 경우 — 네이버 블로그 — 가 있으므로).
-    if (IS_TOP && Date.now() - lastActivityPing > CFG.ACTIVITY_PING_MS) {
+    if (Date.now() - lastActivityPing > CFG.ACTIVITY_PING_MS) {
       lastActivityPing = Date.now();
       bus.emit('activity');
     }
@@ -288,7 +286,6 @@
   // 구독
   // ==========================================================================
   bus.on('cmd:focus', (m) => setFocus(!!m.on));       // [C2] 상위 프레임의 브로드캐스트
-  bus.on('cmd:activity', () => { lastActivityAt = Date.now(); });   // [C5]
 
   // ==========================================================================
   // 등록
@@ -322,8 +319,6 @@
   RBC.input = {
     cursor: () => latestCursor,
     focused: () => winFocused,
-    idleMs: () => Date.now() - lastActivityAt,
-    bump,
 
     scroller,               // 본문 스크롤 주체 요소. null = window
     seedScroller,           // 구간 시작 때 5-recorder 가 부른다

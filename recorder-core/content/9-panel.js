@@ -3,9 +3,9 @@
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay, visible
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
- * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query
+ * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned
+ *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned, idle:clock
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -24,6 +24,13 @@
  *   stat.noise 로 noise 조각 · 유닛 개수, 판정 방식(Readability / 플랫폼 생략 / 실패 원문), 되찾은 상자 이름,
  *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. "전부 noise" 유닛 수 = 테스트 모드 평정에서 빠지는 수(#13). 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
  *
+ * --- 무동작 시계 줄 (#26) ---------------------------------------------------
+ *   시계는 background 것이다. idle:clock 으로 받은 시각에서 1초마다 여기서 경과만 센다.
+ *   탭은 입력을 몇 초 간격(CFG.ACTIVITY_PING_MS)으로만 알리므로 몇 초 늦게 0 으로 돌아가는 건 정상이다.
+ *   크롬 밖 시간은 떠나 있는 동안 볼 수 없으니, 돌아온 뒤 "지난번 크롬 밖"으로 보여 준다.
+ *   [빠른 시험] = 한도를 20초 · 40초로 줄여 자동 정지를 바로 눈으로 본다. 기록 중에만 누를 수 있고,
+ *   다음 기록 시작 때 background 가 끈다. 검사는 30초마다라 20초를 넘긴 뒤 최대 30초 더 걸릴 수 있다.
+ *
  * --- 연결 끊김 표시 ----------------------------------------------------------
  *   11-session 이 background 에 못 닿으면 session:link 로 알린다. 버튼은
  *   background 응답으로만 바뀌므로, 이게 없으면 "버튼이 안 눌린다"로만 보인다.
@@ -37,7 +44,7 @@
  *   세션은 background 소유다. 버튼은 ui:rec / ui:export 를 발행하고, 11-session 이
  *   background 에 요청한다. 시작/정지는 background 의 방송으로 일어난다.
  *   그래서 버튼 상태(uiRecording)도 낙관적으로 먼저 바꾸지 않고 session:changed
- *   로만 바꾼다. 다른 탭에서 시작한 세션, 30분 무동작 종료, 웹앱에서 온 명령
+ *   로만 바꾼다. 다른 탭에서 시작한 세션, 무동작 자동 정지(#26), 웹앱에서 온 명령
  *   (나중)까지 전부 같은 경로로 버튼에 반영된다.
  *
  *   record:started / record:stopped 는 이제 "구간"의 시작/끝이라 버튼에 쓰면
@@ -73,6 +80,7 @@
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
   let noiseMinPct = 30;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
   let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
+  let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -156,6 +164,12 @@
         <span id="rbc-noiseminval">${noiseMinPct}%</span>
       </div>
       <div class="rbc-stat" id="rbc-noise">${noiseHtml}</div>
+      <div class="rbc-row">
+        <span>무동작</span>
+        <button data-act="idletest" class="${idleTest() ? 'on' : ''}" ${uiRecording ? '' : 'disabled'}
+                title="이번 세션만 한도를 크롬 안 20초 · 크롬 밖 40초로 줄인다">빠른 시험 (20초 · 40초)</button>
+      </div>
+      <div class="rbc-stat" id="rbc-idle">${idleHtml()}</div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-stat" id="rbc-rescan">${rescanHtml}</div>
@@ -189,6 +203,7 @@
 
     // 세션 bundle 은 background 가 만든다. 받아서 저장하는 건 11-session → 6-frames.
     panelEl.querySelector('[data-act="exp"]').onclick = () => bus.emit('ui:export');
+    panelEl.querySelector('[data-act="idletest"]').onclick = () => bus.emit('ui:idletest', { on: !idleTest() });
 
     // 검색어는 두 군데로 간다: 페이지 meta 에 넣는 recorder(모든 프레임)와,
     // 세션 검색어를 기록하는 background.
@@ -349,6 +364,39 @@
     const el = panelEl && panelEl.querySelector('#rbc-rescan');
     if (el) el.innerHTML = rescanHtml;
   });
+
+  // 무동작 시계 (#26). 숫자는 background 값, 문장은 여기서.
+  function mmss(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  const SRC_KO = { input: '입력', tab: '탭 전환', window: '크롬으로 돌아옴', start: '기록 시작', test: '빠른 시험 누름' };
+  function idleTest() { return !!(uiRecording && idleClock && idleClock.test); }
+  function idleHtml() {
+    const c = idleClock;
+    if (!uiRecording || !c || !c.lastActAt) return '<span style="color:#999">무동작 시계: 기록 중이 아님</span>';
+    const idle = Date.now() - c.lastActAt;
+    const near = idle > c.inMs * 0.8;
+    // 패널이 보인다 = 크롬 안. 그런데 background 가 크롬 밖으로 보고 있으면 잘못 잡힌 것(개발자 도구 창 등) — 빨갛게.
+    const away = c.awaySince ? `<br><b style="color:#dc2626">background 는 지금 크롬 밖으로 봄 ${mmss(Date.now() - c.awaySince)}` +
+      ` — 무동작 시계는 멈춤, 크롬 밖 한도로 잼</b>` : '';
+    return `무동작 <b style="color:${near ? '#dc2626' : '#111'}">${mmss(idle)}</b> / ${mmss(c.inMs)}` +
+      ` · 크롬 밖 지난번 ${c.lastAwayMs != null ? mmss(c.lastAwayMs) : '없음'} / ${mmss(c.outMs)}` +
+      (c.test ? ' <b style="color:#dc2626">· 빠른 시험 켜짐</b>' : '') +
+      `<br><span style="color:#666">마지막 움직임: ${esc(SRC_KO[c.src] || c.src || '?')}</span>` + away +
+      (c.err ? `<br><span style="color:#dc2626">무동작 시계 실패: ${esc(c.err)}</span>` : '');
+  }
+  bus.on('idle:clock', (d) => {
+    const wasTest = idleTest();
+    idleClock = d;
+    if (idleTest() !== wasTest) { render(); return; }      // 버튼 색
+    const el = panelEl && panelEl.querySelector('#rbc-idle');
+    if (el) el.innerHTML = idleHtml();
+  });
+  setInterval(() => {
+    const el = visible && panelEl && panelEl.querySelector('#rbc-idle');
+    if (el) el.innerHTML = idleHtml();
+  }, 1000);
 
   bus.on('ui:panel', (d) => {
     const on = !!(d && d.on);
