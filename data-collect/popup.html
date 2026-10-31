@@ -48,9 +48,12 @@
     border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
   }
   input[type=text]:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-tint); }
+  /* 기본 화살표는 위치를 못 옮겨서 숨기고, 오른쪽 끝에서 14px 안쪽에 직접 그린다 */
   select {
-    width: 100%; font: inherit; color: var(--ink); padding: 8px 10px; font-variant-numeric: tabular-nums;
-    border: 1px solid var(--line); border-radius: var(--radius-ctl); background: #fff;
+    width: 100%; font: inherit; color: var(--ink); padding: 8px 36px 8px 10px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--line); border-radius: var(--radius-ctl); cursor: pointer;
+    -webkit-appearance: none; appearance: none;
+    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%236a706b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center;
   }
   select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-tint); }
   .qshow { margin-top: 10px; font-size: 13px; color: var(--sub); }

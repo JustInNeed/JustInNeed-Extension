@@ -28,9 +28,10 @@
  * --- 조건 태그 · 링크 번호 (#24) ----------------------------------------------
  *   조건 태그 = Q1 · Q2 중 하나(필수). 동의 페이지에서 고른다. 다른 값(옛 자유 입력 · 빈 값)이면
  *   동의가 없는 것으로 봐서 다시 고르게 한다 — testId 는 유지된다.
- *   링크 번호 = 이번에 읽는 글의 번호(001~100, 세 자리). 팝업이 start 에 linkNo 로 싣는다. 없으면 시작 거절.
- *   기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId } 로 두고,
- *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 번호인지 맞춘다.
+ *   링크 번호 = 이번에 읽는 글의 번호(000~100, 세 자리). 팝업이 start 에 linkNo 로 싣는다. 없으면 시작 거절.
+ *   정답 / 오답 = 평가의 설문 앞 팝업에서 참가자가 고른 값(O · X). 평가 [완료]의 stop(reason 'labeled')에 answer 로 온다.
+ *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
+ *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
  * ========================================================================== */
 /* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField */
 'use strict';
@@ -38,12 +39,13 @@
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
 const CONSENT_VERSION = 2;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가)
 
-const K_LINK = 'link';        // 이번 기록의 링크 번호 { linkNo, sessionId }. 로그 밖 — JSON 에 안 들어간다
+const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
 const TAGS = ['Q1', 'Q2'];    // 조건 태그로 고를 수 있는 값 (consent.html 의 선택지와 같아야 한다)
-const LINK_MAX = 100;         // 링크 번호 001 ~ LINK_MAX (popup.js 의 목록과 같아야 한다)
+const LINK_MAX = 100;         // 링크 번호 000 ~ LINK_MAX (popup.js 의 목록과 같아야 한다)
+const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
 
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
-let L = null;                 // { linkNo, sessionId } | null
+let L = null;                 // { linkNo, sessionId, answer } | null
 
 // ============================================================================
 // 동의
@@ -53,12 +55,11 @@ function consentValid() {
   return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo && tagValid(C.tag));
 }
 
-// '003' 처럼 세 자리 숫자 문자열이고 001 ~ LINK_MAX 안이면 그대로, 아니면 null
+// '003' 처럼 세 자리 숫자 문자열이고 000 ~ LINK_MAX 안이면 그대로, 아니면 null
 function cleanLink(v) {
   const s = typeof v === 'string' ? v.trim() : '';
   if (!/^\d{3}$/.test(s)) return null;
-  const n = Number(s);
-  return n >= 1 && n <= LINK_MAX ? s : null;
+  return Number(s) <= LINK_MAX ? s : null;
 }
 
 // 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
@@ -92,8 +93,9 @@ Object.assign(VERSION, {
     return {
       consent: C ? Object.assign({ valid: consentValid(), tagValid: tagValid(C.tag) }, C) : null,
       consentVersion: CONSENT_VERSION,
-      // 이번 세션의 링크 번호. 다른 세션의 것이면 null (파일 이름에 엉뚱한 번호가 붙지 않게)
+      // 이번 세션의 링크 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
       linkNo: L && L.sessionId === S.sessionId ? L.linkNo : null,
+      answer: L && L.sessionId === S.sessionId ? (L.answer || null) : null,
     };
   },
 });
@@ -108,6 +110,19 @@ handlers.start = async (m, sender) => {
   const r = await coreStart(m, sender);
   if (r && r.rbc === 'start') {
     L = { linkNo, sessionId: S.sessionId };
+    await chrome.storage.local.set({ [K_LINK]: L });
+  }
+  return r;
+};
+
+// 평가 [완료]의 정지에 실려 온 정답 / 오답을 이번 기록의 'link' 칸에 둔다. 정지 자체는 엔진 그대로.
+//   onStop 이 1.5초 뒤 내보내기 탭을 여므로, 그 전에(같은 serial 안에서) 저장이 끝난다.
+const coreStop = handlers.stop;
+handlers.stop = async (m, sender) => {
+  const was = S.recording;
+  const r = await coreStop(m, sender);
+  if (was && m && m.reason === 'labeled' && L && L.sessionId === S.sessionId) {
+    L = Object.assign({}, L, { answer: ANSWERS.includes(m.answer) ? m.answer : null });
     await chrome.storage.local.set({ [K_LINK]: L });
   }
   return r;

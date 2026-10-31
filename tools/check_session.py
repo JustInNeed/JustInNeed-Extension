@@ -70,7 +70,7 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          링크 번호 · 정답 여부는 이름에만 있다(JSON 에 없음). 이름에서 읽어 보여 준다.
          FAIL: 이름의 참여 번호 · 조건 태그 · 세션이 JSON(session.tester · sessionId)과 다름 — 다른 기록의 이름표.
          WARN: 옛 이름(rbc_<참여 번호>_<세션>_<시각>.json — #24 전 · 디버그 패널 내보내기) · 규칙 밖 이름 ·
-               NOLINK · NOID · NOTAG (내보낼 때 값을 몰랐음).
+               NOLINK · NOANS · NOID · NOTAG (내보낼 때 값을 몰랐음. NOANS = 평가 없이 정지한 기록).
          참여 번호에 _ 가 들어갈 수 있어서 뒤에서부터 자른다(조건 태그 · 세션 · 시각 · O/X 에는 _ 가 없다).
   --units-baseline 은 기준선 파일 첫 줄(# URL)과 같은 글인 페이지에만 적용한다.
 
@@ -1040,7 +1040,7 @@ def parse_file_name(path):
     stem = re.sub(r" \(\d+\)$", "", stem)
     parts = stem.split("_")
     # 새 이름: 링크 _ rbc _ 참여 번호(… _ 포함 가능) _ 태그 _ 세션 _ 시각 _ O|X
-    if len(parts) >= 7 and parts[1] == "rbc" and parts[-1] in ("O", "X") and re.fullmatch(r"\d{13}", parts[-2]):
+    if len(parts) >= 7 and parts[1] == "rbc" and parts[-1] in ("O", "X", "NOANS") and re.fullmatch(r"\d{13}", parts[-2]):
         link = parts[0]
         if re.fullmatch(r"\d{3}", link) or link == "NOLINK":
             return {"kind": "new", "link": link, "pno": "_".join(parts[2:-4]), "tag": parts[-4],
@@ -1070,8 +1070,9 @@ def check_file_name(rep, path, session):
     if name["kind"] == "old":
         rep.add(WARN, "파일 이름", "옛 이름(#24 전 · 디버그 패널 내보내기) — 링크 번호 · 정답 여부 없음")
         return
-    unknown = [k for k in ("NOLINK", "NOID", "NOTAG") if k in (name["link"], name["pno"], name["tag"])]
-    detail = (f"링크 {name['link']} · 정답 여부 {name['answer']}({'정답' if name['answer'] == 'O' else '오답'}) · "
+    unknown = [k for k in ("NOLINK", "NOANS", "NOID", "NOTAG") if k in (name["link"], name["answer"], name["pno"], name["tag"])]
+    said = {"O": "정답", "X": "오답"}.get(name["answer"], "모름")
+    detail = (f"링크 {name['link']} · 정답 여부 {name['answer']}({said}) · "
               f"{name['pno']} · {name['tag']} · 이름과 JSON 일치")
     if unknown:
         rep.add(WARN, "파일 이름", detail + f" — 내보낼 때 모른 값 {' · '.join(unknown)}")

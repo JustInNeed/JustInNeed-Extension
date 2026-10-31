@@ -11,6 +11,13 @@
  *   null(읽기) → 'ask'(다 읽었나요?) → 'rate'(문단 평정) → 'mark'(중요 유닛) → 'survey'(설문) → [완료]
  *   팝업 "다 읽었어요"(cmd:label) 는 ask 를 건너뛰고 rate 부터 (trigger 'popup').
  *
+ * --- 정답 / 오답 (#24) -------------------------------------------------------------
+ *   설문 단계에 들어가면 설문 질문보다 먼저 "질문의 답을 맞혔나요?" [정답] [오답] 팝업을 띄운다(참가자가 고름).
+ *   다시 누르면 선택 해제, 하나를 골라야 [다음] → 설문. 설문의 [이전 단계]는 이 팝업으로 돌아온다.
+ *   고른 값(O · X)은 label:done 의 answer 로만 내보낸다 → 11-session 이 정지 요청에 실어 background 로,
+ *   내보내기 페이지가 파일 이름 끝에 붙인다. 5-recorder 는 label 이벤트에 정해진 필드만 옮기므로 JSON 에는
+ *   안 들어간다(형식 그대로, 10-31 서현). 팝업에 있던 시간은 phaseMs.survey 에 들어간다(새 키를 만들지 않음).
+ *
  * --- 틱 정지 ------------------------------------------------------------------
  *   ask 카드가 떠 있는 동안은 계속 기록한다 — 카드를 무시하고 읽는 사람이 많다 (2026-10-07 실측 피드백).
  *   [아직] · Esc → label:ask{answer, shownMs} (5-recorder 가 labelask 이벤트, startT = t − shownMs).
@@ -84,6 +91,8 @@
   let ratingLog = [];            // [pid, 값, t0 부터 ms]
   const marks = new Set();
   let survey = {};
+  let answer = null;             // 정답 'O' | 오답 'X' | null (설문 앞 팝업)
+  let answerOk = false;          // 팝업에서 [다음]을 눌렀나 — false 면 survey 단계가 팝업을 보여 준다
   let zeroOk = false;            // mark: 0개로 넘어가기 확인
   let hoverPid = null;
 
@@ -268,6 +277,8 @@
         .bar{ pointer-events:auto; margin-bottom:56px; padding:12px 16px; border-radius:12px; background:#fff;
           color:#1f2a1c; font:14px/1.45 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;
           box-shadow:0 6px 24px rgba(0,0,0,.2); border:1px solid #d9e8d2; max-width:calc(100vw - 24px); }
+        .bar.pop{ margin-bottom:calc(50vh - 90px); padding:18px 22px; border-width:2px; border-color:#4caf3f; }
+        .pick button{ min-width:96px; padding:10px 18px; font-size:14px; }
         .hd{ display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
         .hd b{ font-size:14px; } .hd small{ color:#5d6b58; font-size:12px; }
         .n{ margin-left:auto; font-weight:600; color:#2f7d24; white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -292,6 +303,8 @@
   function render() {
     if (!root) return;
     const bar = root.querySelector('.bar');
+    const pop = phase === 'survey' && !answerOk;     // 설문 앞 정답 / 오답 팝업 (화면 가운데)
+    bar.classList.toggle('pop', pop);
     let h = '';
     if (phase === 'ask') {
       h = `<div class="hd"><b>이 글을 다 읽었나요?</b><small>예를 누르면 짧은 평가가 시작돼요 (1~2분)</small></div>
@@ -319,6 +332,15 @@
           <button class="ok" data-a="next">${!marks.size && zeroOk ? '그대로 넘어가기' : '다음 단계'}</button>
           <button data-a="cancel">취소</button></div>
         ${!marks.size && zeroOk ? '<div class="warn">하나도 고르지 않았어요. 그대로 넘어갈까요?</div>' : ''}`;
+    } else if (pop) {
+      h = `<div class="hd"><b>질문의 답을 맞혔나요?</b><small>직접 골라 주세요 · 다시 누르면 선택 해제</small></div>
+        <div class="row pick">
+          <button class="${answer === 'O' ? 'on' : ''}" data-ans="O">정답</button>
+          <button class="${answer === 'X' ? 'on' : ''}" data-ans="X">오답</button></div>
+        <div class="row" style="margin-top:12px"><span class="sp"></span>
+          <button data-a="back">이전 단계</button>
+          <button class="ok" data-a="answered"${answer ? '' : ' disabled'}>다음</button>
+          <button data-a="cancel">취소</button></div>`;
     } else if (phase === 'survey') {
       const all = SURVEY.every(([k]) => survey[k] != null);
       h = `<div class="hd"><b>마지막으로 세 가지만 골라 주세요</b></div>
@@ -336,6 +358,10 @@
     const b = e.target.closest && e.target.closest('button');
     if (!b || b.disabled) return;
     if (b.dataset.r) return rate(b.dataset.r);
+    if (b.dataset.ans) {                              // 정답 / 오답: 같은 것을 다시 누르면 해제
+      answer = answer === b.dataset.ans ? null : b.dataset.ans;
+      return render();
+    }
     if (b.dataset.k) {
       const opt = SURVEY.find(([k]) => k === b.dataset.k)[2].find(([v]) => String(v) === b.dataset.v);
       survey[b.dataset.k] = opt[0];
@@ -352,7 +378,10 @@
           return go('survey');
         }
         return undefined;
-      case 'back': return go(phase === 'survey' ? 'mark' : 'rate');
+      case 'answered': answerOk = true; return render();
+      case 'back':
+        if (phase === 'survey' && answerOk) { answerOk = false; return render(); }   // 설문 → 정답 / 오답 팝업
+        return go(phase === 'survey' ? 'mark' : 'rate');
       case 'done': return exit(false);
       case 'cancel': return exit(true);
       default: return undefined;
@@ -518,6 +547,7 @@
     phaseMs = { ask: 0, rate: 0, mark: 0, survey: 0 };
     targets = []; excluded = []; idx = 0;
     ratings.clear(); ratingLog = []; marks.clear(); survey = {}; zeroOk = false;
+    answer = null; answerOk = false;
     if (first !== 'ask') setMode(true);              // ask 카드 동안은 계속 기록
     buildBar();
     window.addEventListener('keydown', onKey, true);
@@ -576,6 +606,7 @@
       excluded: excluded.slice(),
       marks: [...marks].sort((a, b) => order(a) - order(b)),
       survey: { ...survey },
+      answer,                                        // 정답 / 오답 — 11-session 이 background 로만. JSON 에는 안 들어감
     };
     teardown();
     if (!silent) bus.emit('label:done', payload);   // 5-recorder: label 이벤트 → 11-session: 정지(완료일 때)
