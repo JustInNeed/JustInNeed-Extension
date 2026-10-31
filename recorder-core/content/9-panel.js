@@ -371,13 +371,6 @@
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
   const SRC_KO = { input: '입력', tab: '탭 전환', window: '크롬으로 돌아옴', start: '기록 시작', test: '빠른 시험 누름' };
-  // noscript = 확장이 못 들어가는 탭에 있어서 움직임으로 친 것. 크롬 설정 · 새 탭이 아닌데 이게 보이면 그 탭을 새로고침할 것.
-  function srcHtml(src) {
-    if (src && src.startsWith('noscript')) {
-      return `<b style="color:#b45309">확장이 못 들어가는 탭</b> <span style="color:#999">[${esc(src.slice(10))}]</span>`;
-    }
-    return esc(SRC_KO[src] || src || '?');
-  }
   function idleTest() { return !!(uiRecording && idleClock && idleClock.test); }
   function idleHtml() {
     const c = idleClock;
@@ -390,7 +383,7 @@
     return `무동작 <b style="color:${near ? '#dc2626' : '#111'}">${mmss(idle)}</b> / ${mmss(c.inMs)}` +
       ` · 크롬 밖 지난번 ${c.lastAwayMs != null ? mmss(c.lastAwayMs) : '없음'} / ${mmss(c.outMs)}` +
       (c.test ? ' <b style="color:#dc2626">· 빠른 시험 켜짐</b>' : '') +
-      `<br><span style="color:#666">마지막 움직임: ${srcHtml(c.src)}</span>` + away +
+      `<br><span style="color:#666">마지막 움직임: ${esc(SRC_KO[c.src] || c.src || '?')}</span>` + away +
       (c.err ? `<br><span style="color:#dc2626">무동작 시계 실패: ${esc(c.err)}</span>` : '');
   }
   bus.on('idle:clock', (d) => {

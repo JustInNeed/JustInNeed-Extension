@@ -52,7 +52,7 @@
  *
  * --- 무동작 시계 (#26) -------------------------------------------------------
  *   시계는 background 가 갖는다(bg-core 헤더). 여기서는 4-input 의 activity 를 background 로
- *   실어 나르고(모든 프레임 · 기록 안 하는 탭도), 확장이 들어간 탭인지 묻는 alive 에 답하고,
+ *   실어 나르고(모든 프레임 · 기록 안 하는 탭도),
  *   background 가 알려 준 시계 값을 idle:clock 으로 패널에 넘긴다.
  * ========================================================================== */
 (() => {
@@ -182,7 +182,6 @@
       RBC.frames.send('stop', { reason: m.reason === 'idle' ? 'idle' : 'user' });
     }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
-    else if (m.rbc === 'alive') reply({ ok: true });  // 무동작 시계: 확장이 들어간 탭인지 (#26)
     else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)
       //   settling = 본문 준비 중 대기. 팝업은 기록 시작 뒤 이게 풀리고 recording 이 될 때까지 기다렸다 닫힌다.
       const ri = RBC.stream.rootInfo() || {};

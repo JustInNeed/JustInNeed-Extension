@@ -55,9 +55,9 @@
  *   틱이 멈춰서 그 시간을 셀 수 없다.
  *     크롬 안 : 마지막 움직임에서 IDLE_IN_MS 를 넘기면 자동 정지
  *     크롬 밖 : 창 포커스가 없어진 때부터 IDLE_OUT_MS 를 넘기면 자동 정지. 그 안에 돌아오면 이어짐
- *   움직임 = 탭의 입력(activity 명령, 기록 안 하는 탭 · iframe 포함) · 탭 전환 · 크롬으로 돌아옴 ·
- *            확장이 못 들어가는 탭(크롬 설정 · 웹스토어 등)에 있는 것 자체.
- *   다른 탭의 소리 · 영상은 안 친다. 손대지 않고 영상만 보는 경우를 어떻게 볼지는 팀 논의 필요(10-31).
+ *   움직임 = 탭의 입력(activity 명령, 기록 안 하는 탭 · iframe 포함) · 탭 전환 · 크롬으로 돌아옴.
+ *   확장이 못 들어가는 탭(새 탭 · 크롬 설정 · 웹스토어)에 가만히 있는 것 · 손대지 않고 영상만 보는 것은 움직임이 아니다
+ *   — 자리를 비운 시간(화장실 등)을 걸러내려고 (10-31 서현).
  *   service worker 는 쉬면 꺼지므로 시각은 S 에 저장하고, 알람으로 30초마다 깨어 본다.
  *   움직임이 오면 시계를 고치기 전에 먼저 넘겼는지 본다 — 알람 사이에 돌아와도 넘긴 시간은 잡힌다.
  *
@@ -106,7 +106,7 @@ function emptyState() {
     lastActAt: 0,        // 무동작 시계: 마지막 움직임 시각 (기록 데이터 아님)
     awaySince: null,     // 크롬을 떠난 시각. null = 크롬 안
     lastAwayMs: null,    // 지난번 크롬 밖에 있던 시간 (패널 표시용)
-    lastActSrc: null,    // 마지막 움직임이 어디서 왔나 (패널 표시용): input · tab · window · noscript · start · test
+    lastActSrc: null,    // 마지막 움직임이 어디서 왔나 (패널 표시용): input · tab · window · start · test
     idleErr: null,       // 무동작 시계 쪽 마지막 실패 원문 (패널 표시용)
     idleTest: false,     // 패널 "빠른 시험" (디버그). 새 세션은 언제나 꺼진 채 시작
   };
@@ -232,18 +232,6 @@ async function wentAway(now) {
   await saveState();
 }
 
-// 이 탭에 content script 가 있나. 없으면 확장이 못 들어가는 탭(크롬 설정 · 웹스토어 · 새 탭 · PDF 등)이다. 답 = 실패 원문 또는 null.
-//   한계: 확장을 다시 불러온 뒤 새로고침 안 한 탭도 같은 실패라 구별이 안 된다 → 그 탭이 앞에 있으면 움직임으로 친다.
-//   그래서 패널에 원문과 "못 들어가는 탭"을 보여 준다(크롬 설정 탭이 아닌데 이게 보이면 그 탭을 새로고침).
-async function noScript(tabId) {
-  try {
-    const r = await chrome.tabs.sendMessage(tabId, { rbc: 'alive' }, { frameId: 0 });
-    return r && r.ok ? null : 'no-reply';
-  } catch (e) {
-    return (e && e.message) || String(e);
-  }
-}
-
 // 알람마다: 크롬 안팎을 다시 확인한다. 포커스 이벤트를 놓쳤어도(서비스 워커가 꺼져 있었음) 여기서 맞춰진다.
 async function idleCheck() {
   if (!S.recording) { await chrome.alarms.clear(IDLE_ALARM); return; }
@@ -251,12 +239,6 @@ async function idleCheck() {
   const w = await chrome.windows.getLastFocused();          // 실패하면 판정하지 않고 idleFail 로 (크롬 밖으로 치지 않는다)
   if (!w || !w.focused) await wentAway(now);
   else if (S.awaySince != null) return moved(now, 'window'); // 돌아왔는데 이벤트를 놓쳤다
-  else {
-    const [t] = await chrome.tabs.query({ active: true, windowId: w.id });
-    // 확장이 못 들어가는 탭에 있음 = 움직임. 로딩 중인 탭은 content script 가 아직 안 떠서 빼고 본다.
-    const why = t && t.status === 'complete' ? await noScript(t.id) : null;
-    if (why) { S.idleErr = null; return moved(now, 'noscript: ' + why); }
-  }
   S.idleErr = null;
   if (idleOver(now)) return idleStop();
 }
