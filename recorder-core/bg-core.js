@@ -505,6 +505,12 @@ const handlers = {
   // 탭의 입력이 있었다 (#26). 모든 탭 · 프레임이 보낸다 — 기록 중이 아니면 아무것도 안 한다.
   //   탭 · URL 은 보지 않고 저장하지 않는다. 시각만 고친다.
   async activity() {
+    // 크롬 밖으로 잡혀 있는데 입력이 왔다: 맥은 다른 앱을 쓰는 중에 뒤에 보이는 크롬 창 위로 마우스만 지나가도 입력이 온다.
+    //   그걸 "돌아옴"으로 치면 크롬 밖 시계가 처음부터 다시 잰다 → 크롬 창이 정말 앞에 있을 때만 돌아온 것으로 본다.
+    if (S.recording && S.awaySince != null) {
+      const w = await chrome.windows.getLastFocused();
+      if (!w || !w.focused) return { ok: true };
+    }
     await moved(Date.now(), 'input');
     return { ok: true };
   },
