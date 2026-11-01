@@ -6,7 +6,7 @@
 <!--
   popup.html — 실사용 버전 기록 제어 (확장 아이콘 클릭)
   색 · 모양은 데이터 수집 버전 popup.html 과 같은 값을 쓴다 (버전 폴더끼리 CSS 를 공유하지 않는다).
-  동작은 popup.js. 동의 · 읽는 목적 · 평가 · 참여 정보가 없다(실사용 버전).
+  동작은 popup.js. 동의 · 읽는 목적 · 평가 · 참여 정보가 없다(실사용 버전). 로그인 전에는 v-login 만 보인다(#30).
 -->
 <style>
   :root {
@@ -48,6 +48,8 @@
   button.armed { background: var(--red-ink); border-color: var(--red-ink); color: #fff; }
 
   .hint { margin-top: 10px; font-size: 12.5px; color: var(--sub); }
+  .who { font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; }
+  .err { margin-top: 10px; font-size: 12px; color: var(--red-ink); word-break: break-all; }
   .opt { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--sub); }
 
   .banner {
@@ -76,11 +78,20 @@
   <!-- popup.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
   <div id="loading" class="card"><p>불러오는 중…</p></div>
 
+  <!-- 로그인 전 (#30). 기록 시작은 background 가 로그인 없으면 거절한다 — 이 화면은 그걸 먼저 보여 줄 뿐 -->
+  <section id="v-login" class="card" hidden>
+    <div class="state">로그인이 필요합니다</div>
+    <p class="hint">웹페이지에서 로그인하면 확장 프로그램에서도 연동돼요.<br>로그인해야 기록을 시작할 수 있어요.</p>
+    <button id="btn-login" type="button" class="primary">로그인하러 가기</button>
+    <div class="err" id="login-err" hidden></div>
+  </section>
+
   <section id="v-main" class="card" hidden>
-    <div class="head"><i class="dot" id="dot"></i></div>
+    <div class="head"><i class="dot" id="dot"></i><span class="who" id="who"></span></div>
     <div class="state" id="state">기록 대기</div>
     <div class="meta" id="meta"></div>
     <button id="btn-rec" type="button">기록 시작</button>
+    <div class="err" id="main-err" hidden></div>
     <div class="hint">서버 전송은 아직 없습니다. 기록은 이 브라우저에만 쌓이고, 새로 시작하면 지워집니다.
       파일로 남기려면 디버그 패널의 [내보내기]를 누르세요.</div>
     <label class="opt"><input type="checkbox" id="f-panel"> 디버그 패널 보이기</label>
