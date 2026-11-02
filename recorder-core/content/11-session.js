@@ -4,7 +4,7 @@
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
  * 발행: session:changed, session:link, export:ready, ui:panel, idle:clock
- * 구독: seg:page, seg:chunk, label:mode, scan:done, label:done, activity,
+ * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
@@ -109,7 +109,7 @@
   //   tabId 는 싣지 않는다 — background 가 sender.tab.id 로 붙인다.
   // ==========================================================================
   bus.on('seg:page', (d) => toBg(Object.assign({ rbc: 'page' }, d)));
-  bus.on('seg:chunk', (d) => toBg(Object.assign({ rbc: 'flush' }, d)));
+  bus.on('seg:flush', (d) => toBg(Object.assign({ rbc: 'flush' }, d)));
 
   // 입력 = 움직임 → background 의 무동작 시계 (#26). 간격은 4-input 이 둔다(CFG.ACTIVITY_PING_MS).
   bus.on('activity', () => toBg({ rbc: 'activity' }));

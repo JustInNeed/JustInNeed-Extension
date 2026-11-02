@@ -18,7 +18,7 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
 세션 bundle (background 가 만든 것):
   { kind: 'rbc-session', session: {...}, pages: [ 페이지 payload, ... ] }
   pages 의 각 원소에 기존 검사를 그대로 돌리고, 세션 단위 검사를 추가로 돌린다.
-    [S1] 조각 유실 (chunkReport.missing)       FAIL
+    [S1] 조각 유실 (flushReport.missing)       FAIL
     [S2] page 기록 없는 조각 (orphan)           FAIL
     [S3] 조각 중복 (duplicates)                 WARN — 제거는 됐지만 재전송이 있었다는 뜻
     [S4] 열린 채 끝난 구간 (end=open)           WARN — 녹화 중 export 또는 꼬리 유실
@@ -996,7 +996,7 @@ def pieces_summary(meta):
 
 def check_bundle_session(rep, session):
     """[S1]~[S5] 세션 단위 — background 의 조각 보고서."""
-    report = session.get("chunkReport") or []
+    report = session.get("flushReport") or session.get("chunkReport") or []   # chunkReport = #32 전 이름
     miss = [r for r in report if r.get("missing")]
     orphan = [r for r in report if r.get("orphan")]
     dup = sum(r.get("duplicates", 0) for r in report)
