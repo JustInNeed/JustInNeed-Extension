@@ -34,8 +34,7 @@
   ],
   "externally_connectable": {
     "matches": [
-      "https://just-in-need-fe.vercel.app/*",
-      "http://localhost:3000/*"
+      "https://just-in-need-fe.vercel.app/*"
     ]
   },
   "content_scripts": [

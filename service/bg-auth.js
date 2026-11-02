@@ -44,16 +44,32 @@
 const API_BASE = 'https://api.justinneed.xyz';                    // manifest host_permissions 와 같아야 한다
 const WEB_BASE = 'https://just-in-need-fe.vercel.app';
 const WEB_CONNECT = WEB_BASE + '/extension/connect';              // 웹 연결 페이지 (웹 레포에 만들 것, 청크 3)
-const WEB_ORIGINS = [WEB_BASE, 'http://localhost:3000'];          // manifest externally_connectable 과 같아야 한다
+const WEB_ORIGINS = [WEB_BASE];                                    // manifest externally_connectable 과 같아야 한다
+//   localhost:3000 은 뺐다(검토 11-02) — 사용자 컴퓨터의 아무 개발 서버나 회원 id 를 읽거나 다른 계정을 연결할 수 있어서.
+//   운영 서버 CORS 가 localhost 를 막아 쓸 일도 없다. 웹을 로컬 BE 로 개발할 때만 여기 · manifest 에 잠깐 더한다.
 const K_AUTH = 'auth';
-const K_LOGIN_TAB = 'auth:tab';    // { loginTabId, returnTabId, returnWindowId } — 서비스 워커가 쉬어도 남게 storage 에
+const K_LOGIN_TAB = 'auth:tab';    // { loginTabId, returnTabId, returnWindowId, at } — 서비스 워커가 쉬어도 남게 storage 에
+const LOGIN_TAB_MAX_MS = 10 * 60 * 1000;   // 로그인 탭 기록의 수명. 지나면 무시 — 오래된 기록이 쓰던 탭을 닫지 않게
+const K_MSG = 'auth:msg';         // 팝업에 띄울 실패 · 알림 문구. 서비스 워커가 쉬었다 깨도 남게 storage.session 에
+const API_TIMEOUT_MS = 10 * 1000; // 서버 응답을 기다리는 한도 — 넘으면 실패. 앞 요청이 멈추면 웹 메시지가 다 줄에 막힌다
 const RETURN_DELAY_MS = 1200;      // 연결 뒤 로그인 탭을 닫기까지 — 웹이 "연결됐어요"를 보여 줄 틈
 
 let A = null;          // { accessToken, refreshToken, memberId, at, checkedAt } | null
 let authErr = null;    // 마지막 실패 원문 (팝업 빨간 줄). 성공하면 지운다
 let authNote = null;   // 실패는 아니지만 알릴 것 (팝업 회색 줄) — 예: 팝업을 저절로 못 엶
 
-const authReady = chrome.storage.local.get(K_AUTH).then((r) => { A = r[K_AUTH] || null; });
+const authReady = Promise.all([
+  chrome.storage.local.get(K_AUTH).then((r) => { A = r[K_AUTH] || null; }),
+  chrome.storage.session.get(K_MSG).then((r) => { const m = r[K_MSG] || {}; authErr = m.err || null; authNote = m.note || null; }),
+]);
+
+// 문구는 바꿀 때마다 storage.session 에도 둔다. 저장이 실패해도 메모리 값은 그대로 보인다 — 실패는 콘솔에
+function persistMsg() {
+  chrome.storage.session.set({ [K_MSG]: { err: authErr, note: authNote } })
+    .catch((e) => console.warn('[RBC] 로그인 문구 저장 실패', e));
+}
+function setErr(v) { authErr = v; persistMsg(); }
+function setNote(v) { authNote = v; persistMsg(); }
 
 // 로그인 일은 서로 줄을 세운다(연결 · 확인 · 로그아웃이 겹치지 않게). 엔진 serial 과는 따로.
 let authChain = authReady;
@@ -70,9 +86,12 @@ async function api(path, { method = 'GET', body, token } = {}) {
   if (token) headers.Authorization = 'Bearer ' + token;
   let res;
   try {
-    res = await fetch(API_BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    res = await fetch(API_BASE + path, {
+      method, headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
   } catch (e) {
-    throw Object.assign(new Error(`${method} ${path}: 서버에 닿지 못함 (${e.message || e})`), { status: 0 });
+    const why = e && e.name === 'TimeoutError' ? `${API_TIMEOUT_MS / 1000}초 안에 답이 없음` : (e.message || e);
+    throw Object.assign(new Error(`${method} ${path}: 서버에 닿지 못함 (${why})`), { status: 0 });
   }
   // 본문이 JSON 이 아니면(예: Spring CORS 거절 "Invalid CORS request") 그 글자를 그대로 오류에 싣는다
   const text = await res.text().catch((e) => `(본문 못 읽음: ${e.message || e})`);
@@ -140,7 +159,7 @@ async function connect(code) {
   const now = new Date().toISOString();
   A = { accessToken: t.accessToken, refreshToken: t.refreshToken, memberId: me.id, at: now, checkedAt: now };
   await saveAuth();
-  authErr = null;
+  setErr(null);
   return A.memberId;
 }
 
@@ -152,28 +171,35 @@ async function check() {
     if (A && me && me.id === A.memberId) {
       A = Object.assign({}, A, { checkedAt: new Date().toISOString() });
       await saveAuth();
-      authErr = null;
+      setErr(null);
     } else if (A) {
-      authErr = `로그인 확인: 서버의 회원 id(${me && me.id})가 저장된 값(${A.memberId})과 다름`;
+      setErr(`로그인 확인: 서버의 회원 id(${me && me.id})가 저장된 값(${A.memberId})과 다름`);
     }
   } catch (e) {
-    authErr = `로그인 확인 실패: ${e.message || e}`;
+    setErr(`로그인 확인 실패: ${e.message || e}`);
   }
 }
 
-// 토큰은 먼저 지운다. 서버 알림이 실패해도(만료 · 오프라인) 확장은 로그아웃 상태 — 실패 원문은 팝업에.
-async function logout() {
+// 로그아웃 = 토큰을 먼저 지우고(dropLogin) → 서버에 알림(notifyLogout). 서버 알림이 실패해도(만료 · 오프라인)
+//   확장은 로그아웃 상태 — 실패 원문은 팝업에. 웹의 JIN_LOGOUT 은 지운 직후 답하고 알림은 뒤에서 한다(웹이 기다리지 않게).
+async function dropLogin() {
   const old = A;
   A = null;
   await saveAuth();
   authErr = null;
-  authNote = null;
+  setNote(null);
+  return old;
+}
+async function notifyLogout(old) {
   if (!old) return;
   try {
     await api('/auth/logout', { method: 'POST', token: old.accessToken, body: { refreshToken: old.refreshToken } });
   } catch (e) {
-    authErr = `로그아웃은 됐지만 서버 알림 실패: ${e.message}`;
+    setErr(`로그아웃은 됐지만 서버 알림 실패: ${e.message}`);
   }
+}
+async function logout() {
+  await notifyLogout(await dropLogin());
 }
 
 // 팝업 버튼이 연 로그인 탭에서 연결이 왔으면: 그 탭을 닫고 원래 탭으로 돌아가 팝업을 연다.
@@ -182,6 +208,7 @@ async function returnFromLogin(tab) {
   const r = (await chrome.storage.local.get(K_LOGIN_TAB))[K_LOGIN_TAB];
   if (!r || !tab || tab.id !== r.loginTabId) return;
   await chrome.storage.local.remove(K_LOGIN_TAB);
+  if (!(Date.now() - (r.at || 0) < LOGIN_TAB_MAX_MS)) return;   // 오래된 기록(옛 형식 포함) — 탭을 건드리지 않는다
   await new Promise((res) => setTimeout(res, RETURN_DELAY_MS));
   try {
     await chrome.tabs.remove(tab.id).catch(() => {});      // 사용자가 먼저 닫았으면 없음 — 그대로 진행
@@ -190,13 +217,13 @@ async function returnFromLogin(tab) {
       await chrome.windows.update(r.returnWindowId, { focused: true });
     }
   } catch (e) {
-    authNote = `로그인은 됐지만 원래 탭으로 못 돌아갔어요 (${e.message || e})`;
+    setNote(`로그인은 됐지만 원래 탭으로 못 돌아갔어요 (${e.message || e})`);
     return;
   }
   try {
     await chrome.action.openPopup();
   } catch (e) {
-    authNote = `로그인됐어요. 팝업은 저절로 못 열었어요 — 확장 아이콘을 눌러 확인하세요 (${e.message || e})`;
+    setNote(`로그인됐어요. 팝업은 저절로 못 열었어요 — 확장 아이콘을 눌러 확인하세요 (${e.message || e})`);
   }
 }
 
@@ -219,19 +246,19 @@ Object.assign(handlers, {
     const [cur] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const t = await chrome.tabs.create({ url: WEB_CONNECT });
     await chrome.storage.local.set({ [K_LOGIN_TAB]: {
-      loginTabId: t.id, returnTabId: cur ? cur.id : null, returnWindowId: cur ? cur.windowId : null,
+      loginTabId: t.id, returnTabId: cur ? cur.id : null, returnWindowId: cur ? cur.windowId : null, at: Date.now(),
     } });
-    authNote = null;
+    setNote(null);
     return { ok: true };
   },
   // 팝업이 열릴 때: 로그인 확인을 걸어 두고 바로 답한다 (결과는 status 로)
   async whoami() {
-    authSerial(check).catch((e) => { authErr = `로그인 확인 실패: ${e.message || e}`; });
+    authSerial(check).catch((e) => setErr(`로그인 확인 실패: ${e.message || e}`));
     return { ok: true };
   },
   // 팝업 [로그아웃]
   async logout() {
-    authSerial(logout).catch((e) => { authErr = `로그아웃 실패: ${e.message || e}`; });
+    authSerial(logout).catch((e) => setErr(`로그아웃 실패: ${e.message || e}`));
     return { ok: true };
   },
 });
@@ -244,7 +271,8 @@ const EXTERNAL = {
     return { ok: true, memberId: await connect(m.code) };
   },
   async JIN_LOGOUT() {
-    await logout();
+    const old = await dropLogin();
+    notifyLogout(old);                            // 기다리지 않는다 — 실패는 notifyLogout 이 팝업 문구로
     return { ok: true };
   },
 };
@@ -263,11 +291,18 @@ chrome.runtime.onMessageExternal.addListener((m, sender, reply) => {
   authSerial(() => fn(m)).then((r) => {
     reply(r);
     if (m.type === 'JIN_CONNECT') {
-      returnFromLogin(sender.tab).catch((e) => { authNote = `원래 탭으로 돌아가기 실패: ${e.message || e}`; });
+      returnFromLogin(sender.tab).catch((e) => setNote(`원래 탭으로 돌아가기 실패: ${e.message || e}`));
     }
   }, (e) => {
-    authErr = `${m.type}: ${e.message || e}`;
+    setErr(`${m.type}: ${e.message || e}`);
     reply({ ok: false, memberId: null, why: authErr });
   });
   return true;                                    // 비동기 응답
+});
+
+// 로그인 탭을 닫으면 그 기록도 지운다 — 탭 id 가 나중에 다른 탭에 다시 쓰여도 그 탭을 닫지 않게
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get(K_LOGIN_TAB).then((r) => {
+    if (r[K_LOGIN_TAB] && r[K_LOGIN_TAB].loginTabId === tabId) return chrome.storage.local.remove(K_LOGIN_TAB);
+  }).catch((e) => console.warn('[RBC] 로그인 탭 기록 정리 실패', e));
 });
