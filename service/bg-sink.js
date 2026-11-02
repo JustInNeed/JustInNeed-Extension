@@ -20,16 +20,25 @@
  *   memberId = 세션 시작 기록의 tester.memberId (시작 때 로그인한 회원)
  *
  * --- 세션 끝 -------------------------------------------------------------------
- *   정지 기록이 오면 FINAL_WAIT_MS 기다렸다 마지막 청크를 자른다 — 정지 직전 조각(flush)이 늦게 온다.
+ *   정지 기록이 오면 FINAL_WAIT_MS 동안 조용해질 때까지 기다렸다 마지막 청크를 자른다 — 정지 직전 조각(flush)이 늦게 온다.
+ *   기다리는 사이 기록이 또 오면 다시 FINAL_WAIT_MS 를 기다린다. 정지 뒤 FINAL_MAX_MS 가 지나면 더 늘리지 않는다.
+ *   seq 는 background 에 도착한 순서라서 늦게 온 기록은 맨 뒤 번호를 받는다 — 청크 사이에 구멍은 생기지 않는다.
  *   그 전에 새 세션을 시작하면 시작이 직전 로그를 지우기 전에(beforeStart) 마지막 청크를 자른다.
+ *   그 마무리가 실패하면 시작을 거절한다 — 옮기지 못한 원본 로그를 지우지 않게(#34 피드백 "보존 전에 지우지 않는다").
  *   마지막 청크 뒤에 같은 세션 기록이 또 오면 청크에 넣지 못한다 → 수를 세어 팝업에 띄운다(late, 조용히 버리지 않는다).
  *   서비스 워커가 기다리는 사이 꺼졌으면 다시 깰 때 마무리한다.
  *
- *
+ * --- 저장 순서 (#34 피드백) ---------------------------------------------------------
+ *   자르기: 청크 내용 · 상자 목록 · 자르기 상태를 storage.set 한 번으로 쓴다. 따로 쓰면 사이에 꺼졌을 때
+ *     목록에는 있는데 책갈피(nextSeq · n)는 옛 자리 → 같은 n 을 더 많은 기록으로 다시 만들고, 서버는 "이미 받음"으로 답해
+ *     늘어난 기록이 조용히 사라진다.
+ *   지우기: 목록 · 상태를 먼저 쓰고 내용을 지운다 — 사이에 꺼지면 내용만 남는다(공간만 차지).
+ * *
  * --- 보내기 ----------------------------------------------------------------------
  *   보낼 상자를 만든 순서(세션 순 · n 순)대로 하나씩 POST /sessions/chunks (bg-auth 의 authed — 401 이면 재발급 한 번).
- *   201(처음) · 200(이미 받음) 이면 그 청크를 상자에서 지운다. 실패하면 그 자리에서 멈추고(뒤 번호를 먼저 보내지 않는다)
- *   원문을 Q.sendErr → 팝업 빨간 줄, SEND_ALARM(30초)에 다시. 상자가 비면 알람을 끈다.
+ *   201(처음) · 200(이미 받음) 이면 그 청크를 상자에서 지운다. 실패하면 **그 세션만** 거기서 멈추고(같은 세션 뒤 번호를
+ *   먼저 보내지 않는다 — 건너뛰지 않는다) 다른 세션은 계속 보낸다. 실패 청크는 지우지 않고 SEND_ALARM(30초)마다 다시.
+ *   원문은 Q.sendErr → 팝업 빨간 줄. 상자가 비면 알람을 끈다.
  *   보내는 때: 청크를 자른 직후 · 30초 알람 · 로그인이 바뀜 · 서비스 워커가 깸.
  *   네트워크는 엔진 serial 밖에서 기다린다(그동안 기록 조각이 막히면 안 된다). 상자 목록을 고칠 때만 serial 안.
  *
@@ -48,7 +57,8 @@ const K_OUTLIST = 'sink:out';               // Q.outbox 만 따로 (바뀔 때�
 const OUT = 'out:';                         // 보낼 상자. 키 = 'out:' + sessionId + ':' + n 6자리
 const CUT_ALARM = 'rbc-cut';                // 30초마다 자르기 (기록 중 · 마무리 전)
 const CUT_MAX_BYTES = 500 * 1024;
-const FINAL_WAIT_MS = 5 * 1000;
+const FINAL_WAIT_MS = 5 * 1000;            // 정지 뒤 이만큼 조용하면 마지막 청크
+const FINAL_MAX_MS = 30 * 1000;            // 정지 뒤 기다림을 늘리는 한도
 const SINK_V = 1;                           // payload 모양 번호
 const SEND_ALARM = 'rbc-send';              // 보낼 상자가 비지 않은 동안 30초마다 다시 보내기
 const KEEP_MS = 3 * 24 * 60 * 60 * 1000;    // 못 보낸 청크 보관 기간 (11-02 서현)
@@ -64,6 +74,7 @@ function emptySink() {
     n: 0,                // 마지막으로 만든 청크 번호
     pendingBytes: 0,     // 안 자른 기록 크기 어림 (500KB 판정용)
     stopped: false,      // 정지 기록을 봤음
+    stopAt: null,        // 정지 기록을 본 시각 (기다림 한도)
     stopReason: null,
     finalDone: false,    // 마지막 청크까지 만듦
     late: 0,             // 마지막 청크 뒤에 와서 청크에 넣지 못한 기록 수
@@ -86,7 +97,11 @@ function saveSink() {
   const { outbox, ...rest } = Q;   // eslint-disable-line no-unused-vars
   return chrome.storage.local.set({ [K_SINK]: rest });
 }
-function saveOutbox() { return chrome.storage.local.set({ [K_OUTLIST]: Q.outbox }); }
+// 상태 + 상자 목록 (+ 같이 쓸 것) 을 storage.set 한 번으로
+function saveAll(extra) {
+  const { outbox, ...rest } = Q;
+  return chrome.storage.local.set(Object.assign({}, extra, { [K_SINK]: rest, [K_OUTLIST]: outbox }));
+}
 
 function sinkFail(where) {
   return (e) => {
@@ -149,20 +164,19 @@ async function cut(final) {
     items[key] = body;
     metas.push({ key, sessionId: Q.sessionId, n, memberId: Q.memberId, final: last, records: g.recs.length, bytes: g.bytes, cutAt });
   });
-  // 청크를 먼저 쓰고 상태를 고친다 — 사이에 꺼지면 다음 자르기가 같은 번호로 같은 내용을 다시 쓴다
-  await chrome.storage.local.set(items);
-  Q.n = n;
-  Q.nextSeq = S.seq;
-  Q.pendingBytes = 0;
-  Q.lastCutAt = cutAt;
-  Q.outbox = Q.outbox.concat(metas);
-  Q.err = holes;
-  if (final) {
-    Q.finalDone = true;
-    await chrome.alarms.clear(CUT_ALARM);
+  // 청크 내용 · 상자 목록 · 상태를 한 번에 (머리 주석 "저장 순서"). 쓰기가 실패하면 Q 를 바꾸지 않는다
+  const was = Q;
+  Q = Object.assign({}, Q, {
+    n, nextSeq: S.seq, pendingBytes: 0, lastCutAt: cutAt, outbox: Q.outbox.concat(metas), err: holes,
+    finalDone: Q.finalDone || final,
+  });
+  try {
+    await saveAll(items);
+  } catch (e) {
+    Q = Object.assign(was, { err: Q.err });
+    throw e;
   }
-  await saveOutbox();
-  await saveSink();
+  if (final) await chrome.alarms.clear(CUT_ALARM);
   kickSend();                                             // 기다리지 않는다 — 보내기는 serial 밖
 }
 
@@ -172,8 +186,12 @@ async function cutFinal(sessionId) {
   await cut(true);
 }
 
+// 마지막 청크 타이머. 정지 뒤 기록이 또 오면 다시 건다 — 가장 나중에 건 타이머만 자른다(finalGen)
+let finalGen = 0;
 function scheduleFinal(sessionId) {
+  const gen = ++finalGen;
   setTimeout(() => {
+    if (gen !== finalGen) return;
     serial(() => cutFinal(sessionId)).catch(sinkFail('정지 뒤 마지막 청크'));
   }, FINAL_WAIT_MS);
 }
@@ -200,7 +218,10 @@ function afterPut(r) {
     if (r.k === 'stop') {
       Q.stopped = true;
       Q.stopReason = r.reason || null;
+      Q.stopAt = Date.now();
       scheduleFinal(r.sessionId);
+    } else if (Q.stopped && Date.now() - Q.stopAt < FINAL_MAX_MS) {
+      scheduleFinal(r.sessionId);                         // 정지 뒤에도 기록이 온다 — 조용해질 때까지 다시 기다림
     }
     if (Q.pendingBytes > CUT_MAX_BYTES) serial(() => cut(false)).catch(sinkFail('500KB 자르기'));
   }
@@ -213,11 +234,10 @@ function afterPut(r) {
 // 상자 목록에서 지운다 (serial 안). why = 'sent' | 'other' | 'expired' | 'missing'
 async function dropOut(keys, why) {
   if (!keys.length) return;
-  await chrome.storage.local.remove(keys);
   Q.outbox = Q.outbox.filter((o) => !keys.includes(o.key));
   if (why !== 'sent') Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + keys.length });
-  await saveOutbox();
-  await saveSink();
+  await saveAll();                                        // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
+  await chrome.storage.local.remove(keys);
 }
 
 // 회원 규칙 · 보관 기간 (serial 안). 다른 회원이 로그인해 있으면 그 전 회원 청크를, 3일 지난 청크를 지운다.
@@ -237,17 +257,21 @@ function sendAlarmSync() {
   });
 }
 
-// 한 번 돌기: 지금 회원의 청크를 만든 순서대로, 실패하면 멈춤
+// 한 번 돌기: 지금 회원의 청크를 만든 순서대로. 실패한 세션은 이번 돌기에서 뒤 번호를 건너뛰지 않고 멈추고, 다른 세션은 계속.
 async function sendRound() {
   await serial(prune);
+  const blocked = new Set();                              // 이번 돌기에서 실패한 세션
+  const errs = [];
+  let tried = false;
   for (;;) {
     const me = A ? A.memberId : null;
-    const next = me == null ? null : Q.outbox.find((o) => o.memberId === me);
+    const next = me == null ? null : Q.outbox.find((o) => o.memberId === me && !blocked.has(o.sessionId));
     if (!next) break;
+    tried = true;
     const body = (await chrome.storage.local.get(next.key))[next.key];
     if (!body) {
       // 목록에는 있는데 내용이 없다 — 보낼 수 없으므로 목록에서 빼고 원문을 남긴다
-      Q.sendErr = `보낼 청크 내용이 없음 (${next.key}) — 목록에서 뺌`;
+      errs.push(`보낼 청크 내용이 없음 (${next.key}) — 목록에서 뺌`);
       await serial(() => dropOut([next.key], 'missing'));
       continue;
     }
@@ -257,13 +281,16 @@ async function sendRound() {
     try {
       res = await authed('/sessions/chunks', { method: 'POST', body });
     } catch (e) {
-      Q.sendErr = `청크 #${next.n}: ${(e && e.message) || e}`;
-      await saveSink();
-      break;
+      blocked.add(next.sessionId);
+      errs.push(`세션 ${next.sessionId.slice(0, 8)} 청크 #${next.n}: ${(e && e.message) || e}`);
+      continue;
     }
     Q.lastSent = { sessionId: next.sessionId, n: next.n, at: new Date().toISOString(), duplicate: !!(res && res.duplicate) };
-    Q.sendErr = null;
     await serial(() => dropOut([next.key], 'sent'));
+  }
+  if (tried) {                                            // 로그아웃 중이라 안 돌았으면 지난 원문을 그대로 둔다
+    Q.sendErr = errs.length ? errs.join(' / ') : null;
+    await saveSink();
   }
   await sendAlarmSync();
 }
@@ -285,15 +312,16 @@ function kickSend() {
 Object.assign(VERSION, {
   ready: Promise.all([VERSION.ready, sinkReady]),
   after: afterPut,
-  // 새 세션 시작 직전 (엔진 start 안, serial 안): 직전 세션을 마무리하고 나서 로그가 지워지게
-  //   실패해도 시작은 막지 않는다 — 막으면 다음 시작도 같은 이유로 영영 막힌다. 원문은 팝업 빨간 줄(#34 검토)
+  // 새 세션 시작 직전 (엔진 start 안, serial 안): 직전 세션을 마무리하고 나서 로그가 지워지게.
+  //   실패하면 시작을 거절한다 — 옮기지 못한 원본 로그를 지우지 않게. 원문은 팝업 빨간 줄과 시작 거절 문구.
+  //   로그 구멍은 cut 이 빼고 자르므로(원문 남김) 여기서 영영 막히지 않는다. 남는 실패 = storage 쓰기 실패.
   async beforeStart() {
     if (!Q.sessionId || Q.finalDone || Q.sessionId !== S.sessionId) return;
     try {
       await cut(true);
     } catch (e) {
-      Q.finalDone = true;
-      sinkFail('새 시작 전 마지막 청크 — 지난 세션 끝 청크를 못 만듦')(e);
+      sinkFail('새 시작 전 마지막 청크')(e);
+      throw new Error(`지난 세션 마지막 청크를 못 만들어 시작하지 않음 (기록은 지우지 않았어요): ${(e && e.message) || e}`);
     }
   },
 });
