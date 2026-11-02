@@ -94,7 +94,7 @@ const sinkReady = chrome.storage.local.get([K_SINK, K_OUTLIST]).then((r) => {
 });
 
 function saveSink() {
-  const { outbox, ...rest } = Q;   // eslint-disable-line no-unused-vars
+  const { outbox, ...rest } = Q;   // outbox 는 sink:out 에 따로
   return chrome.storage.local.set({ [K_SINK]: rest });
 }
 // 상태 + 상자 목록 (+ 같이 쓸 것) 을 storage.set 한 번으로
@@ -107,7 +107,7 @@ function sinkFail(where) {
   return (e) => {
     Q.err = `${where}: ${(e && e.message) || e}`;
     console.warn('[RBC] 서버 전송', Q.err);
-    saveSink().catch((e2) => console.warn('[RBC] 자르기 상태 저장 실패', e2));
+    serial(saveSink).catch((e2) => console.warn('[RBC] 자르기 상태 저장 실패', e2));   // 기다리지 않는다 — serial 안에서 불려도 멈추지 않게
   };
 }
 
@@ -290,7 +290,7 @@ async function sendRound() {
   }
   if (tried) {                                            // 로그아웃 중이라 안 돌았으면 지난 원문을 그대로 둔다
     Q.sendErr = errs.length ? errs.join(' / ') : null;
-    await saveSink();
+    await serial(saveSink);                               // serial 밖에서 쓰면 자르기 저장(saveAll)과 엇갈려 책갈피가 앞서 저장될 수 있다(#34 검토)
   }
   await sendAlarmSync();
 }
@@ -304,7 +304,7 @@ function kickSend() {
   })().catch((e) => {
     Q.sendErr = `보내기: ${(e && e.message) || e}`;
     console.warn('[RBC] 서버 전송', Q.sendErr);
-    return saveSink().catch((e2) => console.warn('[RBC] 자르기 상태 저장 실패', e2));
+    return serial(saveSink).catch((e2) => console.warn('[RBC] 자르기 상태 저장 실패', e2));
   }).finally(() => { sendRun = null; });
   return sendRun;
 }

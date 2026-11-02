@@ -19,7 +19,7 @@
  * 서버 전송(#34): status 의 sink 로 "보낼 청크 N개 · 마지막 자름 #n · 안 자른 기록 K건" 회색 줄,
  *   그 아래 "보냄 #n · N초 전" (지운 청크가 있으면 그 수), 자르기 · 보내기 실패 원문은 빨간 줄.
  *   로그아웃 화면에도 못 보낸 청크 수를 띄운다(로그인하면 보냄).
- *   정지 5초 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다.
+ *   마지막 청크를 만든 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다(정지 뒤 조용해질 때까지 최대 약 35초 기다림).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
@@ -99,7 +99,7 @@
     const parts = [`보낼 청크 ${k.queued}개 (${Math.ceil(k.queuedBytes / 1024)}KB)`];
     if (k.lastN) parts.push(`마지막 자름 #${k.lastN}${k.finalDone ? ' (마지막 청크)' : ''}${k.lastCutAt ? ' · ' + ago(k.lastCutAt) : ''}`);
     if (k.uncut) parts.push(`안 자른 기록 ${k.uncut}건`);
-    if (k.late) parts.push(`정지 5초 뒤에 늦게 와서 빠진 기록 ${k.late}건`);
+    if (k.late) parts.push(`마지막 청크 뒤에 늦게 와서 빠진 기록 ${k.late}건`);
     $('sink').textContent = '서버 전송: ' + parts.join(' · ');
     const sent = [];
     if (k.lastSent) sent.push(`보냄 #${k.lastSent.n}${k.lastSent.duplicate ? ' (서버에 이미 있었음)' : ''} · ${ago(k.lastSent.at)}`);
