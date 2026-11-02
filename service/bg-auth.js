@@ -51,10 +51,11 @@ const K_AUTH = 'auth';
 const K_LOGIN_TAB = 'auth:tab';    // { loginTabId, returnTabId, returnWindowId, at } — 서비스 워커가 쉬어도 남게 storage 에
 const LOGIN_TAB_MAX_MS = 10 * 60 * 1000;   // 로그인 탭 기록의 수명. 지나면 무시 — 오래된 기록이 쓰던 탭을 닫지 않게
 const K_MSG = 'auth:msg';         // 팝업에 띄울 실패 · 알림 문구. 서비스 워커가 쉬었다 깨도 남게 storage.session 에
-const API_TIMEOUT_MS = 10 * 1000; // 서버 응답을 기다리는 한도 — 넘으면 실패. 앞 요청이 멈추면 웹 메시지가 다 줄에 막힌다
+const API_TIMEOUT_MS = 30 * 1000; // 서버 응답을 기다리는 한도 — 넘으면 실패. 아주 느린 와이파이도 기다리되, 영영 멈추지는 않게
 const RETURN_DELAY_MS = 1200;      // 연결 뒤 로그인 탭을 닫기까지 — 웹이 "연결됐어요"를 보여 줄 틈
 
 let A = null;          // { accessToken, refreshToken, memberId, at, checkedAt } | null
+let loginGen = 0;      // 로그아웃할 때마다 +1. 연결이 서버를 기다리는 사이 로그아웃됐으면 새 토큰을 버린다
 let authErr = null;    // 마지막 실패 원문 (팝업 빨간 줄). 성공하면 지운다
 let authNote = null;   // 실패는 아니지만 알릴 것 (팝업 회색 줄) — 예: 팝업을 저절로 못 엶
 
@@ -71,7 +72,8 @@ function persistMsg() {
 function setErr(v) { authErr = v; persistMsg(); }
 function setNote(v) { authNote = v; persistMsg(); }
 
-// 로그인 일은 서로 줄을 세운다(연결 · 확인 · 로그아웃이 겹치지 않게). 엔진 serial 과는 따로.
+// 서버를 기다리는 로그인 일(연결 · 확인)은 서로 줄을 세운다. 엔진 serial 과는 따로.
+//   상태 묻기 · 로그아웃은 서버를 기다리지 않으므로 줄에 서지 않는다 — 느린 네트워크에서 앞 일이 오래 걸려도 바로 답한다.
 let authChain = authReady;
 function authSerial(fn) {
   const p = authChain.then(fn);
@@ -149,13 +151,16 @@ async function authed(path, opts = {}) {
   return api(path, Object.assign({}, opts, { token: A.accessToken }));
 }
 
-async function connect(code) {
+// gen = 연결 요청이 도착했을 때의 loginGen. 그 뒤(줄을 기다리는 사이 포함)에 로그아웃이 오면 이 연결은 버린다
+async function connect(code, gen = loginGen) {
   const c = typeof code === 'string' ? code.trim() : '';
   if (!c) throw new Error('연결 코드가 비어 있음');
+  if (gen !== loginGen) throw new Error('연결을 기다리는 동안 로그아웃됨 — 연결하지 않음');
   const t = await api('/auth/token', { method: 'POST', body: { code: c } });
   if (!t || !t.accessToken || !t.refreshToken) throw new Error('POST /auth/token: 응답에 토큰이 없음');
   const me = await api('/members/me', { token: t.accessToken });
   if (!me || me.id == null) throw new Error('GET /members/me: 응답에 회원 id 가 없음');
+  if (gen !== loginGen) throw new Error('연결하는 동안 로그아웃됨 — 새 토큰을 버림');
   const now = new Date().toISOString();
   A = { accessToken: t.accessToken, refreshToken: t.refreshToken, memberId: me.id, at: now, checkedAt: now };
   await saveAuth();
@@ -185,6 +190,7 @@ async function check() {
 async function dropLogin() {
   const old = A;
   A = null;
+  loginGen++;
   await saveAuth();
   authErr = null;
   setNote(null);
@@ -258,7 +264,7 @@ Object.assign(handlers, {
   },
   // 팝업 [로그아웃]
   async logout() {
-    authSerial(logout).catch((e) => setErr(`로그아웃 실패: ${e.message || e}`));
+    authReady.then(logout).catch((e) => setErr(`로그아웃 실패: ${e.message || e}`));   // 줄에 서지 않는다
     return { ok: true };
   },
 });
@@ -267,8 +273,8 @@ const EXTERNAL = {
   async JIN_STATUS() {
     return { loggedIn: !!A, memberId: A ? A.memberId : null, version: chrome.runtime.getManifest().version };
   },
-  async JIN_CONNECT(m) {
-    return { ok: true, memberId: await connect(m.code) };
+  async JIN_CONNECT(m, gen) {
+    return { ok: true, memberId: await connect(m.code, gen) };
   },
   async JIN_LOGOUT() {
     const old = await dropLogin();
@@ -288,7 +294,10 @@ chrome.runtime.onMessageExternal.addListener((m, sender, reply) => {
     reply({ ok: false, why: `모르는 메시지: ${m && m.type}` });
     return false;
   }
-  authSerial(() => fn(m)).then((r) => {
+  // 연결만 줄에 선다(서버를 기다림). 상태 묻기 · 로그아웃은 저장된 값만 보고 바로 답한다
+  const gen = loginGen;                           // 도착 순서 — 뒤에 온 로그아웃이 앞서 온 연결을 이긴다
+  const run = m.type === 'JIN_CONNECT' ? authSerial(() => fn(m, gen)) : authReady.then(() => fn(m, gen));
+  run.then((r) => {
     reply(r);
     if (m.type === 'JIN_CONNECT') {
       returnFromLogin(sender.tab).catch((e) => setNote(`원래 탭으로 돌아가기 실패: ${e.message || e}`));
