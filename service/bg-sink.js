@@ -1,5 +1,5 @@
 /* =============================================================================
- * bg-sink.js — 실사용 버전의 서버 전송 sink (#34). 이번 단계 = 청크 만들기(보내기는 다음 단계).
+ * bg-sink.js — 실사용 버전의 서버 전송 sink (#34). 기록 로그를 30초 청크로 잘라 보낼 상자에 넣고, 서버로 보낸다.
  *
  * 엔진 · bg-service.js · bg-auth.js 뒤에 올라간다(background.js 의 importScripts 순서).
  * 소유: 자르기 상태 Q ('sink:cur' 키) · 보낼 상자 ('out:<sessionId>:<n 6자리>' 키).
@@ -24,9 +24,22 @@
  *   마지막 청크 뒤에 같은 세션 기록이 또 오면 청크에 넣지 못한다 → 수를 세어 팝업에 띄운다(late, 조용히 버리지 않는다).
  *   서비스 워커가 기다리는 사이 꺼졌으면 다시 깰 때 마무리한다.
  *
+ *
+ * --- 보내기 ----------------------------------------------------------------------
+ *   보낼 상자를 만든 순서(세션 순 · n 순)대로 하나씩 POST /sessions/chunks (bg-auth 의 authed — 401 이면 재발급 한 번).
+ *   201(처음) · 200(이미 받음) 이면 그 청크를 상자에서 지운다. 실패하면 그 자리에서 멈추고(뒤 번호를 먼저 보내지 않는다)
+ *   원문을 Q.sendErr → 팝업 빨간 줄, SEND_ALARM(30초)에 다시. 상자가 비면 알람을 끈다.
+ *   보내는 때: 청크를 자른 직후 · 30초 알람 · 로그인이 바뀜 · 서비스 워커가 깸.
+ *   네트워크는 엔진 serial 밖에서 기다린다(그동안 기록 조각이 막히면 안 된다). 상자 목록을 고칠 때만 serial 안.
+ *
+ * --- 회원 규칙 (11-02 서현, §6) ---------------------------------------------------
+ *   청크의 memberId = 지금 로그인한 회원일 때만 보낸다. 로그아웃 중이면 안 보내고 둔다.
+ *   다른 회원이 로그인해 있으면 그 전 회원 청크는 바로 지운다. 못 보낸 청크는 자른 지 3일(KEEP_MS) 지나면 지운다.
+ *   지운 수는 Q.dropped → 팝업 회색 줄 (조용히 버리지 않는다).
+ *
  * 자르기는 엔진 serial 안에서만 한다(로그 읽기 · 쓰기가 put 과 꼬이지 않게). 실패는 원문을 Q.err → 팝업 빨간 줄.
  * ========================================================================== */
-/* global VERSION, S, REC, serial */
+/* global VERSION, S, REC, serial, A, K_AUTH, authed */
 'use strict';
 
 const K_SINK = 'sink:cur';
@@ -35,6 +48,8 @@ const CUT_ALARM = 'rbc-cut';                // 30초마다 자르기 (기록 중
 const CUT_MAX_BYTES = 500 * 1024;
 const FINAL_WAIT_MS = 5 * 1000;
 const SINK_V = 1;                           // payload 모양 번호
+const SEND_ALARM = 'rbc-send';              // 보낼 상자가 비지 않은 동안 30초마다 다시 보내기
+const KEEP_MS = 3 * 24 * 60 * 60 * 1000;    // 못 보낸 청크 보관 기간 (11-02 서현)
 
 const utf8 = new TextEncoder();
 function bytesOf(v) { return utf8.encode(JSON.stringify(v)).length; }
@@ -53,6 +68,9 @@ function emptySink() {
     lastCutAt: null,
     outbox: [],          // 보낼 상자 목록 [{ key, sessionId, n, memberId, final, records, bytes, cutAt }] — 내용은 'out:' 키에
     err: null,           // 마지막 실패 원문 (팝업 빨간 줄). 다음 자르기가 성공하면 지운다
+    lastSent: null,      // 마지막으로 보낸 청크 { sessionId, n, at, duplicate }
+    sendErr: null,       // 마지막 보내기 실패 원문 (팝업 빨간 줄). 다음에 하나라도 보내면 지운다
+    dropped: { other: 0, expired: 0 },   // 보내지 않고 지운 청크 수 (다른 회원 · 3일 지남)
   };
 }
 
@@ -137,6 +155,7 @@ async function cut(final) {
     await chrome.alarms.clear(CUT_ALARM);
   }
   await saveSink();
+  kickSend();                                             // 기다리지 않는다 — 보내기는 serial 밖
 }
 
 // 정지 뒤 기다렸다가 · 새 시작 전 · 다시 깼을 때: 그 세션의 마지막 청크
@@ -155,7 +174,8 @@ function scheduleFinal(sessionId) {
 function afterPut(r) {
   if (r.k === 'start') {
     Q = Object.assign(emptySink(), {
-      outbox: Q.outbox,                                   // 다른 세션의 못 보낸 청크는 그대로
+      outbox: Q.outbox,                                   // 다른 세션의 못 보낸 청크 · 보내기 상태는 그대로
+      lastSent: Q.lastSent, sendErr: Q.sendErr, dropped: Q.dropped,
       sessionId: r.sessionId,
       memberId: (r.tester && r.tester.memberId != null) ? r.tester.memberId : null,
       nextSeq: r.seq,
@@ -175,6 +195,74 @@ function afterPut(r) {
     if (Q.pendingBytes > CUT_MAX_BYTES) serial(() => cut(false)).catch(sinkFail('500KB 자르기'));
   }
   saveSink().catch(sinkFail('자르기 상태 저장'));
+}
+
+// ============================================================================
+// 보내기
+// ============================================================================
+// 상자 목록에서 지운다 (serial 안). why = 'sent' | 'other' | 'expired'
+async function dropOut(keys, why) {
+  if (!keys.length) return;
+  await chrome.storage.local.remove(keys);
+  Q.outbox = Q.outbox.filter((o) => !keys.includes(o.key));
+  if (why === 'other' || why === 'expired') Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + keys.length });
+  await saveSink();
+}
+
+// 회원 규칙 · 보관 기간 (serial 안). 다른 회원이 로그인해 있으면 그 전 회원 청크를, 3일 지난 청크를 지운다.
+async function prune() {
+  const now = Date.now();
+  const me = A ? A.memberId : null;
+  const expired = Q.outbox.filter((o) => now - Date.parse(o.cutAt) > KEEP_MS).map((o) => o.key);
+  await dropOut(expired, 'expired');
+  if (me == null) return;
+  await dropOut(Q.outbox.filter((o) => o.memberId !== me).map((o) => o.key), 'other');
+}
+
+function sendAlarmSync() {
+  if (!Q.outbox.length) return chrome.alarms.clear(SEND_ALARM);
+  return chrome.alarms.get(SEND_ALARM).then((a) => {
+    if (!a) return chrome.alarms.create(SEND_ALARM, { periodInMinutes: 0.5 });
+  });
+}
+
+// 한 번 돌기: 지금 회원의 청크를 만든 순서대로, 실패하면 멈춤
+async function sendRound() {
+  await serial(prune);
+  for (;;) {
+    const me = A ? A.memberId : null;
+    const next = me == null ? null : Q.outbox.find((o) => o.memberId === me);
+    if (!next) break;
+    const body = (await chrome.storage.local.get(next.key))[next.key];
+    if (!body) {
+      // 목록에는 있는데 내용이 없다 — 보낼 수 없으므로 목록에서 빼고 원문을 남긴다
+      Q.sendErr = `보낼 청크 내용이 없음 (${next.key}) — 목록에서 뺌`;
+      await serial(() => dropOut([next.key], 'missing'));
+      continue;
+    }
+    let res;
+    try {
+      res = await authed('/sessions/chunks', { method: 'POST', body });
+    } catch (e) {
+      Q.sendErr = `청크 #${next.n}: ${(e && e.message) || e}`;
+      await saveSink();
+      break;
+    }
+    Q.lastSent = { sessionId: next.sessionId, n: next.n, at: new Date().toISOString(), duplicate: !!(res && res.duplicate) };
+    Q.sendErr = null;
+    await serial(() => dropOut([next.key], 'sent'));
+  }
+  await sendAlarmSync();
+}
+
+// 보내기는 동시에 하나만. 도는 중에 또 부르면 끝난 뒤 한 번 더 돈다.
+let sendRun = null, sendAgain = false;
+function kickSend() {
+  if (sendRun) { sendAgain = true; return sendRun; }
+  sendRun = (async () => {
+    do { sendAgain = false; await sendRound(); } while (sendAgain);
+  })().catch(sinkFail('보내기')).finally(() => { sendRun = null; });
+  return sendRun;
 }
 
 Object.assign(VERSION, {
@@ -199,6 +287,10 @@ VERSION.status = function status() {
       finalDone: Q.finalDone,
       late: Q.late,
       err: Q.err,
+      lastSent: Q.lastSent,
+      sendErr: Q.sendErr,
+      waiting: Q.outbox.length && !A ? '로그아웃 중이라 보내지 않고 둠' : null,
+      dropped: Q.dropped,
     },
   });
 };
@@ -206,6 +298,12 @@ VERSION.status = function status() {
 // 리스너는 최상위 동기 등록 — 알람이 꺼진 서비스 워커를 깨운다
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === CUT_ALARM) serial(() => cut(false)).catch(sinkFail('30초 자르기'));
+  else if (a.name === SEND_ALARM) kickSend();
+});
+
+// 로그인이 바뀌면(연결 · 로그아웃 · 재발급) — bg-auth 가 'auth' 키에 저장한다. 다른 회원 청크 정리 + 보내기
+chrome.storage.onChanged.addListener((ch, area) => {
+  if (area === 'local' && ch[K_AUTH]) kickSend();
 });
 
 // 다시 깼을 때: 기록 중이면 알람을 다시 걸고, 정지 뒤 마무리 전에 꺼졌으면 지금 마무리
@@ -214,6 +312,7 @@ serial(async () => {
   if (S.recording) await cutAlarmOn();
   else if (Q.stopped) await cutFinal(Q.sessionId);
 }).catch(sinkFail('다시 깼을 때 마무리'));
+kickSend();                                               // 다시 깼을 때 남은 청크 보내기
 
 // 콘솔 점검용: 서비스 워커 콘솔에서 RBCSINK.state() · await RBCSINK.outbox()
 self.RBCSINK = {

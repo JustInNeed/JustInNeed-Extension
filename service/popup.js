@@ -16,7 +16,9 @@
  * 로그인(#30): status 의 login 이 없으면 로그인 화면(v-login)만 보인다. 로그인 실패 원문(loginErr)은 화면 아래 빨간 줄,
  *   알림(loginNote, 예: 팝업을 저절로 못 엶)은 회색 줄. 열릴 때마다 whoami 로 로그인 확인을 건다. [로그아웃]은 회원 줄 옆.
  *
- * 서버 전송(#34): status 의 sink 로 "보낼 청크 N개 · 마지막 자름 #n · 안 자른 기록 K건" 회색 줄, 실패 원문은 빨간 줄.
+ * 서버 전송(#34): status 의 sink 로 "보낼 청크 N개 · 마지막 자름 #n · 안 자른 기록 K건" 회색 줄,
+ *   그 아래 "보냄 #n · N초 전" (지운 청크가 있으면 그 수), 자르기 · 보내기 실패 원문은 빨간 줄.
+ *   로그아웃 화면에도 못 보낸 청크 수를 띄운다(로그인하면 보냄).
  *   정지 5초 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다.
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
@@ -66,8 +68,11 @@
     $('btn-logout').hidden = !st.login;
     $('main-note').textContent = st.loginNote || '';
     $('main-note').hidden = !st.loginNote;
+    const k = st.sink;
+    $('login-sink').textContent = k && k.queued ? `보내지 못한 청크 ${k.queued}개가 있어요 — 로그인하면 보내요 (3일 지나면 지워져요)` : '';
+    $('login-sink').hidden = !(k && k.queued);
     if (needLogin) return;
-    renderSink(st.sink);
+    renderSink(k);
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
@@ -96,8 +101,16 @@
     if (k.uncut) parts.push(`안 자른 기록 ${k.uncut}건`);
     if (k.late) parts.push(`정지 5초 뒤에 늦게 와서 빠진 기록 ${k.late}건`);
     $('sink').textContent = '서버 전송: ' + parts.join(' · ');
-    $('sink-err').textContent = k.err ? `서버 전송 실패: ${k.err}` : '';
-    $('sink-err').hidden = !k.err;
+    const sent = [];
+    if (k.lastSent) sent.push(`보냄 #${k.lastSent.n}${k.lastSent.duplicate ? ' (서버에 이미 있었음)' : ''} · ${ago(k.lastSent.at)}`);
+    if (k.waiting) sent.push(k.waiting);
+    if (k.dropped && k.dropped.other) sent.push(`다른 회원 청크 ${k.dropped.other}개 지움`);
+    if (k.dropped && k.dropped.expired) sent.push(`3일 지난 청크 ${k.dropped.expired}개 지움`);
+    $('sink-sent').textContent = sent.join(' · ');
+    $('sink-sent').hidden = !sent.length;
+    const errs = [k.err && `청크 자르기 실패: ${k.err}`, k.sendErr && `보내기 실패: ${k.sendErr}`].filter(Boolean);
+    $('sink-err').textContent = errs.join(' / ');
+    $('sink-err').hidden = !errs.length;
   }
 
   async function refresh() {
