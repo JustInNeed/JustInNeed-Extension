@@ -49,6 +49,7 @@ function norm(c) {
     maxN: c.maxN !== undefined ? c.maxN : c.max_n,
     stopReason: c.stopReason !== undefined ? c.stopReason : c.stop_reason,
     payload: typeof c.payload === 'string' ? JSON.parse(c.payload) : c.payload,
+    userId: c.userId !== undefined ? c.userId : c.user_id,
   };
 }
 
@@ -78,6 +79,9 @@ function inspect(chunks) {
   if (ids.size !== 1) bad.push(`세션 id 가 ${ids.size}개: ${[...ids].join(', ')}`);
   const members = new Set(chunks.map((c) => c.payload && c.payload.memberId));
   if (members.size !== 1) bad.push(`memberId 가 ${members.size}개: ${[...members].join(', ')}`);
+  // DB 에서 읽었으면: 저장한 회원(토큰) = 청크 안 memberId 여야 함 — 다르면 남의 계정으로 저장된 것
+  const wrong = chunks.filter((c) => c.userId != null && c.payload && c.userId !== c.payload.memberId);
+  if (wrong.length) bad.push(`저장 회원(user_id) ≠ 청크 memberId: n ${wrong.map((c) => `${c.n}(${c.userId}≠${c.payload.memberId})`).join(', ')}`);
   const finals = chunks.filter((c) => c.final);
   const last = chunks[chunks.length - 1];
   if (finals.length !== 1 || !last.final) bad.push(`final 청크가 맨 끝에 하나여야 함 (지금 ${finals.length}개, 맨 끝 n ${last.n} final=${last.final})`);

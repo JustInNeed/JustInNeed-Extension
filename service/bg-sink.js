@@ -2,7 +2,8 @@
  * bg-sink.js — 실사용 버전의 서버 전송 sink (#34). 기록 로그를 30초 청크로 잘라 보낼 상자에 넣고, 서버로 보낸다.
  *
  * 엔진 · bg-service.js · bg-auth.js 뒤에 올라간다(background.js 의 importScripts 순서).
- * 소유: 자르기 상태 Q ('sink:cur' 키) · 보낼 상자 ('out:<sessionId>:<n 6자리>' 키).
+ * 소유: 자르기 상태 Q ('sink:cur' 키, 보낼 상자 목록만 'sink:out' 키에 따로 — 기록마다 저장하는 Q 를 작게) ·
+ *       보낼 상자 내용 ('out:<sessionId>:<n 6자리>' 키).
  *       둘 다 'rec:' 로 시작하지 않으므로 새 세션 시작 때 로그를 지워도 남는다.
  *
  * --- 자르기 (11-01 · 11-02 서현) -------------------------------------------------
@@ -43,6 +44,7 @@
 'use strict';
 
 const K_SINK = 'sink:cur';
+const K_OUTLIST = 'sink:out';               // Q.outbox 만 따로 (바뀔 때만 저장)
 const OUT = 'out:';                         // 보낼 상자. 키 = 'out:' + sessionId + ':' + n 6자리
 const CUT_ALARM = 'rbc-cut';                // 30초마다 자르기 (기록 중 · 마무리 전)
 const CUT_MAX_BYTES = 500 * 1024;
@@ -70,16 +72,21 @@ function emptySink() {
     err: null,           // 마지막 실패 원문 (팝업 빨간 줄). 다음 자르기가 성공하면 지운다
     lastSent: null,      // 마지막으로 보낸 청크 { sessionId, n, at, duplicate }
     sendErr: null,       // 마지막 보내기 실패 원문 (팝업 빨간 줄). 다음에 하나라도 보내면 지운다
-    dropped: { other: 0, expired: 0 },   // 보내지 않고 지운 청크 수 (다른 회원 · 3일 지남)
+    dropped: { other: 0, expired: 0, missing: 0 },   // 보내지 않고 지운 청크 수 (다른 회원 · 3일 지남 · 내용 없음)
   };
 }
 
 let Q = emptySink();
-const sinkReady = chrome.storage.local.get(K_SINK).then((r) => {
-  if (r[K_SINK]) Q = Object.assign(emptySink(), r[K_SINK]);
+const sinkReady = chrome.storage.local.get([K_SINK, K_OUTLIST]).then((r) => {
+  const q = r[K_SINK] || {};
+  Q = Object.assign(emptySink(), q, { outbox: r[K_OUTLIST] || q.outbox || [] });   // q.outbox = 따로 두기 전 상태
 });
 
-function saveSink() { return chrome.storage.local.set({ [K_SINK]: Q }); }
+function saveSink() {
+  const { outbox, ...rest } = Q;   // eslint-disable-line no-unused-vars
+  return chrome.storage.local.set({ [K_SINK]: rest });
+}
+function saveOutbox() { return chrome.storage.local.set({ [K_OUTLIST]: Q.outbox }); }
 
 function sinkFail(where) {
   return (e) => {
@@ -116,9 +123,9 @@ async function cut(final) {
   for (let i = Q.nextSeq; i < S.seq; i++) keys.push(REC + String(i).padStart(8, '0'));
   const got = keys.length ? await chrome.storage.local.get(keys) : {};
   const recs = keys.map((k) => got[k]).filter(Boolean);
-  if (recs.length !== keys.length) {
-    throw new Error(`로그에서 기록 ${keys.length - recs.length}건이 없음 (seq ${Q.nextSeq}~${S.seq - 1})`);
-  }
+  // 로그에 구멍(put 저장 실패)이 있으면 있는 것만 자르고 원문을 남긴다 — 멈추면 새 시작까지 막힌다(#34 검토)
+  const holes = recs.length !== keys.length
+    ? `로그에 없는 기록 ${keys.length - recs.length}건을 빼고 자름 (seq ${Q.nextSeq}~${S.seq - 1})` : null;
   const groups = pack(recs);
   if (!groups.length && !final) return;
   if (!groups.length) groups.push({ recs: [], bytes: 0 });
@@ -149,11 +156,12 @@ async function cut(final) {
   Q.pendingBytes = 0;
   Q.lastCutAt = cutAt;
   Q.outbox = Q.outbox.concat(metas);
-  Q.err = null;
+  Q.err = holes;
   if (final) {
     Q.finalDone = true;
     await chrome.alarms.clear(CUT_ALARM);
   }
+  await saveOutbox();
   await saveSink();
   kickSend();                                             // 기다리지 않는다 — 보내기는 serial 밖
 }
@@ -170,19 +178,21 @@ function scheduleFinal(sessionId) {
   }, FINAL_WAIT_MS);
 }
 
-// put 뒤마다 (엔진 SINKS.server.after → VERSION.after). serial 안이지만 기다리지 않는다 — 자르기는 줄 뒤에 세운다.
+// put 뒤마다 (엔진 SINKS.server.after → VERSION.after). serial 안 — put 이 상태 저장까지 기다린다(꺼져도 세션 · 정지를 놓치지 않게).
+//   자르기는 줄 뒤에 세운다(여기서 기다리면 멈춘다).
 function afterPut(r) {
   if (r.k === 'start') {
     Q = Object.assign(emptySink(), {
       outbox: Q.outbox,                                   // 다른 세션의 못 보낸 청크 · 보내기 상태는 그대로
       lastSent: Q.lastSent, sendErr: Q.sendErr, dropped: Q.dropped,
+      err: Q.err,                                         // 지난 세션 마무리 실패 원문도 다음 자르기까지 보이게
       sessionId: r.sessionId,
       memberId: (r.tester && r.tester.memberId != null) ? r.tester.memberId : null,
       nextSeq: r.seq,
     });
     cutAlarmOn().catch(sinkFail('자르기 알람'));
   } else if (r.sessionId !== Q.sessionId) {
-    return;                                               // 자르는 세션이 아님 (엔진이 지난 세션 조각은 받지 않는다)
+    return undefined;                                     // 자르는 세션이 아님 (엔진이 지난 세션 조각은 받지 않는다)
   } else if (Q.finalDone) {
     Q.late++;
   } else {
@@ -194,18 +204,19 @@ function afterPut(r) {
     }
     if (Q.pendingBytes > CUT_MAX_BYTES) serial(() => cut(false)).catch(sinkFail('500KB 자르기'));
   }
-  saveSink().catch(sinkFail('자르기 상태 저장'));
+  return saveSink().catch(sinkFail('자르기 상태 저장'));
 }
 
 // ============================================================================
 // 보내기
 // ============================================================================
-// 상자 목록에서 지운다 (serial 안). why = 'sent' | 'other' | 'expired'
+// 상자 목록에서 지운다 (serial 안). why = 'sent' | 'other' | 'expired' | 'missing'
 async function dropOut(keys, why) {
   if (!keys.length) return;
   await chrome.storage.local.remove(keys);
   Q.outbox = Q.outbox.filter((o) => !keys.includes(o.key));
-  if (why === 'other' || why === 'expired') Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + keys.length });
+  if (why !== 'sent') Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + keys.length });
+  await saveOutbox();
   await saveSink();
 }
 
@@ -240,6 +251,8 @@ async function sendRound() {
       await serial(() => dropOut([next.key], 'missing'));
       continue;
     }
+    // 내용을 읽는 사이 로그인이 바뀌었으면 고르기부터 다시 — 남의 계정으로 보내지 않게(#34 검토). 아래 authed 까지 기다림 없음
+    if (!A || A.memberId !== next.memberId) continue;
     let res;
     try {
       res = await authed('/sessions/chunks', { method: 'POST', body });
@@ -261,7 +274,11 @@ function kickSend() {
   if (sendRun) { sendAgain = true; return sendRun; }
   sendRun = (async () => {
     do { sendAgain = false; await sendRound(); } while (sendAgain);
-  })().catch(sinkFail('보내기')).finally(() => { sendRun = null; });
+  })().catch((e) => {
+    Q.sendErr = `보내기: ${(e && e.message) || e}`;
+    console.warn('[RBC] 서버 전송', Q.sendErr);
+    return saveSink().catch((e2) => console.warn('[RBC] 자르기 상태 저장 실패', e2));
+  }).finally(() => { sendRun = null; });
   return sendRun;
 }
 
@@ -269,8 +286,15 @@ Object.assign(VERSION, {
   ready: Promise.all([VERSION.ready, sinkReady]),
   after: afterPut,
   // 새 세션 시작 직전 (엔진 start 안, serial 안): 직전 세션을 마무리하고 나서 로그가 지워지게
+  //   실패해도 시작은 막지 않는다 — 막으면 다음 시작도 같은 이유로 영영 막힌다. 원문은 팝업 빨간 줄(#34 검토)
   async beforeStart() {
-    if (Q.sessionId && !Q.finalDone) await cut(true);
+    if (!Q.sessionId || Q.finalDone || Q.sessionId !== S.sessionId) return;
+    try {
+      await cut(true);
+    } catch (e) {
+      Q.finalDone = true;
+      sinkFail('새 시작 전 마지막 청크 — 지난 세션 끝 청크를 못 만듦')(e);
+    }
   },
 });
 
@@ -306,11 +330,16 @@ chrome.storage.onChanged.addListener((ch, area) => {
   if (area === 'local' && ch[K_AUTH]) kickSend();
 });
 
-// 다시 깼을 때: 기록 중이면 알람을 다시 걸고, 정지 뒤 마무리 전에 꺼졌으면 지금 마무리
+// 다시 깼을 때: 기록 중이면 알람을 다시 걸고, 정지 뒤 마무리 전에 꺼졌으면 지금 마무리.
+//   엔진 세션과 자르는 세션이 다르면(있어선 안 됨) 조용히 넘기지 않고 원문을 남긴다.
 serial(async () => {
-  if (!Q.sessionId || Q.finalDone) return;
-  if (S.recording) await cutAlarmOn();
-  else if (Q.stopped) await cutFinal(Q.sessionId);
+  if (S.sessionId && S.sessionId !== Q.sessionId) {
+    Q.err = `자르는 세션(${Q.sessionId})과 기록 세션(${S.sessionId})이 다름 — 이 기록 세션은 서버로 가지 않음`;
+    return saveSink();
+  }
+  if (!Q.sessionId || Q.finalDone) return undefined;
+  if (S.recording) return cutAlarmOn();
+  return cutFinal(Q.sessionId);
 }).catch(sinkFail('다시 깼을 때 마무리'));
 kickSend();                                               // 다시 깼을 때 남은 청크 보내기
 

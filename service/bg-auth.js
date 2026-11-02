@@ -145,10 +145,10 @@ async function doRefresh() {
 // 로그인이 필요한 호출. 401 이면 재발급 한 번 → 다시 한 번 (두 번째 401 은 그대로 오류).
 //   기다리는 사이 다른 요청의 재발급이 이미 끝났으면(보낸 토큰 ≠ 지금 토큰) 재발급을 또 걸지 않고 새 토큰으로 다시 보낸다(#34)
 //   — 이미 쓴 refresh 토큰으로 또 재발급하면 401 이 나서 로그아웃돼 버린다.
-//   기다리는 사이 로그아웃됐으면(A 가 null) 원문을 담아 던진다.
+//   기다리는 사이 로그아웃 · 다른 회원으로 바뀌었으면 다시 보내지 않고 원문을 담아 던진다 — 남의 계정으로 보내지 않게(#34 검토)
 async function authed(path, opts = {}) {
   if (!A) throw new Error(`${path}: 로그인 안 됨`);
-  const used = A.accessToken;
+  const used = A.accessToken, who = A.memberId;
   try {
     return await api(path, Object.assign({}, opts, { token: used }));
   } catch (e) {
@@ -156,6 +156,7 @@ async function authed(path, opts = {}) {
   }
   if (A && A.accessToken === used) await refreshTokens();
   if (!A) throw new Error(`${path}: 기다리는 사이 로그아웃됨`);
+  if (A.memberId !== who) throw new Error(`${path}: 기다리는 사이 다른 회원(${A.memberId})으로 바뀜 — 다시 보내지 않음`);
   return api(path, Object.assign({}, opts, { token: A.accessToken }));
 }
 

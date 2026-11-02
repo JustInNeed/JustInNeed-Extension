@@ -86,7 +86,7 @@ const VERSION = {
   tester() { return null; },        // start 기록의 tester
   onStop() {},                      // 정지 뒤 할 일 (reason 을 받는다)
   status() { return {}; },          // status 응답에 덧붙일 것
-  after() {},                       // server 모드: 기록 하나가 로그에 쌓인 뒤 (serial 안, 기다리지 않는다)
+  async after() {},                 // server 모드: 기록 하나가 로그에 쌓인 뒤 (serial 안 — put 이 기다린다. 여기서 serial 을 기다리면 멈춘다)
   async beforeStart() {},           // 새 세션이 직전 로그를 지우기 전에 (serial 안 — 여기서 serial 을 기다리면 멈춘다)
 };
 
@@ -137,7 +137,7 @@ async function put(rec) {
   S.seq++;
   await chrome.storage.local.set({ [REC + String(r.seq).padStart(8, '0')]: r });
   await saveState();
-  SINKS[VERSION.mode].after(r);
+  await SINKS[VERSION.mode].after(r);   // server 모드: 자르기 상태 저장까지 기다린다 — 그 전에 꺼지면 세션을 놓친다
   return r;
 }
 
@@ -161,7 +161,7 @@ const SINKS = {
   },
   server: {
     // 자르기 · 보내기는 버전 파일이 한다(#34). 로그 형식은 그대로 쓴다.
-    after(r) { VERSION.after(r); },
+    after(r) { return VERSION.after(r); },
   },
 };
 

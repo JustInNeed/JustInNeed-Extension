@@ -106,6 +106,7 @@
     if (k.waiting) sent.push(k.waiting);
     if (k.dropped && k.dropped.other) sent.push(`다른 회원 청크 ${k.dropped.other}개 지움`);
     if (k.dropped && k.dropped.expired) sent.push(`3일 지난 청크 ${k.dropped.expired}개 지움`);
+    if (k.dropped && k.dropped.missing) sent.push(`내용이 없어 뺀 청크 ${k.dropped.missing}개`);
     $('sink-sent').textContent = sent.join(' · ');
     $('sink-sent').hidden = !sent.length;
     const errs = [k.err && `청크 자르기 실패: ${k.err}`, k.sendErr && `보내기 실패: ${k.sendErr}`].filter(Boolean);
