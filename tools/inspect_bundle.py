@@ -54,7 +54,7 @@ def main(path):
             print(f'      seg {sid[:6]} tab {g.get("tabId")}  틱 {ticks:4d} ({ticks * tick / 1000:.1f}s)'
                   f'  숨김 {hides}회  끝 {ends or "-"}' + ('  (시작 URL 에 #)' if url_hash else ''))
 
-    rep = s.get('chunkReport', [])
+    rep = s.get('flushReport') or s.get('chunkReport') or []   # chunkReport = #32 전 이름
     bad = [r for r in rep if r.get('missing') or r.get('orphan') or r.get('end') == 'open']
     print(f'\n[조각] 구간 {len(rep)}개 · 문제 {len(bad)}개 · 중복 {sum(r.get("duplicates", 0) for r in rep)}')
     for r in bad:

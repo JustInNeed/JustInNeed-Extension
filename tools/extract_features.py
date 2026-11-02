@@ -478,7 +478,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
     disruptive = any(e.get("type") == "rescan" and e.get("mode") == "disruptive-skipped" for e in tl)
     n_splice = sum(1 for e in tl if e.get("type") == "rescan" and e.get("mode") == "splice")
     seg_ids = {g["segId"] for g in meta.get("segments", [])}
-    missing = sum(len(c.get("missing", [])) for c in bundle["session"].get("chunkReport", [])
+    missing = sum(len(c.get("missing", [])) for c in (bundle["session"].get("flushReport") or bundle["session"].get("chunkReport") or [])
                   if c.get("segId") in seg_ids)
 
     G = gvam_frame(df) if not df.empty else pd.DataFrame(columns=["i", "pid", "w", "inzone", "side"])

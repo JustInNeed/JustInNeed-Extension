@@ -4,7 +4,7 @@
  * 소유: recording, 구간(segId, segPageId, segMeta), timeline 버퍼, tickTimer,
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
  * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 3-hittest, 4-input
- * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:chunk, settle:empty
+ * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:flush, settle:empty
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
  *       sel:highlight, sel:copy, visibility, focus, pagehide,
@@ -44,14 +44,14 @@
  *
  * --- 내보내기 ---------------------------------------------------------------
  *   첫 틱이 찍히는 순간 seg:page (글 정보 + 유닛 목록), 그 뒤 FLUSH_MS 마다
- *   seg:chunk (그동안 쌓인 이벤트). 버퍼는 넘기는 즉시 비운다. background 로
+ *   seg:flush (그동안 쌓인 이벤트). 버퍼는 넘기는 즉시 비운다. background 로
  *   실어 나르는 건 11-session 이다 — 여기는 chrome.runtime 을 모른다.
  *   조각 경계는 데이터에 영향이 없다. 이어 붙이면 같은 timeline 이다.
  *
  * --- 안 본 탭은 아무것도 내보내지 않는다 ------------------------------------
  *   세션이 시작되면 열린 탭 전부가 구간을 연다. 그런데 "읽었다"의 기준은 틱이고,
  *   틱은 보이고 + 창 포커스가 있을 때만 찍힌다. 그래서 첫 틱 전까지는 URL·제목·
- *   원문(seg:page)도, 이벤트(seg:chunk)도 내보내지 않는다. 첫 틱이 없이 구간이
+ *   원문(seg:page)도, 이벤트(seg:flush)도 내보내지 않는다. 첫 틱이 없이 구간이
  *   닫히면 버퍼를 버린다. 안 본 탭은 background 저장소에 흔적이 남지 않는다.
  *   (개인정보 · 로그 크기 · 빈 페이지 때문에 check_session 이 FAIL 하는 문제를
  *    한 번에 막는다)
@@ -130,7 +130,7 @@
   let segPageId = null;               // 구간을 연 순간의 글. 이동 뒤에도 이 구간은 이 글이다
   let segMeta = null;                 // 구간을 연 순간에 캡처한 글 정보
   let pageSent = false;               // 첫 틱에 seg:page 를 보냈는가. 그 전엔 아무것도 안 나간다
-  let chunkN = 0;                     // 이 구간의 다음 조각 번호
+  let flushN = 0;                     // 이 구간의 다음 조각 번호
   let searchQuery = searchQueryFromReferrer();   // [C8]
 
   let lastScrollerEl;                 // 마지막으로 scroller 이벤트를 낸 주체. undefined = 아직 안 냄
@@ -280,7 +280,7 @@
     if (!pageSent || !timeline.length) return;       // 첫 틱 전에는 쌓아만 둔다
     const events = timeline;
     timeline = [];
-    bus.emit('seg:chunk', { sessionId, pageId: segPageId, segId, n: chunkN++, events });
+    bus.emit('seg:flush', { sessionId, pageId: segPageId, segId, n: flushN++, events });
   }
 
   // export JSON 의 페이지 meta 가 된다. 세션 필드(sessionId, startedAt, endedAt,
@@ -326,7 +326,7 @@
         'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
         'pieces[].noise = 조각 글이 Readability 가 고른 본문 상자 밖에 걸치면 true, 안이면 false. 필드 없음 = 미판정 ' +
         '(Readability 실패 · 상자 비율이 문턱 미만). 플랫폼 지정 루트(how=site)는 판정 없이 전부 false. 조각을 처음 만들 때 정함.',
-        '이탈 시각은 segend 이벤트 · session.chunkReport.end 로 본다 (meta.leftAt 없음).',
+        '이탈 시각은 segend 이벤트 · session.flushReport.end 로 본다 (meta.leftAt 없음).',
         'tick.vis = 그 틱에 뷰포트와 겹친 조각 [pid, k, top, bottom, left, right]. 자기 프레임 뷰포트 기준 CSS px, ' +
         '자르지 않음(음수 · vh 초과 허용). 조각마다 Range 외곽 상자. 같은 pid 의 조각은 세로 구간 합집합으로 합칠 것(단순 합 금지). ' +
         '보이는 조각이 없으면 []. tick.dpr = devicePixelRatio.',
@@ -434,7 +434,7 @@
     segPageId = pageId(location.href);
     segMeta = buildMeta();
     pageSent = false;
-    chunkN = 0;
+    flushN = 0;
     RBC.input.drain();                                  // v3: 기록 전 쌓인 카운터는 버린다
     lastScrollerEl = undefined;
     RBC.input.seedScroller();                           // 첫 스크롤 전 주체

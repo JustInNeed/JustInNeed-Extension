@@ -21,7 +21,7 @@
  *   들어온 것은 전부 record 하나로 만들어 로그에 순서대로 쌓는다(put).
  *   가공하지 않는다. 모드가 달라도 put 까지는 완전히 같다.
  *
- *     content script ──page/chunk──▶ put() ──▶ rec:00000001, rec:00000002, ...
+ *     content script ──page/flush──▶ put() ──▶ rec:00000001, rec:00000002, ...
  *                                              │
  *                          download 모드: 쌓아뒀다가 export 때 assemble()
  *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현 — 지금은 쌓기만)
@@ -40,7 +40,7 @@
  *   visit 에는 tabId 만 남고 pageId 는 null 이다(탭 대응표는 page 기록이 채운다).
  *
  * --- 안 본 탭 ---------------------------------------------------------------
- *   5-recorder 는 첫 틱(보이고 + 창 포커스) 전에는 page 도 chunk 도 보내지 않는다.
+ *   5-recorder 는 첫 틱(보이고 + 창 포커스) 전에는 page 도 flush 도 보내지 않는다.
  *   그래서 세션 중 한 번도 안 본 탭은 이 로그에 URL·원문이 들어오지 않는다.
  *   export 의 droppedPages 는 그 규칙이 깨진 이상 사례를 보여주는 안전망이다.
  *   틱은 보이는 탭에서만 돈다(5-recorder 의 hidden/focused 게이트). 여기선 안 막는다.
@@ -259,10 +259,10 @@ function assemble(log) {
   // tester 는 start 기록에서만 온다. 동의 게이트 이전 로그면 null
   const visits = [];
   const pages = {};          // pageId → { meta, paras: Map, events: [], segs: Map }
-  const segChunks = {};      // segId → { pageId, ns: Set, dup: 수 }
+  const segFlushes = {};      // segId → { pageId, ns: Set, dup: 수 }
 
   // 1회차: 세션 · 방문 · 페이지. 로그 안의 도착 순서와 무관하게 페이지가 먼저 모인다.
-  //   (첫 틱에 page 와 첫 chunk 가 거의 동시에 나가므로, chunk 가 먼저 저장될 수 있다)
+  //   (첫 틱에 page 와 첫 flush 가 거의 동시에 나가므로, flush 가 먼저 저장될 수 있다)
   for (const r of log) {
     if (r.k === 'start') { startRec = r; query = r.query || null; }
     else if (r.k === 'stop') stopRec = r;
@@ -285,14 +285,14 @@ function assemble(log) {
   // 2회차: 조각. (segId, n) 이 같은 조각은 처음 것만 쓴다 — 재전송 대비.
   //   중복은 로그(원본)에 그대로 남고, 여기서만 걸러진다.
   for (const r of log) {
-    if (r.k !== 'chunk') continue;
-    const sc = segChunks[r.segId] || (segChunks[r.segId] = { pageId: r.pageId, ns: new Set(), dup: 0 });
+    if (r.k !== 'flush') continue;
+    const sc = segFlushes[r.segId] || (segFlushes[r.segId] = { pageId: r.pageId, ns: new Set(), dup: 0 });
     if (r.n != null) {
       if (sc.ns.has(r.n)) { sc.dup++; continue; }
       sc.ns.add(r.n);
     }
     const pg = pages[r.pageId];
-    if (!pg) continue;                         // page record 가 끝내 없는 조각 — chunkReport 에 남는다
+    if (!pg) continue;                         // page record 가 끝내 없는 조각 — flushReport 에 남는다
     for (const e of r.events) {
       pg.events.push(Object.assign({}, e, { segId: e.segId || r.segId, tabId: r.tabId }));
     }
@@ -354,7 +354,7 @@ function assemble(log) {
   //   missing  : 0..maxN 중 빠진 번호 → 확실한 유실
   //   end      : closed(segend) / unloaded(pagehide) / open(열려 있거나 꼬리 유실 가능)
   //   orphan   : page record 가 없는 구간의 조각 (조립 불가)
-  const chunkReport = Object.entries(segChunks).map(([segId, sc]) => {
+  const flushReport = Object.entries(segFlushes).map(([segId, sc]) => {
     const maxN = sc.ns.size ? Math.max(...sc.ns) : -1;
     const missing = [];
     for (let i = 0; i <= maxN; i++) if (!sc.ns.has(i)) missing.push(i);
@@ -379,7 +379,7 @@ function assemble(log) {
       tickMs: TICK_MS,
       records: log.length,
       visits,
-      chunkReport,
+      flushReport,
       droppedPages,
     },
     pages: out,
@@ -480,7 +480,7 @@ const handlers = {
     if (m.sessionId !== S.sessionId) return { ok: false, why: 'stale-session' };
     if (!m.events || !m.events.length) return { ok: true };
     const tabId = sender.tab ? sender.tab.id : null;
-    await put({ k: 'chunk', pageId: m.pageId, segId: m.segId, n: m.n, tabId, events: m.events });
+    await put({ k: 'flush', pageId: m.pageId, segId: m.segId, n: m.n, tabId, events: m.events });
     return { ok: true };
   },
 
