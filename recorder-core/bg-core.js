@@ -251,7 +251,8 @@ function idleAlarmOn() {
 
 // ============================================================================
 // assemble — 로그 → bundle. 순수 함수 (storage 를 안 만진다).
-//   서버 쪽에서 같은 bundle 을 만들려면 이 함수만 옮기면 된다.
+//   BE 가 같은 함수를 Java 로 옮겨 쓴다(JustInNeed-BE ChunkAssembler.java, #34). 여기를 바꾸면 그쪽과
+//   정답 파일(BE src/test/resources/chunk-assembly/, tools/chunks-to-bundle.js 로 다시 만듦)도 같이 바꾼다.
 // ============================================================================
 function assemble(log) {
   let startRec = null, stopRec = null, query = null;
