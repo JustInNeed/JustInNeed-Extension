@@ -49,6 +49,8 @@
 
   function render() {
     $('loading').hidden = true;
+    $('test-server').textContent = st.testServer ? `시험 서버에 연결됨: ${st.testServer}` : '';
+    $('test-server').hidden = !st.testServer;
     // 로그인 전이면 로그인 화면만 (#30). 기록 중에 웹에서 로그아웃됐으면 정지할 수 있게 기록 화면을 그대로 둔다.
     const needLogin = !st.login && !st.recording;
     $('v-login').hidden = !needLogin;

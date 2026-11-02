@@ -41,8 +41,11 @@
 /* global VERSION, handlers */
 'use strict';
 
-const API_BASE = 'https://api.justinneed.xyz';                    // manifest host_permissions 와 같아야 한다
-const WEB_BASE = 'https://just-in-need-fe.vercel.app';
+const PROD_API = 'https://api.justinneed.xyz';
+const PROD_WEB = 'https://just-in-need-fe.vercel.app';
+// 아래 두 줄은 `bash build.command service-dev` 가 시험 서버(localhost)로 바꾼다(#34) — 줄 모양을 바꾸면 build.command 도 같이
+const API_BASE = PROD_API;                                         // manifest host_permissions 와 같아야 한다
+const WEB_BASE = PROD_WEB;
 const WEB_CONNECT = WEB_BASE + '/extension/connect';              // 웹 연결 페이지 (웹 레포에 만들 것, 청크 3)
 const WEB_ORIGINS = [WEB_BASE];                                    // manifest externally_connectable 과 같아야 한다
 //   localhost:3000 은 뺐다(검토 11-02) — 사용자 컴퓨터의 아무 개발 서버나 회원 id 를 읽거나 다른 계정을 연결할 수 있어서.
@@ -242,6 +245,7 @@ Object.assign(VERSION, {
       login: A ? { memberId: A.memberId, at: A.at, checkedAt: A.checkedAt || null } : null,
       loginErr: authErr,
       loginNote: authNote,
+      testServer: API_BASE !== PROD_API ? API_BASE : null,   // 시험 서버 빌드면 팝업 맨 위에 주소를 띄운다 (#34)
     };
   },
 });
