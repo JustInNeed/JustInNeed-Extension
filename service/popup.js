@@ -16,6 +16,9 @@
  * 로그인(#30): status 의 login 이 없으면 로그인 화면(v-login)만 보인다. 로그인 실패 원문(loginErr)은 화면 아래 빨간 줄,
  *   알림(loginNote, 예: 팝업을 저절로 못 엶)은 회색 줄. 열릴 때마다 whoami 로 로그인 확인을 건다. [로그아웃]은 회원 줄 옆.
  *
+ * 서버 전송(#34): status 의 sink 로 "보낼 청크 N개 · 마지막 자름 #n · 안 자른 기록 K건" 회색 줄, 실패 원문은 빨간 줄.
+ *   정지 5초 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다.
+ *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
  * ========================================================================== */
@@ -64,6 +67,7 @@
     $('main-note').textContent = st.loginNote || '';
     $('main-note').hidden = !st.loginNote;
     if (needLogin) return;
+    renderSink(st.sink);
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
@@ -78,6 +82,22 @@
       $('meta').textContent = '페이지가 다 그려질 때까지 잠깐 기다려요. 이 창이 저절로 닫히면 그때부터 읽으세요.';
       $('btn-rec').disabled = true;
     }
+  }
+
+  function ago(iso) {
+    const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    return s < 60 ? `${s}초 전` : `${Math.floor(s / 60)}분 전`;
+  }
+
+  function renderSink(k) {
+    if (!k) { $('sink').textContent = ''; $('sink-err').hidden = true; return; }
+    const parts = [`보낼 청크 ${k.queued}개 (${Math.ceil(k.queuedBytes / 1024)}KB)`];
+    if (k.lastN) parts.push(`마지막 자름 #${k.lastN}${k.finalDone ? ' (마지막 청크)' : ''}${k.lastCutAt ? ' · ' + ago(k.lastCutAt) : ''}`);
+    if (k.uncut) parts.push(`안 자른 기록 ${k.uncut}건`);
+    if (k.late) parts.push(`정지 5초 뒤에 늦게 와서 빠진 기록 ${k.late}건`);
+    $('sink').textContent = '서버 전송: ' + parts.join(' · ');
+    $('sink-err').textContent = k.err ? `서버 전송 실패: ${k.err}` : '';
+    $('sink-err').hidden = !k.err;
   }
 
   async function refresh() {
