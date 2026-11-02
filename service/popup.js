@@ -13,6 +13,9 @@
  * 디버그 패널 보이기는 데이터 수집 버전의 참여 정보 페이지와 같은 키(chrome.storage.local 'ui:panel')에
  *   직접 쓴다. 11-session 이 그 키를 보고 패널을 켠다. 실사용 버전에는 그 페이지가 없어 여기 둔다.
  *
+ * 로그인(#30): status 의 login 이 없으면 로그인 화면(v-login)만 보인다. 로그인 실패 원문(loginErr)은 화면 아래 빨간 줄,
+ *   알림(loginNote, 예: 팝업을 저절로 못 엶)은 회색 줄. 열릴 때마다 whoami 로 로그인 확인을 건다. [로그아웃]은 회원 줄 옆.
+ *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
  * ========================================================================== */
@@ -46,7 +49,19 @@
 
   function render() {
     $('loading').hidden = true;
-    $('v-main').hidden = false;
+    // 로그인 전이면 로그인 화면만 (#30). 기록 중에 웹에서 로그아웃됐으면 정지할 수 있게 기록 화면을 그대로 둔다.
+    const needLogin = !st.login && !st.recording;
+    $('v-login').hidden = !needLogin;
+    $('v-main').hidden = needLogin;
+    for (const id of ['login-err', 'main-err']) {
+      $(id).textContent = st.loginErr || '';
+      $(id).hidden = !st.loginErr;
+    }
+    $('who').textContent = st.login ? `회원 ${st.login.memberId} 로그인됨` : '로그아웃됨 — 이 기록은 시작 때 회원으로 남아요';
+    $('btn-logout').hidden = !st.login;
+    $('main-note').textContent = st.loginNote || '';
+    $('main-note').hidden = !st.loginNote;
+    if (needLogin) return;
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
@@ -102,6 +117,27 @@
     await refresh();
   });
 
+  // 로그인하러 가기 (#30): background 가 웹 연결 페이지를 새 탭으로 연다. 새 탭이 앞에 오며 이 창은 닫힌다.
+  $('btn-login').addEventListener('click', async () => {
+    show(null);
+    try {
+      await bg({ rbc: 'login' });
+    } catch (e) {
+      show(e.message);
+    }
+  });
+
+  // 로그아웃 (#30): background 가 토큰을 지우고 서버에 알린다. 화면은 다음 status 에서 로그인 화면으로 바뀐다.
+  $('btn-logout').addEventListener('click', async () => {
+    show(null);
+    try {
+      await bg({ rbc: 'logout' });
+    } catch (e) {
+      show(e.message);
+    }
+    await refresh();
+  });
+
   // 기록 시작 뒤: 이 탭이 실제로 기록을 시작할 때까지 기다렸다 닫는다 (데이터 수집 popup.js 와 같은 값).
   //   페이지 쪽 최대 대기(SETTLE_MAX_MS 6초)보다 길게 — 그 안에 대개 풀린다.
   const PREP_MAX_MS = 8000, PREP_POLL_MS = 300;
@@ -133,6 +169,8 @@
     }
   });
 
+  // 열릴 때마다 로그인이 아직 살아 있는지 서버에 확인 (#30). 결과는 1초 status 에 나온다.
+  bg({ rbc: 'whoami' }).catch((e) => show(e.message));
   refresh();
   setInterval(refresh, 1000);
 })();
