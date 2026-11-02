@@ -30,7 +30,8 @@
  *
  * --- 기록과의 관계 -------------------------------------------------------------
  *   로그인 안 했으면 기록 시작 거절(why 'no-login', §6 10-31 팀).
- *   start 기록의 tester = { testId: "<회원 id>" } — AI 가 session.tester.testId 를 사용자 구분으로 읽는다(11-01 서현).
+ *   start 기록의 tester = { memberId: <회원 id, 숫자> } — BE 가 쓰는 이름 그대로(11-02 서현). 데이터 수집 버전의 tester 와 칸이 다르다.
+ *   AI 는 지금 session.tester.testId 를 읽으므로 AI 담당이 memberId 를 읽게 바꿔야 한다(서현이 알림).
  *   기록 중에 로그아웃 · 다른 회원으로 연결돼도 기록은 멈추지 않는다. 그 세션의 tester 는 시작 때 값 그대로.
  *
  * 토큰은 content script · 웹 · 콘솔 · 로그로 내보내지 않는다. status 에는 회원 id 만 싣는다.
@@ -202,7 +203,7 @@ async function returnFromLogin(tab) {
 Object.assign(VERSION, {
   ready: authReady,
   async gate() { return A ? null : 'no-login'; },
-  tester() { return A ? { testId: String(A.memberId) } : null; },
+  tester() { return A ? { memberId: A.memberId } : null; },
   status() {
     return {
       login: A ? { memberId: A.memberId, at: A.at, checkedAt: A.checkedAt || null } : null,
