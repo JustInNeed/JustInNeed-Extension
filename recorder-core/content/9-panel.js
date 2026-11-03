@@ -1,7 +1,7 @@
 /* =============================================================================
  * 9-panel.js — 디버그 패널 (최상위 프레임 전용)
  *
- * 소유: panelEl, listEl, uiRecording, uiOverlay, visible
+ * 소유: panelEl, listEl, uiRecording, uiOverlay, prefOverlay, overlayErr, visible
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
@@ -86,6 +86,7 @@
   let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
   let rescanHtml = '';                   // 마지막 재스캔 한 줄 (기록 중 splice 를 눈으로 보려고, 0-B)
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
+  let overlayErr = '';                   // 오버레이 설정 저장 · 읽기 실패 원문(#36). 다음 성공 때 지운다
   let noiseMinPct = 30;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
   let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
   let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
@@ -179,6 +180,7 @@
       </div>
       <div class="rbc-stat" id="rbc-idle">${idleHtml()}</div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
+      ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
       <div class="rbc-stat" id="rbc-rescan">${rescanHtml}</div>
       <div class="rbc-list" id="rbc-list"></div>
@@ -421,7 +423,7 @@
 
   bus.on('overlay:pref', (d) => {
     prefOverlay = !!(d && d.on);
-    if (d && d.err) setStat(esc(d.err));
+    overlayErr = (d && d.err) || '';      // 상태줄은 틱마다 덮이므로 따로 남는 줄에 (#36 검토)
     applyOverlay();
     render();
   });

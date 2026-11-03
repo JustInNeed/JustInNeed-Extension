@@ -272,8 +272,10 @@
   // ==========================================================================
   function setOverlay(on) {
     overlayOn = !!on;
-    paint(overlayOn);
-    if (overlayOn) drawBoxes(); else { hideVis(); hideBoxes(); }
+    // 평가 화면(label:mode) 중엔 켜져도 안 칠한다 — 다른 탭 · 패널 켜기로도 켜질 수 있어서(#36 검토)
+    const show = overlayOn && !labelHide;
+    paint(show);
+    if (show) drawBoxes(); else { hideVis(); hideBoxes(); }
     // 5-recorder 의 미러를 갱신시킨다. 거기서 ensureTicking() 이 다시 불린다.
     bus.emit('overlay:changed', { on: overlayOn });
   }

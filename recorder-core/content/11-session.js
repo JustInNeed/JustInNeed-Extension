@@ -236,11 +236,15 @@
   const K_OVERLAY = 'ui:overlay';
   const emitOverlay = (v, err) => bus.emit('overlay:pref', { on: v === true, err: err || null });
   try {
-    chrome.storage.local.get(K_OVERLAY).then((r) => emitOverlay(r[K_OVERLAY])).catch(() => {});
+    chrome.storage.local.get(K_OVERLAY).then((r) => emitOverlay(r[K_OVERLAY])).catch((e) => {
+      const why = `오버레이 설정 읽기 실패: ${(e && e.message) || e}`;
+      console.warn('[RBC]', why);
+      emitOverlay(false, why);
+    });
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area === 'local' && ch[K_OVERLAY]) emitOverlay(ch[K_OVERLAY].newValue);
     });
-  } catch (e) { /* 고아 탭: 저장값 없이 꺼진 상태로 시작 */ }
+  } catch (e) { /* 고아 탭: 저장값 없이 꺼진 상태로 시작 (패널은 session:link 로 고아를 이미 알림) */ }
   bus.on('ui:overlay', (d) => {
     const on = !!(d && d.on);
     const fail = (e) => {
@@ -248,7 +252,8 @@
       console.warn('[RBC]', why);
       emitOverlay(on, why);
     };
-    try { chrome.storage.local.set({ [K_OVERLAY]: on }).catch(fail); } catch (e) { fail(e); }
+    // 저장 뒤 이 탭에는 직접도 알린다 — 값이 그대로면 onChanged 가 안 와서 버튼이 안 먹을 수 있다(#36 검토)
+    try { chrome.storage.local.set({ [K_OVERLAY]: on }).then(() => emitOverlay(on), fail); } catch (e) { fail(e); }
   });
 
   // 패널이 켜져 있고 기록 중이면 무동작 시계를 몇 초마다 다시 받는다 (#26).
