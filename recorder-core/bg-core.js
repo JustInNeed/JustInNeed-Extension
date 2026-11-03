@@ -24,7 +24,7 @@
  *     content script ──page/flush──▶ put() ──▶ rec:00000001, rec:00000002, ...
  *                                              │
  *                          download 모드: 쌓아뒀다가 export 때 assemble()
- *                          server   모드: 묶어서 전송, ACK 받으면 삭제 (미구현 — 지금은 쌓기만)
+ *                          server   모드: 버전 파일(service/bg-sink.js)이 30초마다 잘라 보낼 상자에 넣는다(#34)
  *
  *   record 형식이 곧 서버 업로드 형식이다. assemble() 은 로그 → bundle 로 바꾸는
  *   순수 함수라서, 서버도 같은 로직으로 같은 bundle 을 만든다.
@@ -86,6 +86,8 @@ const VERSION = {
   tester() { return null; },        // start 기록의 tester
   onStop() {},                      // 정지 뒤 할 일 (reason 을 받는다)
   status() { return {}; },          // status 응답에 덧붙일 것
+  async after() {},                 // server 모드: 기록 하나가 로그에 쌓인 뒤 (serial 안 — put 이 기다린다. 여기서 serial 을 기다리면 멈춘다)
+  async beforeStart() {},           // 새 세션이 직전 로그를 지우기 전에 (serial 안 — 여기서 serial 을 기다리면 멈춘다)
 };
 
 // ============================================================================
@@ -135,7 +137,7 @@ async function put(rec) {
   S.seq++;
   await chrome.storage.local.set({ [REC + String(r.seq).padStart(8, '0')]: r });
   await saveState();
-  SINKS[VERSION.mode].after(r);
+  await SINKS[VERSION.mode].after(r);   // server 모드: 자르기 상태 저장까지 기다린다 — 그 전에 꺼지면 세션을 놓친다
   return r;
 }
 
@@ -158,11 +160,8 @@ const SINKS = {
     after() { /* 쌓아두기만 한다. export 버튼이 소비한다. */ },
   },
   server: {
-    after() {
-      // TODO(서버 단계): 1초 또는 32~64KB 마다 묶어서 전송 → ACK 받은 seq 삭제.
-      // 오프라인이면 로그에 남아 있다가 다음에 보낸다. 로그 형식은 그대로 쓴다.
-      // 지금(#19 실사용 껍데기)은 전송 없이 쌓기만 한다 — 실사용 팝업이 "서버 전송 없음"을 띄운다.
-    },
+    // 자르기 · 보내기는 버전 파일이 한다(#34). 로그 형식은 그대로 쓴다.
+    after(r) { return VERSION.after(r); },
   },
 };
 
@@ -252,7 +251,8 @@ function idleAlarmOn() {
 
 // ============================================================================
 // assemble — 로그 → bundle. 순수 함수 (storage 를 안 만진다).
-//   서버 쪽에서 같은 bundle 을 만들려면 이 함수만 옮기면 된다.
+//   BE 가 같은 함수를 Java 로 옮겨 쓴다(JustInNeed-BE ChunkAssembler.java, #34). 여기를 바꾸면 그쪽과
+//   정답 파일(BE src/test/resources/chunk-assembly/, tools/chunks-to-bundle.js 로 다시 만듦)도 같이 바꾼다.
 // ============================================================================
 function assemble(log) {
   let startRec = null, stopRec = null, query = null;
@@ -420,8 +420,9 @@ const handlers = {
     // 시작 허락(데이터 수집 버전 = 동의 게이트). 명령 출처(팝업·패널·웹앱)와 무관하게 여기서만 막는다.
     const why = await VERSION.gate();
     if (why) return { ok: false, why };
-    // download 모드: 직전 세션 로그는 여기서 버린다. export 는 그 전에 할 것.
-    // (server 모드에서는 ACK 안 된 로그를 지우면 안 된다 — 서버 단계에서 바꿀 것)
+    // 직전 세션 로그는 여기서 버린다. export 는 그 전에 할 것.
+    //   server 모드: 지우기 전에 버전 파일이 남은 기록을 마지막 청크로 잘라 보낼 상자에 옮긴다(#34)
+    await VERSION.beforeStart();
     await removeLog();
 
     S = emptyState();

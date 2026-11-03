@@ -41,8 +41,11 @@
 /* global VERSION, handlers */
 'use strict';
 
-const API_BASE = 'https://api.justinneed.xyz';                    // manifest host_permissions 와 같아야 한다
-const WEB_BASE = 'https://just-in-need-fe.vercel.app';
+const PROD_API = 'https://api.justinneed.xyz';
+const PROD_WEB = 'https://just-in-need-fe.vercel.app';
+// 아래 두 줄은 `bash build.command service-dev` 가 시험 서버(localhost)로 바꾼다(#34) — 줄 모양을 바꾸면 build.command 도 같이
+const API_BASE = PROD_API;                                         // manifest host_permissions 와 같아야 한다
+const WEB_BASE = PROD_WEB;
 const WEB_CONNECT = WEB_BASE + '/extension/connect';              // 웹 연결 페이지 (웹 레포에 만들 것, 청크 3)
 const WEB_ORIGINS = [WEB_BASE];                                    // manifest externally_connectable 과 같아야 한다
 //   localhost:3000 은 뺐다(검토 11-02) — 사용자 컴퓨터의 아무 개발 서버나 회원 id 를 읽거나 다른 계정을 연결할 수 있어서.
@@ -140,14 +143,20 @@ async function doRefresh() {
 }
 
 // 로그인이 필요한 호출. 401 이면 재발급 한 번 → 다시 한 번 (두 번째 401 은 그대로 오류).
+//   기다리는 사이 다른 요청의 재발급이 이미 끝났으면(보낸 토큰 ≠ 지금 토큰) 재발급을 또 걸지 않고 새 토큰으로 다시 보낸다(#34)
+//   — 이미 쓴 refresh 토큰으로 또 재발급하면 401 이 나서 로그아웃돼 버린다.
+//   기다리는 사이 로그아웃 · 다른 회원으로 바뀌었으면 다시 보내지 않고 원문을 담아 던진다 — 남의 계정으로 보내지 않게(#34 검토)
 async function authed(path, opts = {}) {
   if (!A) throw new Error(`${path}: 로그인 안 됨`);
+  const used = A.accessToken, who = A.memberId;
   try {
-    return await api(path, Object.assign({}, opts, { token: A.accessToken }));
+    return await api(path, Object.assign({}, opts, { token: used }));
   } catch (e) {
     if (e.status !== 401) throw e;
   }
-  await refreshTokens();
+  if (A && A.accessToken === used) await refreshTokens();
+  if (!A) throw new Error(`${path}: 기다리는 사이 로그아웃됨`);
+  if (A.memberId !== who) throw new Error(`${path}: 기다리는 사이 다른 회원(${A.memberId})으로 바뀜 — 다시 보내지 않음`);
   return api(path, Object.assign({}, opts, { token: A.accessToken }));
 }
 
@@ -242,6 +251,7 @@ Object.assign(VERSION, {
       login: A ? { memberId: A.memberId, at: A.at, checkedAt: A.checkedAt || null } : null,
       loginErr: authErr,
       loginNote: authNote,
+      testServer: API_BASE !== PROD_API ? API_BASE : null,   // 시험 서버 빌드면 팝업 맨 위에 주소를 띄운다 (#34)
     };
   },
 });

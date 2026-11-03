@@ -16,6 +16,11 @@
  * 로그인(#30): status 의 login 이 없으면 로그인 화면(v-login)만 보인다. 로그인 실패 원문(loginErr)은 화면 아래 빨간 줄,
  *   알림(loginNote, 예: 팝업을 저절로 못 엶)은 회색 줄. 열릴 때마다 whoami 로 로그인 확인을 건다. [로그아웃]은 회원 줄 옆.
  *
+ * 서버 전송(#34): status 의 sink 로 "보낼 청크 N개 · 마지막 자름 #n · 안 자른 기록 K건" 회색 줄,
+ *   그 아래 "보냄 #n · N초 전" (지운 청크가 있으면 그 수), 자르기 · 보내기 실패 원문은 빨간 줄.
+ *   로그아웃 화면에도 못 보낸 청크 수를 띄운다(로그인하면 보냄).
+ *   마지막 청크를 만든 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다(정지 뒤 조용해질 때까지 최대 약 35초 기다림).
+ *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
  * ========================================================================== */
@@ -49,6 +54,8 @@
 
   function render() {
     $('loading').hidden = true;
+    $('test-server').textContent = st.testServer ? `시험 서버에 연결됨: ${st.testServer}` : '';
+    $('test-server').hidden = !st.testServer;
     // 로그인 전이면 로그인 화면만 (#30). 기록 중에 웹에서 로그아웃됐으면 정지할 수 있게 기록 화면을 그대로 둔다.
     const needLogin = !st.login && !st.recording;
     $('v-login').hidden = !needLogin;
@@ -61,7 +68,11 @@
     $('btn-logout').hidden = !st.login;
     $('main-note').textContent = st.loginNote || '';
     $('main-note').hidden = !st.loginNote;
+    const k = st.sink;
+    $('login-sink').textContent = k && k.queued ? `보내지 못한 청크 ${k.queued}개가 있어요 — 로그인하면 보내요 (3일 지나면 지워져요)` : '';
+    $('login-sink').hidden = !(k && k.queued);
     if (needLogin) return;
+    renderSink(k);
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
@@ -76,6 +87,31 @@
       $('meta').textContent = '페이지가 다 그려질 때까지 잠깐 기다려요. 이 창이 저절로 닫히면 그때부터 읽으세요.';
       $('btn-rec').disabled = true;
     }
+  }
+
+  function ago(iso) {
+    const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    return s < 60 ? `${s}초 전` : `${Math.floor(s / 60)}분 전`;
+  }
+
+  function renderSink(k) {
+    if (!k) { $('sink').textContent = ''; $('sink-err').hidden = true; return; }
+    const parts = [`보낼 청크 ${k.queued}개 (${Math.ceil(k.queuedBytes / 1024)}KB)`];
+    if (k.lastN) parts.push(`마지막 자름 #${k.lastN}${k.finalDone ? ' (마지막 청크)' : ''}${k.lastCutAt ? ' · ' + ago(k.lastCutAt) : ''}`);
+    if (k.uncut) parts.push(`안 자른 기록 ${k.uncut}건`);
+    if (k.late) parts.push(`마지막 청크 뒤에 늦게 와서 빠진 기록 ${k.late}건`);
+    $('sink').textContent = '서버 전송: ' + parts.join(' · ');
+    const sent = [];
+    if (k.lastSent) sent.push(`보냄 #${k.lastSent.n}${k.lastSent.duplicate ? ' (서버에 이미 있었음)' : ''} · ${ago(k.lastSent.at)}`);
+    if (k.waiting) sent.push(k.waiting);
+    if (k.dropped && k.dropped.other) sent.push(`다른 회원 청크 ${k.dropped.other}개 지움`);
+    if (k.dropped && k.dropped.expired) sent.push(`3일 지난 청크 ${k.dropped.expired}개 지움`);
+    if (k.dropped && k.dropped.missing) sent.push(`내용이 없어 뺀 청크 ${k.dropped.missing}개`);
+    $('sink-sent').textContent = sent.join(' · ');
+    $('sink-sent').hidden = !sent.length;
+    const errs = [k.err && `청크 자르기 실패: ${k.err}`, k.sendErr && `보내기 실패: ${k.sendErr}`].filter(Boolean);
+    $('sink-err').textContent = errs.join(' / ');
+    $('sink-err').hidden = !errs.length;
   }
 
   async function refresh() {

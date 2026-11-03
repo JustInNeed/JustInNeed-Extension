@@ -77,6 +77,8 @@
   </div>
 
   <div id="msg" class="banner" role="alert" hidden></div>
+  <!-- 시험 서버 빌드(build.command service-dev)일 때만 보인다 (#34) -->
+  <div id="test-server" class="banner" hidden></div>
 
   <!-- popup.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
   <div id="loading" class="card"><p>불러오는 중…</p></div>
@@ -87,6 +89,7 @@
     <p class="hint">웹페이지에서 로그인하면 확장 프로그램에서도 연동돼요.<br>로그인해야 기록을 시작할 수 있어요.</p>
     <button id="btn-login" type="button" class="primary">로그인하러 가기</button>
     <div class="err" id="login-err" hidden></div>
+    <div class="note" id="login-sink" hidden></div>
   </section>
 
   <section id="v-main" class="card" hidden>
@@ -97,7 +100,10 @@
     <button id="btn-rec" type="button">기록 시작</button>
     <div class="err" id="main-err" hidden></div>
     <div class="note" id="main-note" hidden></div>
-    <div class="hint">서버 전송은 아직 없습니다. 기록은 이 브라우저에만 쌓이고, 새로 시작하면 지워집니다.
+    <div class="note" id="sink"></div>
+    <div class="note" id="sink-sent" hidden></div>
+    <div class="err" id="sink-err" hidden></div>
+    <div class="hint">기록은 30초마다 서버로 보내요. 이 브라우저의 기록은 다음에 새로 시작할 때 지워져요.
       파일로 남기려면 디버그 패널의 [내보내기]를 누르세요.</div>
     <label class="opt"><input type="checkbox" id="f-panel"> 디버그 패널 보이기</label>
   </section>
