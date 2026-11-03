@@ -3,9 +3,9 @@
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay, visible
  * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
- * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest
+ * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, units:rescanned, idle:clock
+ *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -14,6 +14,13 @@
  *   11-session 이 읽어서 ui:panel{on} 으로 알린다. 열린 탭에도 바로 반영된다(storage.onChanged).
  *   숨기면 DOM 을 통째로 뺀다. 상태(uiRecording 등)는 계속 갱신되고, 켜면 다시 그린다.
  *   숨길 때 오버레이가 켜져 있으면 끈다 — 오버레이 버튼이 패널 안에 있어서 못 끄게 되니까.
+ *
+ * --- 오버레이 켜짐 기억 (#36) ----------------------------------------------------
+ *   [오버레이] 버튼은 직접 켜지 않고 ui:overlay 로 저장을 요청한다. 저장값은 11-session 이 overlay:pref 로 알린다
+ *   → 모든 탭 · 다음 탭 · 브라우저 재시작 뒤에도 같은 상태. 실제 켜짐 = 저장값 && 패널 보임
+ *   (패널을 숨기면 꺼지지만 저장값은 그대로라 다시 보이면 켜진다).
+ *   오버레이 명령은 primary 에만 먹고 primary 는 스캔이 끝나야 정해지므로, 켜져 있으면 scan:done 때 다시 보낸다
+ *   (본문이 iframe 인 블로그 PC 등).
  *
  * --- 상태줄은 primary 프레임 것만 그린다 -------------------------------------
  *   stat 은 모든 프레임에서 올라온다. 광고 iframe 이 재스캔할 때마다 그 iframe 의
@@ -74,7 +81,8 @@
   let uiRecording = false;               // 세션 상태의 표시용 사본. session:changed 로만 바뀐다
   let uiMode = null;                     // 확장 버전 (session:changed 의 mode, #19). 첫 hello 전에는 null
   const MODE_KO = { download: '데이터 수집용', server: '실사용' };
-  let uiOverlay = false;
+  let uiOverlay = false;                 // 지금 켜짐 = prefOverlay && visible (applyOverlay 만 바꾼다)
+  let prefOverlay = false;               // 저장된 오버레이 설정. overlay:pref 로만 바뀐다 (#36)
   let visible = false;                   // ui:panel 로만 바뀐다. 기본 숨김
   let rescanHtml = '';                   // 마지막 재스캔 한 줄 (기록 중 splice 를 눈으로 보려고, 0-B)
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
@@ -190,11 +198,8 @@
     // 요청만 한다. 버튼은 session:changed 가 오면 바뀐다.
     panelEl.querySelector('[data-act="rec"]').onclick = () => bus.emit('ui:rec');
 
-    panelEl.querySelector('[data-act="ov"]').onclick = () => {
-      uiOverlay = !uiOverlay;
-      RBC.frames.send('overlay', { on: uiOverlay });
-      render();
-    };
+    // 저장만 요청한다. 켜고 끄기는 overlay:pref 가 오면 (#36)
+    panelEl.querySelector('[data-act="ov"]').onclick = () => bus.emit('ui:overlay', { on: !uiOverlay });
 
     panelEl.querySelector('[data-act="list"]').onclick = () => {
       if (listEl.style.display === 'block') { listEl.style.display = 'none'; return; }
@@ -402,10 +407,22 @@
     const on = !!(d && d.on);
     if (on === visible) return;
     visible = on;
-    if (!on && uiOverlay) {
-      uiOverlay = false;
-      RBC.frames.send('overlay', { on: false });
-    }
+    applyOverlay();
+    render();
+  });
+
+  // 오버레이 켜짐 = 저장값 && 패널 보임. 바뀔 때만 프레임에 보낸다 (#36)
+  function applyOverlay() {
+    const want = prefOverlay && visible;
+    if (want === uiOverlay) return;
+    uiOverlay = want;
+    RBC.frames.send('overlay', { on: uiOverlay });
+  }
+
+  bus.on('overlay:pref', (d) => {
+    prefOverlay = !!(d && d.on);
+    if (d && d.err) setStat(esc(d.err));
+    applyOverlay();
     render();
   });
 
@@ -436,6 +453,7 @@
       `<br>유닛 <b>${d.units}</b>개 · 본문 ${d.chars.toLocaleString()}자` +
       rootLine(d.root)
     );
+    if (uiOverlay) RBC.frames.send('overlay', { on: true });   // 새 primary 에도 켠다 (#36)
     render();
   });
 

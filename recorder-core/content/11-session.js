@@ -3,9 +3,9 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, idle:clock
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock
  * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
- *       ui:rec, ui:export, ui:query, ui:idletest, stat
+ *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
  *   content script 와 background 사이의 유일한 통로다. chrome.runtime 은
@@ -226,6 +226,30 @@
       if (area === 'local' && ch[K_PANEL]) emitPanel(ch[K_PANEL].newValue);
     });
   } catch (e) { /* 고아 탭: 패널은 숨김 그대로 */ }
+
+  // ==========================================================================
+  // 오버레이 켜짐 기억 → 9-panel (#36, 11-03 서현 — 새 탭마다 켜기 번거로움)
+  //   9-panel 의 [오버레이] 버튼이 ui:overlay 로 요청하면 'ui:overlay' 에 쓴다.
+  //   읽을 때 · 바뀔 때마다 overlay:pref 로 알린다 → 새 탭 · 열린 다른 탭 · 브라우저 재시작 뒤에도 같은 상태.
+  //   저장이 실패하면(고아 탭 등) 이 탭에만 적용하고 원문을 패널에 보낸다.
+  // ==========================================================================
+  const K_OVERLAY = 'ui:overlay';
+  const emitOverlay = (v, err) => bus.emit('overlay:pref', { on: v === true, err: err || null });
+  try {
+    chrome.storage.local.get(K_OVERLAY).then((r) => emitOverlay(r[K_OVERLAY])).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch[K_OVERLAY]) emitOverlay(ch[K_OVERLAY].newValue);
+    });
+  } catch (e) { /* 고아 탭: 저장값 없이 꺼진 상태로 시작 */ }
+  bus.on('ui:overlay', (d) => {
+    const on = !!(d && d.on);
+    const fail = (e) => {
+      const why = `오버레이 설정 저장 실패: ${(e && e.message) || e}`;
+      console.warn('[RBC]', why);
+      emitOverlay(on, why);
+    };
+    try { chrome.storage.local.set({ [K_OVERLAY]: on }).catch(fail); } catch (e) { fail(e); }
+  });
 
   // 패널이 켜져 있고 기록 중이면 무동작 시계를 몇 초마다 다시 받는다 (#26).
   //   iframe(블로그 PC 본문)의 입력은 이 프레임을 거치지 않고 background 로 가므로, 여기서 다시 물어야 패널이 맞는다.
