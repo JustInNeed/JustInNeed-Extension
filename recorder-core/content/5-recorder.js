@@ -3,7 +3,7 @@
  *
  * 소유: recording, 구간(segId, segPageId, segMeta), timeline 버퍼, tickTimer,
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
- * 의존(직접 호출): 0-core, 1-stream(rootInfo), 2-units, 3-hittest, 4-input
+ * 의존(직접 호출): 0-core, 1-stream(rootInfo · 노션 펼치기 #37), 2-units, 3-hittest, 4-input
  * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:flush, settle:empty
  * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
@@ -370,6 +370,8 @@
   //   이미 기록 중이거나 대기 중이면 무시 — 11-session 이 스캔 · 탭 복귀마다 여러 번 부른다.
   function start(m) {
     if (recording || settle) return;
+    // 노션이면 먼저 펼친다 (#37) — 블록이 다 붙는 동안 글자가 바뀌므로 아래 대기가 다 붙을 때까지 기다려 준다
+    RBC.stream.unfoldNotion();
     settle = { m, at: null, waited: 0, quiet: 0, raw: null, changes: 0, timer: null, asked: 0, found: 0 };
     settleStep();
   }
@@ -452,6 +454,7 @@
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
   // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
+    RBC.stream.restoreNotion();                        // 노션 펼친 것을 되돌린다 (#37, 기록 중에만 펼침)
     if (!recording && cancelSettle()) return;         // 대기 중이었음: 구간을 연 적이 없다
     if (recording) {
       if (reason === 'idle') push({ type: 'autostop', t: tNow(), reason: 'idle', segId });   // [C5] 형식은 #26 전과 같다
@@ -503,6 +506,7 @@
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
       noise: noiseStat(),
+      unfold: RBC.stream.unfoldState(),                // 노션 펼침 (#37) — 노션이 아니면 null
     });
   }
 

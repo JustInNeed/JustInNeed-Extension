@@ -1,7 +1,7 @@
 /* =============================================================================
  * 1-stream.js — 본문 루트 탐색 + 텍스트 스트림 구축
  *
- * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin
+ * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin, unfolded(노션 펼치기, #37)
  * 의존(직접 호출): 0-core, vendor/readability.js (전역 Readability)
  * 발행: 없음   구독: record:started, record:stopped
  *
@@ -497,9 +497,114 @@
   }
 
   // ==========================================================================
+  // 노션 펼치기 (#37, 11-03 서현 — 노션에서만, 기록 중에만)
+  //   노션은 화면 근처 블록만 DOM 에 둔다(가상화, 10-07~). 보이는 창마다 200자 자르는 위치가 달라져
+  //   같은 글이 여러 pid 로 갈라졌다(#17 [18]). 스크롤 상자(.notion-scroller)와 그 조상의 높이 · overflow 제한을 풀고
+  //   상자 높이를 글 전체 높이로 늘리면 노션이 블록을 전부 그리고 계속 붙여 둔다 — 창이 대신 스크롤한다.
+  //   그러면 DOM 에 글이 다 있어 루트 · 스트림 · 청킹 코드가 그대로 가상화 전과 같은 유닛 · pid 를 만든다
+  //   (11-03 jsdom: 다 모은 글로 청킹 = 10-10 기록과 pid 22/22 같음). 유닛 경계 · pid 규칙 · 기록 형식은 바꾸지 않는다.
+  //   높이 따라 늘리기: 토글을 열면 글이 길어진다. 노션 가상 목록의 높이 상자(루트 바로 아래 inline height)를
+  //     ResizeObserver 로 지켜 상자 높이를 맞춘다. 안 하면 펼친 높이를 넘는 블록이 안 붙고 창도 그만큼만 스크롤된다
+  //     (11-03 그래픽스 글: 687/908 블록 · 스크롤 막힘 → 따라 늘리면 908/908).
+  //   보던 위치: 상자 scrollTop → 창 scrollY 로 옮긴 뒤 화면 가운데 블록을 같은 자리로 맞춘다. 되돌릴 때 반대로.
+  //   되돌리기는 우리가 바꾼 속성만 원래 값으로(노션이 그 사이 바꾼 다른 inline 스타일은 건드리지 않게).
+  //   부르는 곳: 5-recorder start(펼침) · stop(되돌림). 노션 루트가 없으면 아무것도 안 한다.
+  // ==========================================================================
+  const NOTION_ROOT = '.notion-page-content';
+  const NOTION_SCROLLER = '.notion-scroller';
+  const UNFOLD_PAD = 400;               // 상자 높이 여유(px) — 끝 블록이 경계에 걸려 떨어지지 않게
+  const UNFOLD_PROPS = ['overflow', 'height', 'max-height'];
+  let unfolded = null;                  // { sc, root, box, saved, styleEl, ro, fits } | null
+  let unfoldInfo = null;                // 패널용 마지막 결과 { on, ms, why } | null(이 페이지에서 시도 안 함)
+
+  function setImp(el, prop, val) { el.style.setProperty(prop, val, 'important'); }
+
+  // 보던 위치 = 화면 가운데 블록이 화면 어디에 있었나. 펼치면 위쪽 블록 높이가 어림값 → 실제값으로 바뀌어
+  //   스크롤 숫자만 옮기면 어긋난다(11-03 시험 60px). 그 블록을 같은 자리로 다시 데려온다.
+  function viewAnchor(root) {
+    const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    const el = hit && root.contains(hit) ? hit.closest(NOTION_BLOCK) : null;
+    return el ? { el, top: el.getBoundingClientRect().top } : null;
+  }
+  function backToAnchor(a, scroll) {
+    if (!a || !a.el.isConnected) return;
+    const d = a.el.getBoundingClientRect().top - a.top;
+    if (Math.abs(d) >= 1) scroll(d);
+  }
+
+  function unfoldNotion() {
+    if (unfolded) return true;
+    const root = document.querySelector(NOTION_ROOT);
+    if (!root) return false;                                   // 노션 아님
+    const t0 = performance.now();
+    const sc = root.closest(NOTION_SCROLLER);
+    if (!sc) {
+      unfoldInfo = { on: false, ms: 0, why: '스크롤 상자(' + NOTION_SCROLLER + ')를 못 찾음' };
+      return false;
+    }
+    const y = sc.scrollTop;
+    const anchor = viewAnchor(root);
+    const saved = [];                                          // [el, prop, 옛 값, 옛 우선순위]
+    for (let e = sc; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+      for (const p of UNFOLD_PROPS) saved.push([e, p, e.style.getPropertyValue(p), e.style.getPropertyPriority(p)]);
+      setImp(e, 'overflow', 'visible'); setImp(e, 'height', 'auto'); setImp(e, 'max-height', 'none');
+    }
+    const styleEl = document.createElement('style');
+    styleEl.id = 'rbc-notion-unfold';
+    styleEl.textContent = 'html,body{height:auto!important;overflow:auto!important}';
+    (document.head || document.documentElement).appendChild(styleEl);
+    const box = [...root.children].find(c => c.style && c.style.height) || root;   // 가상 목록 높이 상자
+    const u = { sc, root, box, saved, styleEl, ro: null, fits: 0 };
+    unfolded = u;
+    const fit = () => {
+      if (unfolded !== u) return;
+      const want = Math.ceil(box.getBoundingClientRect().bottom - sc.getBoundingClientRect().top) + UNFOLD_PAD;
+      if (Math.abs(want - (parseFloat(sc.style.height) || 0)) < 2) return;
+      setImp(sc, 'height', want + 'px');
+      u.fits++;
+    };
+    fit();
+    u.ro = new ResizeObserver(fit);
+    u.ro.observe(box);
+    window.scrollTo(0, sc.getBoundingClientRect().top + window.scrollY + y);   // 보던 위치: 먼저 대략
+    backToAnchor(anchor, (d) => window.scrollBy(0, d));                        // 그다음 가운데 블록 기준으로 정확히
+    unfoldInfo = { on: true, ms: Math.round(performance.now() - t0), why: '' };
+    return true;
+  }
+
+  function restoreNotion() {
+    const u = unfolded;
+    if (!u) return;
+    unfolded = null;
+    u.ro.disconnect();
+    const y = Math.max(0, -u.sc.getBoundingClientRect().top);  // 창에서 상자 위쪽이 지나간 만큼 = 상자 안 위치
+    const anchor = viewAnchor(u.root);
+    u.styleEl.remove();
+    for (const [e, p, v, pr] of u.saved) {
+      if (v) e.style.setProperty(p, v, pr); else e.style.removeProperty(p);
+    }
+    u.sc.scrollTop = y;
+    backToAnchor(anchor, (d) => { u.sc.scrollTop += d; });
+    unfoldInfo = { on: false, ms: unfoldInfo ? unfoldInfo.ms : 0, why: '' };
+  }
+
+  // 패널용 (기록 데이터에는 안 나감). 블록 수 = 지금 DOM 에 붙은 노션 블록
+  function unfoldState() {
+    if (!unfoldInfo) return null;
+    const root = unfolded ? unfolded.root : document.querySelector(NOTION_ROOT);
+    return Object.assign({}, unfoldInfo, {
+      fits: unfolded ? unfolded.fits : 0,
+      blocks: root ? root.querySelectorAll(NOTION_BLOCK).length : 0,
+    });
+  }
+
+  // ==========================================================================
   // 공개
   // ==========================================================================
   RBC.stream = {
+    unfoldNotion,                       // 노션이면 펼침 (#37) → true(펼침 · 이미 펼침) | false(노션 아님 · 실패, unfoldState().why)
+    restoreNotion,                      // 펼친 것을 되돌림 (안 펼쳤으면 아무것도 안 함)
+    unfoldState,                        // 패널용 { on, ms, why, fits, blocks } | null
     build,                              // → {raw, segs, breaks}  (커밋 안 함)
     commit,                             // 커밋 + sig 재계산
 
