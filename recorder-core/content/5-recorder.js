@@ -138,7 +138,8 @@
   let lastVisN = 0;                     // 패널 표시용 — 마지막 틱 vis 조각 수
   let labeling = false;                 // 12-label 의 라벨 모드 (label:mode 로만 갱신)
   let labelStartT = 0;
-  let settle = null;                    // 본문 준비 중 대기 { m, at, waited, quiet, raw, changes, timer } | null
+  let settle = null;                    // 본문 준비 중 대기 { m, at, waited, quiet, raw, changes, timer, notion } | null
+  let unfoldFail = null;                // 펼치기 실패한 '세션 글' 키 — 그 글은 기록 안 함 (#37)
 
   // --- 미러 (읽기 전용) ---
   let isPrimary = IS_TOP;
@@ -370,10 +371,36 @@
   //   이미 기록 중이거나 대기 중이면 무시 — 11-session 이 스캔 · 탭 복귀마다 여러 번 부른다.
   function start(m) {
     if (recording || settle) return;
-    // 노션이면 먼저 펼친다 (#37) — 블록이 다 붙는 동안 글자가 바뀌므로 아래 대기가 다 붙을 때까지 기다려 준다
-    RBC.stream.unfoldNotion();
-    settle = { m, at: null, waited: 0, quiet: 0, raw: null, changes: 0, timer: null, asked: 0, found: 0 };
+    if (unfoldFail && unfoldFail === failKey(m)) return;   // 이 세션에서 이 노션 글은 펼치기 실패 → 기록 안 함 (#37)
+    unfoldFail = null;
+    settle = { m, at: null, waited: 0, quiet: 0, raw: null, changes: 0, timer: null, asked: 0, found: 0, notion: false };
     settleStep();
+  }
+
+  // --- 노션 펼치기 (#37, 11-03 서현: 노션에서만 · 기록 중에만 · 실패하면 그 글은 기록 안 함) ---
+  //   대기 중 탭이 보일 때 펼치고 가리개를 띄운다(노션 루트가 늦게 떠도 다음 대기 걸음에서 잡힌다).
+  //   블록이 다 붙는 동안 글자가 바뀌므로 아래 대기가 다 붙을 때까지 기다려 준다. 대기가 끝나면 unfoldCheck —
+  //   실패면 구간을 열지 않고 되돌린 뒤 가리개에 이유를 띄운다. 같은 세션 · 같은 글은 다시 시도하지 않는다
+  //   (11-session 이 스캔 · 탭 복귀마다 start 를 부르므로, 안 막으면 실패 창이 계속 뜬다). 정지하면 잊는다.
+  function failKey(m) { return ((m && m.sessionId) || '') + ' ' + pageId(location.href); }
+
+  function unfoldStep(s) {
+    if (!RBC.stream.isNotion()) return true;
+    if (RBC.stream.unfoldNotion()) {
+      if (!s.notion) { s.notion = true; RBC.stream.curtain('wait'); }
+      return true;
+    }
+    failUnfold(s, RBC.stream.unfoldCheck());
+    return false;
+  }
+
+  function failUnfold(s, why) {
+    clearTimeout(s.timer);
+    settle = null;
+    RBC.stream.restoreNotion();
+    unfoldFail = failKey(s.m);
+    RBC.stream.curtain('fail', why);
+    emitStat();
   }
 
   function settleStep() {
@@ -385,6 +412,7 @@
       s.timer = setTimeout(settleStep, CFG.SETTLE_POLL_MS);
       return;
     }
+    if (!unfoldStep(s)) return;
     const dt = s.at == null ? 0 : now - s.at;
     s.at = now;
     s.waited += dt;
@@ -402,9 +430,15 @@
       bus.emit('settle:empty');
     }
     if (empty) s.found = 0; else s.found += dt;              // 최대 대기는 본문을 찾은 뒤부터 잰다
+    const max = s.notion ? CFG.SETTLE_MAX_MS_NOTION : CFG.SETTLE_MAX_MS;
     const how = empty ? null
-      : s.quiet >= CFG.SETTLE_QUIET_MS ? 'quiet' : s.found >= CFG.SETTLE_MAX_MS ? 'max' : null;
+      : s.quiet >= CFG.SETTLE_QUIET_MS ? 'quiet' : s.found >= max ? 'max' : null;
     if (how) {
+      if (s.notion) {
+        const why = RBC.stream.unfoldCheck();
+        if (why) { failUnfold(s, why); return; }
+        RBC.stream.curtain(null);
+      }
       settle = null;
       begin(s.m, { ms: Math.round(s.waited), how, changes: s.changes });
       return;
@@ -416,6 +450,7 @@
   function cancelSettle() {
     if (!settle) return false;
     clearTimeout(settle.timer);
+    if (settle.notion) RBC.stream.restoreNotion();     // 대기 가리개도 같이 닫힌다
     settle = null;
     emitStat();
     return true;
@@ -455,6 +490,8 @@
   // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session)
   function stop(reason) {
     RBC.stream.restoreNotion();                        // 노션 펼친 것을 되돌린다 (#37, 기록 중에만 펼침)
+    RBC.stream.curtain(null);                          // 실패 창이 떠 있었으면 닫는다 (노션 안 이동 뒤 남지 않게)
+    unfoldFail = null;                                 // 정지 = 실패 기억도 끝 (다음 기록에서 다시 시도)
     if (!recording && cancelSettle()) return;         // 대기 중이었음: 구간을 연 적이 없다
     if (recording) {
       if (reason === 'idle') push({ type: 'autostop', t: tNow(), reason: 'idle', segId });   // [C5] 형식은 #26 전과 같다
