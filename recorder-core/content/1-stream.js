@@ -1,9 +1,9 @@
 /* =============================================================================
  * 1-stream.js — 본문 루트 탐색 + 텍스트 스트림 구축
  *
- * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin
+ * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin, unfolded(노션 펼치기, #37)
  * 의존(직접 호출): 0-core, vendor/readability.js (전역 Readability)
- * 발행: 없음   구독: record:started, record:stopped
+ * 발행: unfold:lost(#37)   구독: record:started, record:stopped
  *
  * --- 본문 상자 판정 = noise (Readability, #11, 2026-10-28) ---------------------
  *   noise 정의(10-10 서현): 본문 루트 밖이 섞인 것만. 루트 안 글(끝인사 · 크레딧 · 관련 글 링크)은 noise 아님.
@@ -497,9 +497,239 @@
   }
 
   // ==========================================================================
+  // 노션 펼치기 (#37, 11-03 서현 — 노션에서만, 기록 중에만)
+  //   노션은 화면 근처 블록만 DOM 에 둔다(가상화, 10-07~). 보이는 창마다 200자 자르는 위치가 달라져
+  //   같은 글이 여러 pid 로 갈라졌다(#17 [18]). 스크롤 상자(.notion-scroller)와 그 조상의 높이 · overflow 제한을 풀고
+  //   상자 높이를 글 전체 높이로 늘리면 노션이 블록을 전부 그리고 계속 붙여 둔다 — 창이 대신 스크롤한다.
+  //   그러면 DOM 에 글이 다 있어 루트 · 스트림 · 청킹 코드가 그대로 가상화 전과 같은 유닛 · pid 를 만든다
+  //   (11-03 jsdom: 다 모은 글로 청킹 = 10-10 기록과 pid 22/22 같음). 유닛 경계 · pid 규칙 · 기록 형식은 바꾸지 않는다.
+  //   높이 따라 늘리기: 토글을 열면 글이 길어진다. 노션 가상 목록의 높이 상자(루트 바로 아래 inline height)를
+  //     ResizeObserver 로 지켜 상자 높이를 맞춘다. 안 하면 펼친 높이를 넘는 블록이 안 붙고 창도 그만큼만 스크롤된다
+  //     (11-03 그래픽스 글: 687/908 블록 · 스크롤 막힘 → 따라 늘리면 908/908).
+  //   보던 위치: 상자 scrollTop → 창 scrollY 로 옮긴 뒤 화면 가운데 블록을 같은 자리로 맞춘다. 되돌릴 때 반대로.
+  //   되돌리기는 우리가 바꾼 속성만 원래 값으로(노션이 그 사이 바꾼 다른 inline 스타일은 건드리지 않게).
+  //   부르는 곳: 5-recorder 본문 준비 대기(펼침 · 가리개 · 실패 검사) · stop(되돌림). 노션 루트가 없으면 아무것도 안 한다.
+  //   실패 검사(unfoldCheck): 대기가 끝날 때 상자가 아직 안쪽에서 스크롤되면(노션이 스타일을 되돌렸거나 구조가 바뀜)
+  //     펼치기가 안 먹은 것 → 5-recorder 가 그 글은 기록하지 않는다(11-03 서현). 이유 원문은 패널 · 가리개에.
+  //   기록 중 지키기(1초마다, #37 청크 3): 편집 · 노션 안 이동 · 재렌더로 펼친 상자가 화면에서 빠지면 새 상자로 다시 펼치고,
+  //     노션이 우리 inline 스타일을 덮으면 다시 적용한다. 횟수는 패널 줄(다시 펼침 · 스타일 다시 적용). 기록 데이터에는 안 나감.
+  //   가리개: 대기 동안 반투명 창으로 페이지를 덮고 휠 · 터치 · 스크롤 키를 막는다(서현 아이디어 — 팝업 문구는 잘 안 읽음).
+  //     실패하면 같은 창에 이유를 띄우고 [확인]을 눌러야 닫힌다. 루트 밖(documentElement 끝)에 붙어 글자 · 유닛과 무관.
+  // ==========================================================================
+  const NOTION_ROOT = '.notion-page-content';
+  const NOTION_SCROLLER = '.notion-scroller';
+  const UNFOLD_PAD = 400;               // 상자 높이 여유(px) — 끝 블록이 경계에 걸려 떨어지지 않게
+  const UNFOLD_PROPS = ['overflow', 'height', 'max-height'];
+  const UNFOLD_SET = [['overflow', 'visible'], ['height', 'auto'], ['max-height', 'none']];
+  const UNFOLD_KEEP_MS = 1000;          // 기록 중 펼침 지키기 간격
+  let keepTimer = 0;
+  let unfolded = null;                  // { sc, root, box, saved, styleEl, ro, fits } | null
+  let unfoldInfo = null;                // 패널용 마지막 결과 { on, ms, why } | null(이 페이지에서 시도 안 함)
+  let unfoldTest = false;               // 패널 [펼치기 실패 시험] — 켜져 있으면 unfoldCheck 가 실패, 기록 중이면 지키기가 unfold:lost
+  let curtainEl = null;
+  const CURTAIN_KEYS = new Set([' ', 'PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End']);
+  const curtainBlock = (e) => { e.preventDefault(); e.stopPropagation(); };
+  const curtainKey = (e) => { if (curtainEl && CURTAIN_KEYS.has(e.key)) curtainBlock(e); };
+
+  function setImp(el, prop, val) { el.style.setProperty(prop, val, 'important'); }
+
+  // 보던 위치 = 화면 가운데 블록이 화면 어디에 있었나. 펼치면 위쪽 블록 높이가 어림값 → 실제값으로 바뀌어
+  //   스크롤 숫자만 옮기면 어긋난다(11-03 시험 60px). 그 블록을 같은 자리로 다시 데려온다.
+  function viewAnchor(root) {
+    const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    const el = hit && root.contains(hit) ? hit.closest(NOTION_BLOCK) : null;
+    return el ? { el, top: el.getBoundingClientRect().top } : null;
+  }
+  function backToAnchor(a, scroll) {
+    if (!a || !a.el.isConnected) return;
+    const d = a.el.getBoundingClientRect().top - a.top;
+    if (Math.abs(d) >= 1) scroll(d);
+  }
+
+  // 지키기용 보던 위치 = 가운데 블록 id + 화면 위치. 요소 대신 id 라 노션이 블록을 새로 그려도 찾아간다.
+  //   스타일이 덮이거나 상자가 빠지면 창 스크롤이 맨 위로 튄다(11-05 시험) → 고친 뒤 이 블록으로 돌아간다.
+  function markView(root) {
+    const a = viewAnchor(root);
+    const id = a && a.el.getAttribute('data-block-id');
+    return id ? { id, top: a.top } : null;
+  }
+  function backToMark(m) {
+    if (!m) return;
+    const el = document.querySelector('[data-block-id="' + CSS.escape(m.id) + '"]');
+    if (el) backToAnchor({ el, top: m.top }, (d) => window.scrollBy(0, d));
+  }
+
+  // 펼친 상자가 아직 지금 화면의 것인가 — 노션이 화면을 다시 그리거나(편집 · 노션 안 이동) 루트를 바꾸면 false
+  function alive(u) {
+    return u.root.isConnected && u.sc.isConnected && document.querySelector(NOTION_ROOT) === u.root;
+  }
+
+  // 우리가 바꾼 것만 원래대로 (스크롤 위치는 안 만진다)
+  function drop(u) {
+    u.ro.disconnect();
+    u.styleEl.remove();
+    for (const [e, p, v, pr] of u.saved) {
+      if (v) e.style.setProperty(p, v, pr); else e.style.removeProperty(p);
+    }
+    if (unfolded === u) unfolded = null;
+  }
+
+  // 기록 중 지키기 (UNFOLD_KEEP_MS 마다): 화면이 다시 그려졌으면 새 상자로 다시 펼치고(relinks),
+  //   노션이 우리 스타일을 덮었으면 다시 적용한다(fixes). 둘 다 패널 줄에 횟수로 보인다.
+  //   다시 펼치기가 실패하면(또는 [펼치기 실패 시험] 켜짐) unfold:lost → 5-recorder 가 구간을 닫고 실패 창 (11-05 서현).
+  function keepUnfolded() {
+    const u = unfolded;
+    if (!u) { clearInterval(keepTimer); keepTimer = 0; return; }
+    if (unfoldTest) { bus.emit('unfold:lost', { why: unfoldCheck() }); return; }
+    if (!document.querySelector(NOTION_ROOT)) return;          // 이동 중 잠깐 루트가 없음 → 다음 번에
+    if (!alive(u)) {
+      if (!unfoldNotion()) bus.emit('unfold:lost', { why: unfoldInfo.why });
+      return;
+    }
+    let fixed = false;
+    for (const [e] of u.saved) {
+      for (const [p, v] of UNFOLD_SET) {
+        if (p === 'height' && e === u.sc) continue;            // 상자 높이는 fit 이 맞춘다
+        if (e.style.getPropertyValue(p) !== v || e.style.getPropertyPriority(p) !== 'important') { setImp(e, p, v); fixed = true; }
+      }
+    }
+    if (!document.getElementById('rbc-notion-unfold')) { (document.head || document.documentElement).appendChild(u.styleEl); fixed = true; }
+    u.fit();
+    if (fixed) { unfoldInfo.fixes++; backToMark(u.mark); }
+    u.mark = markView(u.root);
+  }
+
+  function unfoldNotion() {
+    if (unfolded && alive(unfolded)) return true;
+    const root = document.querySelector(NOTION_ROOT);
+    if (!root) return false;                                   // 노션 아님
+    const t0 = performance.now();
+    const sc = root.closest(NOTION_SCROLLER);
+    if (!sc) {
+      unfoldInfo = Object.assign({}, unfoldInfo, { on: false, ms: 0, why: '스크롤 상자(' + NOTION_SCROLLER + ')를 못 찾음' }); // 횟수는 남긴다
+      return false;
+    }
+    const anchor = viewAnchor(root);
+    const again = unfolded;                                    // 펼쳐 둔 상자가 화면에서 빠짐 → 새 상자로 다시
+    if (again) drop(again);
+    const y = sc.scrollTop;
+    const saved = [];                                          // [el, prop, 옛 값, 옛 우선순위]
+    for (let e = sc; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+      for (const p of UNFOLD_PROPS) saved.push([e, p, e.style.getPropertyValue(p), e.style.getPropertyPriority(p)]);
+      for (const [p, v] of UNFOLD_SET) setImp(e, p, v);
+    }
+    const styleEl = document.createElement('style');
+    styleEl.id = 'rbc-notion-unfold';
+    styleEl.textContent = 'html,body{height:auto!important;overflow:auto!important}';
+    (document.head || document.documentElement).appendChild(styleEl);
+    const box = [...root.children].find(c => c.style && c.style.height) || root;   // 가상 목록 높이 상자
+    const u = { sc, root, box, saved, styleEl, ro: null, fits: 0, fit: null, mark: null };
+    unfolded = u;
+    const fit = u.fit = () => {
+      if (unfolded !== u) return;
+      const want = Math.ceil(box.getBoundingClientRect().bottom - sc.getBoundingClientRect().top) + UNFOLD_PAD;
+      if (Math.abs(want - (parseFloat(sc.style.height) || 0)) < 2) return;
+      setImp(sc, 'height', want + 'px');
+      u.fits++;
+    };
+    fit();
+    u.ro = new ResizeObserver(fit);
+    u.ro.observe(box);
+    window.scrollTo(0, sc.getBoundingClientRect().top + window.scrollY + y);   // 보던 위치: 먼저 대략
+    backToAnchor(anchor, (d) => window.scrollBy(0, d));                        // 그다음 가운데 블록 기준으로 정확히
+    if (again) backToMark(again.mark);                                         // 다시 펼침: 빠지기 전 1초 안에 보던 블록으로
+    u.mark = markView(root);
+    const n = again && unfoldInfo ? unfoldInfo : { relinks: 0, fixes: 0, fitsBefore: 0 };
+    if (again) { n.relinks++; n.fitsBefore += again.fits; }
+    unfoldInfo = { on: true, ms: Math.round(performance.now() - t0), why: '', relinks: n.relinks, fixes: n.fixes, fitsBefore: n.fitsBefore };
+    if (!keepTimer) keepTimer = setInterval(keepUnfolded, UNFOLD_KEEP_MS);
+    return true;
+  }
+
+  // 대기가 끝날 때 펼치기가 실제로 먹었나 → '' | 실패 이유 원문 (패널 줄에도 남긴다)
+  function unfoldCheck() {
+    const u = unfolded;
+    let why = '';
+    if (unfoldTest) why = '시험용 실패 (패널 [펼치기 실패 시험] 켜짐)';
+    else if (!u) why = (unfoldInfo && unfoldInfo.why) || '펼치지 않음';
+    else if (!u.sc.isConnected) why = '스크롤 상자가 DOM 에서 빠짐 (노션이 화면을 다시 그림)';
+    else if (u.sc.scrollHeight - u.sc.clientHeight > 2) {
+      why = `스크롤 상자가 아직 안쪽에서 스크롤됨 (글 높이 ${u.sc.scrollHeight}px / 상자 ${u.sc.clientHeight}px, overflow ${getComputedStyle(u.sc).overflowY})`;
+    }
+    if (why && unfoldInfo) unfoldInfo = Object.assign({}, unfoldInfo, { why });
+    else if (why) unfoldInfo = { on: false, ms: 0, why };
+    return why;
+  }
+
+  // 가리개. mode = 'wait'(문구만) | 'fail'(이유 + [확인]) | null(닫기)
+  function curtain(mode, why) {
+    if (curtainEl) {
+      curtainEl.remove();
+      curtainEl = null;
+      window.removeEventListener('keydown', curtainKey, true);
+    }
+    if (!mode) return;
+    const el = document.createElement('div');
+    el.id = 'rbc-notion-curtain';
+    el.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(15,23,42,.45);' +
+      'display:flex;align-items:center;justify-content:center;font:15px/1.6 system-ui,sans-serif';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;color:#111;border-radius:12px;padding:22px 26px;max-width:420px;' +
+      'box-shadow:0 10px 30px rgba(0,0,0,.25);text-align:center';
+    if (mode === 'wait') {
+      box.innerHTML = '<b style="font-size:17px">노션 글을 기록할 준비 중이에요</b><br>' +
+        '노션은 글 전체를 한 번에 불러와야 기록할 수 있어요.<br>잠시만 기다려 주세요. 준비가 끝나면 이 창은 저절로 사라져요.';
+    } else {
+      box.innerHTML = '<b style="font-size:17px;color:#b91c1c">이 노션 글은 기록하지 못해요</b><br>' +
+        '글 전체를 불러오지 못했어요. 다른 글 · 다른 탭은 계속 기록돼요.<br>' +
+        '<span style="color:#666;font-size:12px"></span><br><button style="margin-top:12px;padding:6px 22px;' +
+        'border:0;border-radius:8px;background:#111;color:#fff;font:inherit;cursor:pointer">확인</button>';
+      box.querySelector('span').textContent = '이유: ' + (why || '-');
+      box.querySelector('button').onclick = () => curtain(null);
+    }
+    el.appendChild(box);
+    el.addEventListener('wheel', curtainBlock, { passive: false });
+    el.addEventListener('touchmove', curtainBlock, { passive: false });
+    window.addEventListener('keydown', curtainKey, true);
+    document.documentElement.appendChild(el);
+    curtainEl = el;
+  }
+
+  function restoreNotion() {
+    if (curtainEl && !curtainEl.querySelector('button')) curtain(null);   // 대기 가리개는 같이 닫는다 (실패 창은 [확인]으로)
+    const u = unfolded;
+    if (!u) return;
+    clearInterval(keepTimer); keepTimer = 0;
+    const y = Math.max(0, -u.sc.getBoundingClientRect().top);  // 창에서 상자 위쪽이 지나간 만큼 = 상자 안 위치
+    const anchor = viewAnchor(u.root);
+    drop(u);
+    u.sc.scrollTop = y;
+    backToAnchor(anchor, (d) => { u.sc.scrollTop += d; });
+    unfoldInfo = Object.assign({}, unfoldInfo, { on: false });   // 실패 뒤 되돌림이면 이유 · 횟수를 남긴다
+  }
+
+  // 패널용 (기록 데이터에는 안 나감). 블록 수 = 지금 DOM 에 붙은 노션 블록
+  function unfoldState() {
+    if (!unfoldInfo) return null;
+    const root = unfolded ? unfolded.root : document.querySelector(NOTION_ROOT);
+    return Object.assign({}, unfoldInfo, {
+      fits: (unfoldInfo.fitsBefore || 0) + (unfolded ? unfolded.fits : 0),
+      blocks: root ? root.querySelectorAll(NOTION_BLOCK).length : 0,
+    });
+  }
+
+  // ==========================================================================
   // 공개
   // ==========================================================================
   RBC.stream = {
+    unfoldNotion,                       // 노션이면 펼침 (#37) → true(펼침 · 이미 펼침) | false(노션 아님 · 실패, unfoldState().why)
+    restoreNotion,                      // 펼친 것을 되돌림 (안 펼쳤으면 아무것도 안 함)
+    unfoldState,                        // 패널용 { on, ms, why, fits, blocks } | null
+    unfoldCheck,                        // 펼치기가 먹었나 → '' | 실패 이유
+    isNotion: () => !!document.querySelector(NOTION_ROOT),
+    curtain,                            // 가리개 'wait' | 'fail' | null
+    unfoldTest: () => unfoldTest,
+    setUnfoldTest: (v) => { unfoldTest = !!v; },
     build,                              // → {raw, segs, breaks}  (커밋 안 함)
     commit,                             // 커밋 + sig 재계산
 
