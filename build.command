@@ -2,10 +2,10 @@
 # 합치기 — Finder 에서 더블클릭. 기록 엔진(recorder-core/) + 버전 폴더 하나를 합쳐 build/<버전>/ 을 만든다.
 # 크롬 "압축해제된 확장 프로그램 로드"에는 build/<버전>/ 을 고른다. build/ 는 git 밖(매번 새로 만든다).
 # 같은 경로의 파일이 엔진과 버전 폴더 양쪽에 있으면 덮어쓰지 않고 멈춘다(어느 쪽이 맞는지 사람이 정할 일).
-# 터미널에서: bash build.command            → 버전 폴더 전부
+# 터미널에서: bash build.command            → 전부(data-collect · service · service-dev) — 더블클릭과 같음
 #             bash build.command data-collect → 하나만
 #             bash build.command service-dev  → 시험 서버용(#34): service 와 같고, 서버 · 웹 주소와 manifest 허용 목록만
-#                                              localhost(BE 8080 · 웹 3000)로 바꾼 build/service-dev/. 이름 없이 부르면 안 만든다.
+#                                              localhost(BE 8080 · 웹 3000)로 바꾼 build/service-dev/. 더블클릭에도 같이 만든다(#36, 11-03 서현).
 #                                              확장 ID 가 같아서 service 와 동시에 켤 수 없다 — 하나만 로드할 것
 cd "$(dirname "$0")" || exit 1
 CORE=recorder-core
@@ -35,7 +35,7 @@ to_dev() {
   swap "$out/manifest.json" '"name": "JustInNeed",' '"name": "JustInNeed (시험 서버)",'
 }
 versions=("$@")
-[ ${#versions[@]} -eq 0 ] && versions=(data-collect service)
+[ ${#versions[@]} -eq 0 ] && versions=(data-collect service service-dev)
 fail=0
 
 for v in "${versions[@]}"; do
