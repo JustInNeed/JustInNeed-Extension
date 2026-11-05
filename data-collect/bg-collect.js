@@ -114,8 +114,9 @@ Object.assign(VERSION, {
 const coreExport = handlers.export;
 handlers.export = async (m, sender) => {
   const r = await coreExport(m, sender);
-  E = { sessionId: S.sessionId, seq: S.seq };
-  await chrome.storage.local.set({ [K_EXPORTED]: E });
+  const e = { sessionId: S.sessionId, seq: S.seq };
+  await chrome.storage.local.set({ [K_EXPORTED]: e });
+  E = e;                                                  // 저장이 성공한 뒤에만 — 실패하면 내보내기도 실패로 끝나 파일이 안 생긴다
   return r;
 };
 

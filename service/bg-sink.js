@@ -240,8 +240,9 @@ function afterPut(r) {
 // 상자 목록에서 지운다 (serial 안). why = 'sent' | 'other' | 'expired' | 'missing'
 async function dropOut(keys, why) {
   if (!keys.length) return;
+  const had = Q.outbox.filter((o) => keys.includes(o.key)).length;   // 사용자가 이미 지운 키는 세지 않는다 (#40)
   Q.outbox = Q.outbox.filter((o) => !keys.includes(o.key));
-  if (why !== 'sent') Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + keys.length });
+  if (why !== 'sent' && had) Q.dropped = Object.assign({}, Q.dropped, { [why]: (Q.dropped[why] || 0) + had });
   await saveAll();                                        // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
   await chrome.storage.local.remove(keys);
 }
@@ -274,10 +275,16 @@ async function clearOut() {
   if (S.recording) return { ok: false, why: '기록 중에는 지울 수 없어요' };
   if (cutting()) return { ok: false, why: '정지 뒤 마지막 청크를 만드는 중이에요 — 잠시 뒤 다시 눌러 주세요' };
   const keys = Q.outbox.map((o) => o.key);
-  clearGen++;
+  const was = { outbox: Q.outbox, sendErr: Q.sendErr };
   Q.outbox = [];
   Q.sendErr = null;
-  await saveAll();                                        // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
+  try {
+    await saveAll();                                      // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
+  } catch (e) {
+    Object.assign(Q, was);                                // 저장 못 했으면 화면도 그대로 (cut 과 같은 규칙)
+    throw e;
+  }
+  clearGen++;
   if (keys.length) await chrome.storage.local.remove(keys);
   await sendAlarmSync();
   return { ok: true, cleared: keys.length };
