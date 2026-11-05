@@ -272,7 +272,7 @@
   // 노션 펼침 줄 (#37). 노션이 아니거나 아직 시도 안 했으면 없음
   function unfoldLine(u) {
     if (!u) return '';
-    const txt = u.on ? `노션 펼침 켜짐 · 블록 ${u.blocks}개 · 높이 맞춤 ${u.fits}회 · ${u.ms}ms`
+    const txt = u.on ? `노션 펼침 켜짐 · 블록 ${u.blocks}개 · 높이 맞춤 ${u.fits}회 · 다시 펼침 ${u.relinks || 0}회 · 스타일 다시 적용 ${u.fixes || 0}회 · ${u.ms}ms`
       : u.why ? `노션 펼침 실패: ${esc(u.why)}` : `노션 펼침 꺼짐(되돌림) · 블록 ${u.blocks}개`;
     return `<br><span style="color:${u.on ? '#7c3aed' : u.why ? '#c00' : '#999'}">${txt}</span>`;
   }
