@@ -4,8 +4,9 @@
  * background 에 요청만 한다 (규칙 3). 시작/정지의 실제 반영은 background 방송이고,
  * 이 화면은 1초마다 status 를 다시 읽어 그린다 — 낙관적으로 먼저 바꾸지 않는다.
  *
- * 새 기록 시작은 이전 기록을 지운다 (background start, 서버 전송이 없는 동안). 쌓인 기록이 있으면
- * 두 번 눌러야 시작한다. 정지는 한 번 — 실사용 버전에는 평가가 없어 정지로 잃는 것이 없다.
+ * 기록 시작 · 정지는 한 번 누르면 된다 (#40, 11-05 서현). 시작이 지우는 건 이 브라우저의 원본 로그뿐이고,
+ *   그 전에 남은 기록을 마지막 청크로 잘라 보낼 상자에 옮긴다(bg-sink beforeStart) — 사용자가 잃는 것이 없어 경고하지 않는다.
+ *   (데이터 수집 버전은 내보내기 전 기록이 진짜 사라지므로 두 번 누르기가 남아 있다.)
  *
  * 기록 시작 뒤 "본문 준비 중": 데이터 수집 버전 popup.js 와 같은 규칙(#19 서현 요청). 시작을 누르면 바로 닫지 않고
  *   이 탭에 ping 을 보내 기록이 실제로 시작되면(recording && !settling) 닫힌다. ping 실패 · PREP_MAX_MS 지남도 닫힌다.
@@ -50,7 +51,6 @@
   }
 
   let st = null;
-  let armTimer = null;
   let preparing = false;      // 기록 시작 뒤 본문 준비 중 (이 창이 닫히기 전까지)
   let tabId = null;           // 지금 창의 활성 탭 — 본문 준비 확인(ping) 대상
 
@@ -78,11 +78,9 @@
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
-    if (!armTimer) {
-      const btn = $('btn-rec');
-      btn.className = st.recording ? '' : 'primary';
-      btn.textContent = st.recording ? '기록 정지' : '기록 시작';
-    }
+    const btn = $('btn-rec');
+    btn.className = st.recording ? '' : 'primary';
+    btn.textContent = st.recording ? '기록 정지' : '기록 시작';
     if (preparing) {
       $('dot').classList.remove('on');
       $('state').textContent = '본문 준비 중…';
@@ -139,11 +137,6 @@
     }
   }
 
-  function disarm() {
-    clearTimeout(armTimer); armTimer = null;
-    if (st) render();
-  }
-
   $('btn-rec').addEventListener('click', async () => {
     if (!st) return;
     show(null);
@@ -151,14 +144,6 @@
       if (st.recording) {
         await bg({ rbc: 'stop', reason: 'user' });
       } else {
-        if (st.records > 0 && !armTimer) {
-          const btn = $('btn-rec');
-          btn.className = 'armed';
-          btn.textContent = '한 번 더 누르면 이전 기록을 지우고 시작';
-          armTimer = setTimeout(disarm, 4000);
-          return;
-        }
-        disarm();
         await bg({ rbc: 'start' });
         waitReady();                      // 본문 준비가 끝나면 닫힌다 — 시작 = 페이지로 돌아감
         return;
