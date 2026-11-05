@@ -2,7 +2,7 @@
  * 9-panel.js — 디버그 패널 (최상위 프레임 전용)
  *
  * 소유: panelEl, listEl, uiRecording, uiOverlay, prefOverlay, overlayErr, visible
- * 의존(직접 호출): 0-core, RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
+ * 의존(직접 호출): 0-core, RBC.stream(펼치기 실패 시험 #37), RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
  *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock
@@ -179,6 +179,11 @@
                 title="이번 세션만 한도를 크롬 안 20초 · 크롬 밖 40초로 줄인다">빠른 시험 (20초 · 40초)</button>
       </div>
       <div class="rbc-stat" id="rbc-idle">${idleHtml()}</div>
+      <div class="rbc-row">
+        <span>노션</span>
+        <button data-act="unfoldtest" class="${RBC.stream.unfoldTest() ? 'on' : ''}"
+                title="켜면 노션 펼치기가 실패한 것으로 친다 — 기록 전이면 기록 안 함, 기록 중이면 1초 안에 기록을 닫고 실패 창 (#37)">펼치기 실패 시험</button>
+      </div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
@@ -211,6 +216,10 @@
     // 세션 bundle 은 background 가 만든다. 받아서 저장하는 건 11-session → 6-frames.
     panelEl.querySelector('[data-act="exp"]').onclick = () => bus.emit('ui:export');
     panelEl.querySelector('[data-act="idletest"]').onclick = () => bus.emit('ui:idletest', { on: !idleTest() });
+    panelEl.querySelector('[data-act="unfoldtest"]').onclick = () => {   // 이 프레임만 (노션은 최상위가 본문)
+      RBC.stream.setUnfoldTest(!RBC.stream.unfoldTest());
+      render();
+    };
 
     // 검색어는 두 군데로 간다: 페이지 meta 에 넣는 recorder(모든 프레임)와,
     // 세션 검색어를 기록하는 background.
@@ -267,6 +276,14 @@
 
   // s.recording 은 "이 탭에서 지금 구간을 기록 중"이다. 세션 여부는 버튼이 보여준다.
   // s.settling = 본문 준비 중 대기 (구간을 열기 전, 5-recorder). 주황 점.
+  // 노션 펼침 줄 (#37). 노션이 아니거나 아직 시도 안 했으면 없음
+  function unfoldLine(u) {
+    if (!u) return '';
+    const txt = u.on ? `노션 펼침 켜짐 · 블록 ${u.blocks}개 · 높이 맞춤 ${u.fits}회 · 다시 펼침 ${u.relinks || 0}회 · 스타일 다시 적용 ${u.fixes || 0}회 · ${u.ms}ms`
+      : u.why ? `노션 펼침 실패: ${esc(u.why)}` : `노션 펼침 꺼짐(되돌림) · 블록 ${u.blocks}개`;
+    return `<br><span style="color:${u.on ? '#7c3aed' : u.why ? '#c00' : '#999'}">${txt}</span>`;
+  }
+
   function applyStat(s) {
     if (!panelEl || !s) return;
     const primary = RBC.frames.primaryTag();
@@ -296,6 +313,7 @@
       ${s.sampleMs ? `<br><span style="color:${s.sampleMs.p95 > 10 ? '#c00' : '#333'}">` +
         `sample p95 ${s.sampleMs.p95}ms (그중 vis ${s.sampleMs.visP95}ms) · max ${s.sampleMs.max}ms` +
         ` (최근 ${s.sampleMs.n}틱)</span> · 측정 조각 ${s.sampleMs.pieces} · 화면 조각 ${s.visN}` : ''}
+      ${unfoldLine(s.unfold)}
       ${s.tag !== TAG ? `<br><span style="color:#999">frame ${esc(s.tag)}</span>` : ''}
     `);
   }

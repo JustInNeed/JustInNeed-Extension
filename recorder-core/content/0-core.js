@@ -61,6 +61,7 @@
     SETTLE_POLL_MS: 300,
     SETTLE_QUIET_MS: 1500,
     SETTLE_MAX_MS: 6000,
+    SETTLE_MAX_MS_NOTION: 15000,    // 노션 펼침(#37): 블록이 다 붙을 때까지. 그동안 가리개가 페이지를 막는다(서현 11-03)
     SETTLE_ASK_MS: 2000,            // 유닛 0개로 기다리는 동안 primary 다시 뽑기를 요청하는 간격 (블로그 PC 느린 iframe)
     SETTLE_EMPTY_POLL_MS: 1000,     // 최대 대기를 넘겨도 유닛 0개면 이 간격으로 계속 확인 (빈 페이지 비용 줄이기)
 
