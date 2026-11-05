@@ -601,7 +601,7 @@
     const t0 = performance.now();
     const sc = root.closest(NOTION_SCROLLER);
     if (!sc) {
-      unfoldInfo = { on: false, ms: 0, why: '스크롤 상자(' + NOTION_SCROLLER + ')를 못 찾음' };
+      unfoldInfo = Object.assign({}, unfoldInfo, { on: false, ms: 0, why: '스크롤 상자(' + NOTION_SCROLLER + ')를 못 찾음' }); // 횟수는 남긴다
       return false;
     }
     const anchor = viewAnchor(root);
