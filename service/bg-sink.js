@@ -47,9 +47,15 @@
  *   다른 회원이 로그인해 있으면 그 전 회원 청크는 바로 지운다. 못 보낸 청크는 자른 지 3일(KEEP_MS) 지나면 지운다.
  *   지운 수는 Q.dropped → 팝업 회색 줄 (조용히 버리지 않는다).
  *
+ * --- 사용자가 지우기 (#40, 11-05 서현) ------------------------------------------------
+ *   팝업 [보내지 않은 청크 지우기] → clearOut. 보낼 상자를 전부 비운다. 버튼을 누른 것이 곧 지우고 싶다는 뜻이라
+ *   지운 수는 남기지 않고, 지운 청크의 보내기 실패 원문(Q.sendErr)도 지운다.
+ *   기록 중 · 정지 뒤 마지막 청크를 만드는 중이면 거절한다 — 지금 세션 청크를 지우면 번호에 빈칸이 생긴다.
+ *   보내는 중이던 청크 하나는 서버에 닿을 수 있다. 그 돌기의 실패 원문은 clearGen 으로 버린다(지운 청크 것이라).
+ *
  * 자르기는 엔진 serial 안에서만 한다(로그 읽기 · 쓰기가 put 과 꼬이지 않게). 실패는 원문을 Q.err → 팝업 빨간 줄.
  * ========================================================================== */
-/* global VERSION, S, REC, serial, A, K_AUTH, authed */
+/* global VERSION, S, REC, serial, A, K_AUTH, authed, handlers */
 'use strict';
 
 const K_SINK = 'sink:cur';
@@ -257,8 +263,29 @@ function sendAlarmSync() {
   });
 }
 
+// 지금 자르는 세션이 아직 마지막 청크 전인가 (기록 중 · 정지 뒤 마무리 전)
+function cutting() {
+  return !!Q.sessionId && Q.sessionId === S.sessionId && !Q.finalDone;
+}
+
+// 사용자가 지우기 (#40, serial 안 — handlers 는 엔진 줄 안에서 돈다). 머리 주석 "사용자가 지우기"
+let clearGen = 0;
+async function clearOut() {
+  if (S.recording) return { ok: false, why: '기록 중에는 지울 수 없어요' };
+  if (cutting()) return { ok: false, why: '정지 뒤 마지막 청크를 만드는 중이에요 — 잠시 뒤 다시 눌러 주세요' };
+  const keys = Q.outbox.map((o) => o.key);
+  clearGen++;
+  Q.outbox = [];
+  Q.sendErr = null;
+  await saveAll();                                        // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
+  if (keys.length) await chrome.storage.local.remove(keys);
+  await sendAlarmSync();
+  return { ok: true, cleared: keys.length };
+}
+
 // 한 번 돌기: 지금 회원의 청크를 만든 순서대로. 실패한 세션은 이번 돌기에서 뒤 번호를 건너뛰지 않고 멈추고, 다른 세션은 계속.
 async function sendRound() {
+  const gen = clearGen;
   await serial(prune);
   const blocked = new Set();                              // 이번 돌기에서 실패한 세션
   const errs = [];
@@ -289,7 +316,7 @@ async function sendRound() {
     await serial(() => dropOut([next.key], 'sent'));
   }
   if (tried) {                                            // 로그아웃 중이라 안 돌았으면 지난 원문을 그대로 둔다
-    Q.sendErr = errs.length ? errs.join(' / ') : null;
+    Q.sendErr = errs.length && gen === clearGen ? errs.join(' / ') : null;   // 도는 사이 사용자가 지웠으면 지운 청크 원문이다
     await serial(saveSink);                               // serial 밖에서 쓰면 자르기 저장(saveAll)과 엇갈려 책갈피가 앞서 저장될 수 있다(#34 검토)
   }
   await sendAlarmSync();
@@ -343,9 +370,12 @@ VERSION.status = function status() {
       sendErr: Q.sendErr,
       waiting: Q.outbox.length && !A ? '로그아웃 중이라 보내지 않고 둠' : null,
       dropped: Q.dropped,
+      cutting: cutting(),                                 // 팝업 지우기 버튼을 막는 이유 (#40)
     },
   });
 };
+
+Object.assign(handlers, { clearOut });   // 팝업 [보내지 않은 청크 지우기] (#40)
 
 // 리스너는 최상위 동기 등록 — 알람이 꺼진 서비스 워커를 깨운다
 chrome.alarms.onAlarm.addListener((a) => {

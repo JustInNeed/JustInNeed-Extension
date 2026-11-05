@@ -20,6 +20,8 @@
  *   그 아래 "보냄 #n · N초 전" (지운 청크가 있으면 그 수), 자르기 · 보내기 실패 원문은 빨간 줄.
  *   로그아웃 화면에도 못 보낸 청크 수를 띄운다(로그인하면 보냄).
  *   마지막 청크를 만든 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다(정지 뒤 조용해질 때까지 최대 약 35초 기다림).
+ *   [보내지 않은 청크 지우기](#40): 보낼 청크가 있을 때만 보인다. 두 번 눌러야 지운다. 기록 중 · 마지막 청크 만드는 중엔
+ *   막혀 있고 이유가 버튼 글자로 보인다. background 도 같은 조건으로 다시 거절한다(화면만 믿지 않는다).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
@@ -112,6 +114,20 @@
     const errs = [k.err && `청크 자르기 실패: ${k.err}`, k.sendErr && `보내기 실패: ${k.sendErr}`].filter(Boolean);
     $('sink-err').textContent = errs.join(' / ');
     $('sink-err').hidden = !errs.length;
+    renderClear(k);
+  }
+
+  // [보내지 않은 청크 지우기] (#40): 보낼 청크가 있을 때만. 기록 중 · 마지막 청크 만드는 중엔 막고 이유를 버튼에.
+  function renderClear(k) {
+    const btn = $('btn-clear');
+    if (!k.queued) { disarmClear(); btn.hidden = true; return; }
+    btn.hidden = false;
+    const why = st.recording ? '기록 중에는 지울 수 없어요' : k.cutting ? '마지막 청크를 만드는 중이에요 — 잠시 뒤 지울 수 있어요' : null;
+    if (why) disarmClear();
+    btn.disabled = !!why;
+    if (clearTimer) return;
+    btn.className = 'small';
+    btn.textContent = why || `보내지 않은 청크 ${k.queued}개 지우기`;
   }
 
   async function refresh() {
@@ -147,6 +163,28 @@
         waitReady();                      // 본문 준비가 끝나면 닫힌다 — 시작 = 페이지로 돌아감
         return;
       }
+    } catch (e) {
+      show(e.message);
+    }
+    await refresh();
+  });
+
+  // 보내지 않은 청크 지우기 (#40): 두 번 눌러야 지운다(기록 시작과 같은 방식). 지운 수는 따로 남기지 않는다(11-05 서현).
+  let clearTimer = null;
+  function disarmClear() { clearTimeout(clearTimer); clearTimer = null; }
+  $('btn-clear').addEventListener('click', async () => {
+    if (!st || !st.sink) return;
+    show(null);
+    if (!clearTimer) {
+      const btn = $('btn-clear');
+      btn.className = 'small armed';
+      btn.textContent = `한 번 더 누르면 ${st.sink.queued}개를 지워요 — 서버로 가지 않아요`;
+      clearTimer = setTimeout(() => { clearTimer = null; if (st) render(); }, 4000);
+      return;
+    }
+    disarmClear();
+    try {
+      await bg({ rbc: 'clearOut' });
     } catch (e) {
       show(e.message);
     }
