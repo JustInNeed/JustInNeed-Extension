@@ -173,7 +173,7 @@
       <div class="rbc-row">
         <span>노션</span>
         <button data-act="unfoldtest" class="${RBC.stream.unfoldTest() ? 'on' : ''}"
-                title="켜고 기록을 시작하면 노션 펼치기가 실패한 것으로 친다 — 가리개 실패 창 · 기록 안 함 확인용 (#37)">펼치기 실패 시험</button>
+                title="켜면 노션 펼치기가 실패한 것으로 친다 — 기록 전이면 기록 안 함, 기록 중이면 1초 안에 기록을 닫고 실패 창 (#37)">펼치기 실패 시험</button>
       </div>
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>

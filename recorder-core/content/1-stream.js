@@ -3,7 +3,7 @@
  *
  * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin, unfolded(노션 펼치기, #37)
  * 의존(직접 호출): 0-core, vendor/readability.js (전역 Readability)
- * 발행: 없음   구독: record:started, record:stopped
+ * 발행: unfold:lost(#37)   구독: record:started, record:stopped
  *
  * --- 본문 상자 판정 = noise (Readability, #11, 2026-10-28) ---------------------
  *   noise 정의(10-10 서현): 본문 루트 밖이 섞인 것만. 루트 안 글(끝인사 · 크레딧 · 관련 글 링크)은 noise 아님.
@@ -525,7 +525,7 @@
   let keepTimer = 0;
   let unfolded = null;                  // { sc, root, box, saved, styleEl, ro, fits } | null
   let unfoldInfo = null;                // 패널용 마지막 결과 { on, ms, why } | null(이 페이지에서 시도 안 함)
-  let unfoldTest = false;               // 패널 [펼치기 실패 시험] — 켜져 있으면 unfoldCheck 가 실패를 돌려준다
+  let unfoldTest = false;               // 패널 [펼치기 실패 시험] — 켜져 있으면 unfoldCheck 가 실패, 기록 중이면 지키기가 unfold:lost
   let curtainEl = null;
   const CURTAIN_KEYS = new Set([' ', 'PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End']);
   const curtainBlock = (e) => { e.preventDefault(); e.stopPropagation(); };
@@ -576,11 +576,16 @@
 
   // 기록 중 지키기 (UNFOLD_KEEP_MS 마다): 화면이 다시 그려졌으면 새 상자로 다시 펼치고(relinks),
   //   노션이 우리 스타일을 덮었으면 다시 적용한다(fixes). 둘 다 패널 줄에 횟수로 보인다.
+  //   다시 펼치기가 실패하면(또는 [펼치기 실패 시험] 켜짐) unfold:lost → 5-recorder 가 구간을 닫고 실패 창 (11-05 서현).
   function keepUnfolded() {
     const u = unfolded;
     if (!u) { clearInterval(keepTimer); keepTimer = 0; return; }
+    if (unfoldTest) { bus.emit('unfold:lost', { why: unfoldCheck() }); return; }
     if (!document.querySelector(NOTION_ROOT)) return;          // 이동 중 잠깐 루트가 없음 → 다음 번에
-    if (!alive(u)) { unfoldNotion(); return; }
+    if (!alive(u)) {
+      if (!unfoldNotion()) bus.emit('unfold:lost', { why: unfoldInfo.why });
+      return;
+    }
     let fixed = false;
     for (const [e] of u.saved) {
       for (const [p, v] of UNFOLD_SET) {

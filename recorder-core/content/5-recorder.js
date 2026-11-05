@@ -5,7 +5,7 @@
  *       flushTimer, tickCount, prev*(틱 간 비교값), searchQuery, 마지막 틱 표시값
  * 의존(직접 호출): 0-core, 1-stream(rootInfo · 노션 펼치기 #37), 2-units, 3-hittest, 4-input
  * 발행: record:started, record:stopped, tick:done, stat, seg:page, seg:flush, settle:empty
- * 구독: cmd:start, cmd:stop, cmd:query, primary:changed,
+ * 구독: cmd:start, cmd:stop, cmd:query, unfold:lost(#37), primary:changed,
  *       overlay:changed, units:changed, units:rescanned,
  *       sel:highlight, sel:copy, visibility, focus, pagehide,
  *       label:mode, label:ask, label:done
@@ -487,7 +487,7 @@
   }
 
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
-  // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session)
+  // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session) | 'unfold'(기록 중 노션 다시 펼치기 실패, #37)
   function stop(reason) {
     RBC.stream.restoreNotion();                        // 노션 펼친 것을 되돌린다 (#37, 기록 중에만 펼침)
     RBC.stream.curtain(null);                          // 실패 창이 떠 있었으면 닫는다 (노션 안 이동 뒤 남지 않게)
@@ -553,6 +553,17 @@
   // ==========================================================================
   bus.on('cmd:start', (m) => start(m));
   bus.on('cmd:stop', (m) => stop((m && m.reason) || 'user'));   // 6-frames 가 사유를 실어 보낸다
+
+  // 다시 펼치기 실패 (1-stream 지키기, #37 11-05 서현): 기록 중이면 구간을 닫고, 대기 중이면 열지 않는다. 둘 다 실패 창.
+  //   unfoldFail 은 stop 이 지우므로 닫은 뒤에 건다 — 같은 세션 · 같은 글은 다시 열지 않는다(노션 안 이동 뒤엔 다시 시도).
+  bus.on('unfold:lost', (d) => {
+    if (settle) { failUnfold(settle, d.why); return; }
+    if (!recording) return;
+    const key = failKey({ sessionId });
+    stop('unfold');
+    unfoldFail = key;
+    RBC.stream.curtain('fail', d.why);
+  });
 
   bus.on('cmd:query', (m) => {                       // [C8] 모든 프레임이 갱신
     searchQuery = (m.q || '').trim() || null;
