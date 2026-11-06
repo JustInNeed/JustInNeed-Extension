@@ -49,7 +49,8 @@
  *
  * --- 사용자가 지우기 (#40, 11-05 서현) ------------------------------------------------
  *   팝업 [보내지 않은 청크 지우기] → clearOut. 보낼 상자를 전부 비운다. 버튼을 누른 것이 곧 지우고 싶다는 뜻이라
- *   지운 수는 남기지 않고, 지운 청크의 보내기 실패 원문(Q.sendErr)도 지운다.
+ *   지운 수는 남기지 않고, 팝업 서버 전송 줄도 깨끗이 한다 — 보내기 실패 원문(Q.sendErr) · 자르기 실패 원문(Q.err) ·
+ *   늦게 와서 빠진 기록 수(Q.late). 셋 다 지운 청크들에 관한 옛 이야기다(11-05 서현).
  *   기록 중 · 정지 뒤 마지막 청크를 만드는 중이면 거절한다 — 지금 세션 청크를 지우면 번호에 빈칸이 생긴다.
  *   보내는 중이던 청크 하나는 서버에 닿을 수 있다. 그 돌기의 실패 원문은 clearGen 으로 버린다(지운 청크 것이라).
  *
@@ -275,9 +276,11 @@ async function clearOut() {
   if (S.recording) return { ok: false, why: '기록 중에는 지울 수 없어요' };
   if (cutting()) return { ok: false, why: '정지 뒤 마지막 청크를 만드는 중이에요 — 잠시 뒤 다시 눌러 주세요' };
   const keys = Q.outbox.map((o) => o.key);
-  const was = { outbox: Q.outbox, sendErr: Q.sendErr };
+  const was = { outbox: Q.outbox, sendErr: Q.sendErr, err: Q.err, late: Q.late };
   Q.outbox = [];
   Q.sendErr = null;
+  Q.err = null;                                           // 자르기 실패 원문 · 늦게 와서 빠진 기록 수도 — 지운 청크들의 옛 이야기 (11-05 서현)
+  Q.late = 0;
   try {
     await saveAll();                                      // 목록 · 상태 먼저, 내용은 뒤에 (머리 주석 "저장 순서")
   } catch (e) {
