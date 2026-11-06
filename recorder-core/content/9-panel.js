@@ -88,7 +88,7 @@
   let electHtml = '';                    // 마지막 primary 뽑기 후보 · 새 규칙 결과 (#47)
   let linkMsg = '';                      // background 연결 문제. 비어 있으면 정상
   let overlayErr = '';                   // 오버레이 설정 저장 · 읽기 실패 원문(#36). 다음 성공 때 지운다
-  let noiseMinPct = 20;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
+  let noiseMinPct = 5;                   // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
   let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
   let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
   let skipRule = null;                   // 이 주소가 걸린 기록 안 할 주소 규칙 { url, why, label } (#49). skip:page 로만 바뀐다
@@ -170,7 +170,7 @@
                data-act="chunk" ${lock}>
         <span id="rbc-chunkval">${RBC.units.opts().target}자</span>
       </div>
-      <div class="rbc-row" title="루트 글자 중 Readability 본문 상자 안 비율이 이보다 낮으면 미판정. 20% 는 근거 없는 임시값">
+      <div class="rbc-row" title="루트 글자 중 Readability 본문 상자 안 비율이 이보다 낮으면 미판정(상자가 루트 안에 거의 없음). 5% 는 근거 없는 임시값">
         <span>본문 문턱</span>
         <input type="range" min="0" max="100" step="5" value="${noiseMinPct}" data-act="noisemin" ${lock}>
         <span id="rbc-noiseminval">${noiseMinPct}%</span>
