@@ -4,8 +4,9 @@
  * background 에 요청만 한다 (규칙 3). 시작/정지의 실제 반영은 background 방송이고,
  * 이 화면은 1초마다 status 를 다시 읽어 그린다 — 낙관적으로 먼저 바꾸지 않는다.
  *
- * 새 기록 시작은 이전 기록을 지운다 (background start, 서버 전송이 없는 동안). 쌓인 기록이 있으면
- * 두 번 눌러야 시작한다. 정지는 한 번 — 실사용 버전에는 평가가 없어 정지로 잃는 것이 없다.
+ * 기록 시작 · 정지는 한 번 누르면 된다 (#40, 11-05 서현). 시작이 지우는 건 이 브라우저의 원본 로그뿐이고,
+ *   그 전에 남은 기록을 마지막 청크로 잘라 보낼 상자에 옮긴다(bg-sink beforeStart) — 사용자가 잃는 것이 없어 경고하지 않는다.
+ *   (데이터 수집 버전은 내보내기 전 기록이 진짜 사라지므로 두 번 누르기가 남아 있다.)
  *
  * 기록 시작 뒤 "본문 준비 중": 데이터 수집 버전 popup.js 와 같은 규칙(#19 서현 요청). 시작을 누르면 바로 닫지 않고
  *   이 탭에 ping 을 보내 기록이 실제로 시작되면(recording && !settling) 닫힌다. ping 실패 · PREP_MAX_MS 지남도 닫힌다.
@@ -20,6 +21,10 @@
  *   그 아래 "보냄 #n · N초 전" (지운 청크가 있으면 그 수), 자르기 · 보내기 실패 원문은 빨간 줄.
  *   로그아웃 화면에도 못 보낸 청크 수를 띄운다(로그인하면 보냄).
  *   마지막 청크를 만든 뒤에 늦게 와서 청크에 못 넣은 기록이 있으면 그 수도 띄운다(정지 뒤 조용해질 때까지 최대 약 35초 기다림).
+ *   [보내지 않은 청크 지우기](#40): 보낼 청크가 있을 때만 보인다. 두 번 눌러야 지운다. 기록 중 · 마지막 청크 만드는 중엔
+ *   막혀 있고 이유가 버튼 글자로 보인다. background 도 같은 조건으로 다시 거절한다(화면만 믿지 않는다).
+ * [웹에서 내 기록 보기](#40): 로그인 화면엔 없다. status 의 web 주소(웹의 내 세션 목록)를 이 창이 직접 새 탭으로 연다(분석 상태 확인용).
+ *   background 명령으로 보내면 기록 시작 직후 줄(serial)에 밀려 늦게 열려서 직접 연다(11-06 서현).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
@@ -48,7 +53,6 @@
   }
 
   let st = null;
-  let armTimer = null;
   let preparing = false;      // 기록 시작 뒤 본문 준비 중 (이 창이 닫히기 전까지)
   let tabId = null;           // 지금 창의 활성 탭 — 본문 준비 확인(ping) 대상
 
@@ -76,11 +80,9 @@
     $('dot').classList.toggle('on', st.recording);
     $('state').textContent = st.recording ? '기록 중' : '기록 대기';
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
-    if (!armTimer) {
-      const btn = $('btn-rec');
-      btn.className = st.recording ? '' : 'primary';
-      btn.textContent = st.recording ? '기록 정지' : '기록 시작';
-    }
+    const btn = $('btn-rec');
+    btn.className = st.recording ? '' : 'primary';
+    btn.textContent = st.recording ? '기록 정지' : '기록 시작';
     if (preparing) {
       $('dot').classList.remove('on');
       $('state').textContent = '본문 준비 중…';
@@ -112,6 +114,20 @@
     const errs = [k.err && `청크 자르기 실패: ${k.err}`, k.sendErr && `보내기 실패: ${k.sendErr}`].filter(Boolean);
     $('sink-err').textContent = errs.join(' / ');
     $('sink-err').hidden = !errs.length;
+    renderClear(k);
+  }
+
+  // [보내지 않은 청크 지우기] (#40): 보낼 청크가 있을 때만. 기록 중 · 마지막 청크 만드는 중엔 막고 이유를 버튼에.
+  function renderClear(k) {
+    const btn = $('btn-clear');
+    if (!k.queued) { disarmClear(); btn.hidden = true; return; }
+    btn.hidden = false;
+    const why = st.recording ? '기록 중에는 지울 수 없어요' : k.cutting ? '마지막 청크를 만드는 중이에요 — 잠시 뒤 지울 수 있어요' : null;
+    if (why) disarmClear();
+    btn.disabled = !!why;
+    if (clearTimer) return;
+    btn.className = 'small';
+    btn.textContent = why || `보내지 않은 청크 ${k.queued}개 지우기`;
   }
 
   async function refresh() {
@@ -123,11 +139,6 @@
     }
   }
 
-  function disarm() {
-    clearTimeout(armTimer); armTimer = null;
-    if (st) render();
-  }
-
   $('btn-rec').addEventListener('click', async () => {
     if (!st) return;
     show(null);
@@ -135,18 +146,32 @@
       if (st.recording) {
         await bg({ rbc: 'stop', reason: 'user' });
       } else {
-        if (st.records > 0 && !armTimer) {
-          const btn = $('btn-rec');
-          btn.className = 'armed';
-          btn.textContent = '한 번 더 누르면 이전 기록을 지우고 시작';
-          armTimer = setTimeout(disarm, 4000);
-          return;
-        }
-        disarm();
         await bg({ rbc: 'start' });
         waitReady();                      // 본문 준비가 끝나면 닫힌다 — 시작 = 페이지로 돌아감
         return;
       }
+    } catch (e) {
+      show(e.message);
+    }
+    await refresh();
+  });
+
+  // 보내지 않은 청크 지우기 (#40): 두 번 눌러야 지운다(기록 시작과 같은 방식). 지운 수는 따로 남기지 않는다(11-05 서현).
+  let clearTimer = null;
+  function disarmClear() { clearTimeout(clearTimer); clearTimer = null; }
+  $('btn-clear').addEventListener('click', async () => {
+    if (!st || !st.sink) return;
+    show(null);
+    if (!clearTimer) {
+      const btn = $('btn-clear');
+      btn.className = 'small armed';
+      btn.textContent = `한 번 더 누르면 ${st.sink.queued}개를 지워요 — 서버로 가지 않아요`;
+      clearTimer = setTimeout(() => { clearTimer = null; if (st) render(); }, 4000);
+      return;
+    }
+    disarmClear();
+    try {
+      await bg({ rbc: 'clearOut' });
     } catch (e) {
       show(e.message);
     }
@@ -160,6 +185,17 @@
       await bg({ rbc: 'login' });
     } catch (e) {
       show(e.message);
+    }
+  });
+
+  // 웹에서 내 기록 보기 (#40): 웹의 내 세션 목록을 직접 새 탭으로 연다(background 줄을 기다리지 않게). 새 탭이 앞에 오며 이 창은 닫힌다.
+  $('btn-web').addEventListener('click', async () => {
+    show(null);
+    try {
+      if (!st || !st.web) throw new Error('웹 주소를 아직 못 받았습니다 — 잠시 뒤 다시 눌러 주세요');
+      await chrome.tabs.create({ url: st.web });
+    } catch (e) {
+      show(`웹을 열지 못했습니다. (${e.message || e})`);
     }
   });
 

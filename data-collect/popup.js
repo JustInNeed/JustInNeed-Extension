@@ -9,7 +9,8 @@
  *   세션과 페이지의 검색어가 갈린다.
  *
  * 새 기록 시작은 이전 기록을 지운다 (background start). 쌓인 기록이 있으면
- * 경고를 띄우고 두 번 눌러야 시작한다.
+ * 경고를 띄우고 두 번 눌러야 시작한다. 단 이미 내보냈고 그 뒤로 기록이 늘지 않았으면(status.exported)
+ * 잃는 것이 없으므로 경고 없이 한 번에 시작한다 (#40, 11-05 서현).
  *
  * 읽는 목적도 검색어와 같은 규칙 — 기록 시작 전에만 받는다.
  * 링크 번호(#24): 000~300 목록에서 골라야 [기록 시작]이 눌린다. 오타가 나지 않게 직접 입력은 받지 않는다.
@@ -120,7 +121,7 @@
       btn.className = rec ? '' : 'primary';
       btn.innerHTML = rec ? '<i class="stop-mark"></i>기록 정지' : '기록 시작';
     }
-    const willWipe = !rec && st.records > 0;
+    const willWipe = !rec && st.records > 0 && !st.exported;
     $('warn').hidden = !willWipe;
     $('warn').textContent = willWipe
       ? `새로 시작하면 지금 쌓인 기록(글 ${st.pages}개)이 지워집니다. 필요하면 먼저 내보내세요.` : '';
@@ -229,7 +230,7 @@
         disarm();
         await bg({ rbc: 'stop', reason: 'user' });
       } else {
-        if (st.records > 0 && !armTimer) {
+        if (st.records > 0 && !st.exported && !armTimer) {   // 내보낸 뒤 그대로면 잃을 것이 없다 (#40)
           btn.className = 'armed';
           btn.textContent = '한 번 더 누르면 새로 시작';
           armTimer = setTimeout(disarm, 4000);

@@ -7,6 +7,8 @@
  *
  * --- 흐름 (BE 담당 안내문 · BE #101) -------------------------------------------
  *   팝업 [로그인하러 가기] → login 명령 → 지금 탭을 기억하고 웹 연결 페이지(WEB_CONNECT)를 새 탭으로 연다.
+ *   팝업 [웹에서 내 기록 보기](#40) → status 의 web 주소(WEB_SESSIONS, 웹의 내 세션 목록)를 팝업이 직접 새 탭으로 연다.
+ *     명령으로 보내지 않는 이유: 명령은 엔진 serial 줄에 서는데, 기록 시작 직후엔 그 줄이 길어 몇 초 늦게 열렸다(11-06 서현).
  *   웹에 로그인되면 웹이 POST /auth/extension-code 로 1회용 코드(60초)를 받아
  *   chrome.runtime.sendMessage(확장 ID, { type: 'JIN_CONNECT', code }) 로 보낸다.
  *   확장은 POST /auth/token { code } → 자기 전용 access · refresh 토큰 → GET /members/me 로 회원 id.
@@ -47,6 +49,7 @@ const PROD_WEB = 'https://just-in-need-fe.vercel.app';
 const API_BASE = PROD_API;                                         // manifest host_permissions 와 같아야 한다
 const WEB_BASE = PROD_WEB;
 const WEB_CONNECT = WEB_BASE + '/extension/connect';              // 웹 연결 페이지 (웹 레포에 만들 것, 청크 3)
+const WEB_SESSIONS = WEB_BASE + '/sessions';                       // 웹의 내 세션 목록 — 분석 상태가 보인다 (#40)
 const WEB_ORIGINS = [WEB_BASE];                                    // manifest externally_connectable 과 같아야 한다
 //   localhost:3000 은 뺐다(검토 11-02) — 사용자 컴퓨터의 아무 개발 서버나 회원 id 를 읽거나 다른 계정을 연결할 수 있어서.
 //   운영 서버 CORS 가 localhost 를 막아 쓸 일도 없다. 웹을 로컬 BE 로 개발할 때만 여기 · manifest 에 잠깐 더한다.
@@ -252,6 +255,7 @@ Object.assign(VERSION, {
       loginErr: authErr,
       loginNote: authNote,
       testServer: API_BASE !== PROD_API ? API_BASE : null,   // 시험 서버 빌드면 팝업 맨 위에 주소를 띄운다 (#34)
+      web: WEB_SESSIONS,                                       // 팝업 [웹에서 내 기록 보기]가 직접 연다 (#40)
     };
   },
 });

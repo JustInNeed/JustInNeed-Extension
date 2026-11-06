@@ -32,6 +32,11 @@
  *   정답 / 오답 = 평가의 설문 앞 팝업에서 참가자가 고른 값(O · X). 평가 [완료]의 stop(reason 'labeled')에 answer 로 온다.
  *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
  *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
+ *
+ * --- 내보냄 기억 (#40, 11-05 서현) ------------------------------------------------
+ *   export 가 성공하면 { sessionId, seq } 를 'exported' 키에 둔다. status.exported = 이 세션을 내보낸 뒤로 기록이 늘지 않음.
+ *   팝업은 exported 면 "새로 시작하면 지워집니다" 경고 · 두 번 누르기를 하지 않는다(이미 파일로 나갔으므로).
+ *   파일이 실제로 저장됐는지는 모른다(a.download) — 저장 창에서 취소해도 내보낸 것으로 친다(예상: 크롬 기본은 창 없이 저장).
  * ========================================================================== */
 /* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField */
 'use strict';
@@ -46,6 +51,8 @@ const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
 
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
 let L = null;                 // { linkNo, sessionId, answer } | null
+const K_EXPORTED = 'exported'; // 마지막으로 내보낸 { sessionId, seq } (#40). 로그 밖 — JSON 에 안 들어간다
+let E = null;
 
 // ============================================================================
 // 동의
@@ -76,9 +83,10 @@ function testerInfo() {
 
 Object.assign(VERSION, {
   mode: 'download',
-  ready: chrome.storage.local.get([K_CONSENT, K_LINK]).then((r) => {
+  ready: chrome.storage.local.get([K_CONSENT, K_LINK, K_EXPORTED]).then((r) => {
     C = r[K_CONSENT] || null;
     L = r[K_LINK] || null;
+    E = r[K_EXPORTED] || null;
   }),
   async gate() { return consentValid() ? null : 'no-consent'; },
   tester: testerInfo,
@@ -96,9 +104,21 @@ Object.assign(VERSION, {
       // 이번 세션의 링크 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
       linkNo: L && L.sessionId === S.sessionId ? L.linkNo : null,
       answer: L && L.sessionId === S.sessionId ? (L.answer || null) : null,
+      // 이 세션을 내보낸 뒤로 기록이 늘지 않았음 → 새로 시작해도 잃는 것이 없다 (#40)
+      exported: !!(E && S.sessionId && E.sessionId === S.sessionId && E.seq === S.seq),
     };
   },
 });
+
+// 내보내기가 성공하면 어디까지 내보냈는지 기억한다 (#40). 내보내기 자체는 엔진 그대로.
+const coreExport = handlers.export;
+handlers.export = async (m, sender) => {
+  const r = await coreExport(m, sender);
+  const e = { sessionId: S.sessionId, seq: S.seq };
+  await chrome.storage.local.set({ [K_EXPORTED]: e });
+  E = e;                                                  // 저장이 성공한 뒤에만 — 실패하면 내보내기도 실패로 끝나 파일이 안 생긴다
+  return r;
+};
 
 // 기록 시작에 링크 번호를 요구한다. 엔진 start 는 그대로 부르고, 시작에 성공하면 번호를 'link' 키에 둔다.
 //   동의가 없으면 엔진 gate 의 'no-consent' 가 먼저 나오도록 동의부터 본다.
