@@ -66,7 +66,7 @@
  *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫.
  *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
- *   - 확실한 광고 위젯(AD_WIDGETS, #51)은 통째로 뺀다 — 역시 DOM 만 보고 정한다.
+ *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자, #51 · #53)은 통째로 뺀다 — 역시 DOM 만 보고 정한다.
  *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
@@ -152,13 +152,16 @@
     return false;
   }
 
-  // 광고 위젯 (#51, 11-06 서현) — 광고가 확실한 칸만 통째로 스트림에서 뺀다. 모든 사이트.
-  //   본문 아닌 글은 보통 조각에 noise 로 표시만 하지만(§6), 이 칸들은 방문마다 붙었다 안 붙었다 해서
-  //   넣어 두면 같은 글의 주변 유닛 pid 가 방문마다 갈린다. 빼면 광고 유무와 상관없이 같은 유닛이 된다.
-  //   목록은 사람이 확인한 것만 넣는다(이름으로 광고가 확실한 것). 오버레이가 회색 점선으로 보여 준다.
+  // 본문 아닌 위젯 (#51 → #53, 11-06 서현) — 본문이 아닌 게 확실한 칸(광고 · 떠다니는 추천 상자)만
+  //   통째로 스트림에서 뺀다. 모든 사이트. 이름은 #51 때 광고만 넣던 그대로 AD_WIDGETS.
+  //   본문 아닌 글은 보통 조각에 noise 로 표시만 하지만(§6), 이 칸들은 방문마다 붙었다 안 붙었다 · 내용이 바뀌어
+  //   넣어 두면 같은 글의 주변 유닛 pid 가 방문마다 갈린다. 빼면 위젯 유무와 상관없이 같은 유닛이 된다.
+  //   목록은 사람이 확인한 것만 넣는다(이름으로 본문 아님이 확실한 것). 오버레이가 회색 점선으로 보여 준다.
   //   .gliaplayer-container = GliaStudios 동영상 광고 플레이어. 뉴시스 기사 본문 사이에 끼고,
-  //     안의 숨은 조작 글자(play_arrow · volume_mute · AD …)가 빈 동영상 자리에 조각으로 찍혔다.
-  const AD_WIDGETS = '.gliaplayer-container';
+  //     안의 숨은 조작 글자(play_arrow · volume_mute · AD …)가 빈 동영상 자리에 조각으로 찍혔다(#51).
+  //   [data-area-name="플로팅추천영역"] = 한국일보 떠다니는 추천 기사 상자(스크립트가 넣음, sticky · 평소 숨김).
+  //     댓글 뒤에 붙어 마지막 유닛 끝 조각이 됐고, 숨어 있어도 자리가 있어 본문 위를 떠다니며 찍혔다(#53).
+  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"]';
 
   // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
   // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
@@ -806,7 +809,7 @@
     attrs,                              // el → [tag, id, class, role]
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
-    adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 광고 위젯 칸 (#51, 오버레이용)
+    adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
     noiseMin: () => noiseMin,
     setNoiseMin: (v) => { noiseMin = v; },   // 기록 중 차단은 6-frames(chunk 명령) · 9-panel
   };
