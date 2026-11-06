@@ -259,7 +259,8 @@
     } else if (n.status === 'site') {
       s += `<br><span style="color:#666">${NOISE_HOW.site}</span>`;
     } else {
-      s += `<br><span style="color:#7e22ce">상자 ${esc(n.boxes.join(', '))}</span> · 상자 안 비율 <b>${pct(n.ratio)}</b>` +
+      s += '<br>' + (n.by ? `<b style="color:#7e22ce">${esc(n.by)} 지정 본문 칸 ${n.boxes.length}개 (Readability 안 씀)</b><br>` : '') +
+        `<span style="color:#7e22ce">상자 ${esc(n.boxes.join(', '))}</span> · 상자 안 비율 <b>${pct(n.ratio)}</b>` +
         ` / 문턱 ${pct(n.min)} → ` + (n.decided ? '판정함' : '<b style="color:#b45309">미판정 (비율 &lt; 문턱)</b>');
     }
     if (n.ms != null) s += ` · ${n.ms}ms`;
@@ -313,6 +314,8 @@
       ${s.sampleMs ? `<br><span style="color:${s.sampleMs.p95 > 10 ? '#c00' : '#333'}">` +
         `sample p95 ${s.sampleMs.p95}ms (그중 vis ${s.sampleMs.visP95}ms) · max ${s.sampleMs.max}ms` +
         ` (최근 ${s.sampleMs.n}틱)</span> · 측정 조각 ${s.sampleMs.pieces} · 화면 조각 ${s.visN}` : ''}
+      ${s.title ? `<br><span style="color:#555">제목: ${esc(s.title.text.slice(0, 40))}</span>` +
+        ` <span style="color:#999">(${s.title.from === 'seg' ? '이 구간에 기록됨' : esc(s.title.from)})</span>` : ''}
       ${unfoldLine(s.unfold)}
       ${s.tag !== TAG ? `<br><span style="color:#999">frame ${esc(s.tag)}</span>` : ''}
     `);
