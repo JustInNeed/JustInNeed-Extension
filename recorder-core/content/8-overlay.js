@@ -22,6 +22,7 @@
  *   조각 noise === true 인 글은 빨간 바탕 + 물결 밑줄(rbc-noise), vis 상자도 빨간 점선 + "noise" 라벨.
  *   Readability 가 고른 본문 상자(1-stream article().boxEls)는 보라 굵은 테두리 + "본문 상자" 라벨.
  *   테두리가 기사 본문을 감싸면 상자를 제대로 되찾은 것이고, 사이드바 · 댓글 · 페이지 전체면 잘못 찾은 것.
+ *   스트림에서 통째로 뺀 광고 위젯(1-stream AD_WIDGETS, #51)은 회색 점선 + "광고 위젯" 라벨 — 그 안엔 조각이 없어야 맞다.
  *   상자 위치는 틱마다 다시 잰다(상자는 몇 개뿐). Highlight 미지원 폴백에는 noise 칠하기를 안 넣었다(크롬은 지원).
  *
  * --- 판정 기준 --------------------------------------------------------------
@@ -93,6 +94,8 @@
         padding:0 4px; color:#fff; background:rgba(147,51,234,.95); white-space:nowrap; }
       .rbc-art-box.skip{ border:3px dashed rgba(220,38,38,.95); }
       .rbc-art-box.skip > span{ background:rgba(220,38,38,.95); }
+      .rbc-art-box.ad{ border:3px dashed rgba(107,114,128,.95); }
+      .rbc-art-box.ad > span{ background:rgba(107,114,128,.95); }
     `;
     document.documentElement.appendChild(s);
   }
@@ -212,7 +215,9 @@
     // 본문 상자 뒤에 뺄 칸(광고 자리, #45)을 빨간 점선으로
     const ok = a && a.status === 'ok';
     const nBox = ok ? a.boxEls.length : 0;
-    const els = ok ? a.boxEls.concat(a.skipEls) : [];
+    const nSkip = ok ? a.skipEls.length : 0;
+    // 그 뒤에 스트림에서 통째로 뺀 광고 위젯(#51)을 회색 점선으로 — 판정과 무관하게 늘 그린다
+    const els = (ok ? a.boxEls.concat(a.skipEls) : []).concat(RBC.stream.adWidgets());
     if (!boxLayer) {
       boxLayer = document.createElement('div');
       boxLayer.id = 'rbc-box';
@@ -231,10 +236,12 @@
       if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
-      d.className = i < nBox ? 'rbc-art-box' : 'rbc-art-box skip';
+      d.className = i < nBox ? 'rbc-art-box' : i < nBox + nSkip ? 'rbc-art-box skip' : 'rbc-art-box ad';
       d.firstChild.textContent = i < nBox
         ? `본문 상자 (${a.by ? a.by + ' 지정' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
-        : `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}` + (a.decided ? '' : ' · 미판정');
+        : i < nBox + nSkip
+          ? `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}` + (a.decided ? '' : ' · 미판정')
+          : '광고 위젯 = 스트림에서 뺌';
     }
   }
 
