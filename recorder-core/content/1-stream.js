@@ -163,7 +163,9 @@
   //     안의 숨은 조작 글자(play_arrow · volume_mute · AD …)가 빈 동영상 자리에 조각으로 찍혔다(#51).
   //   [data-area-name="플로팅추천영역"] = 한국일보 떠다니는 추천 기사 상자(스크립트가 넣음, sticky · 평소 숨김).
   //     댓글 뒤에 붙어 마지막 유닛 끝 조각이 됐고, 숨어 있어도 자리가 있어 본문 위를 떠다니며 찍혔다(#53).
-  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"]';
+  //   [id^="svcad_"] = 서울경제 광고 자리(svcad_28 이노레임 글 광고 · 구글 광고 등). 스크립트가 본문 첫 문단 앞뒤로
+  //     옮겨 넣고 광고 글이 방문마다 바뀌어, 본문 유닛에 본문으로 섞이고 그 유닛 pid 가 방문마다 갈렸다(#53 jsdom).
+  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"]';
 
   // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
   // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
@@ -434,6 +436,9 @@
     // 경향신문(#45): Readability 상자(section.art_cont)가 사실상 #articleBody 하나라 본문은 잘 잡는다. 칸 안 광고 자리
     //   (사진 아래 텍스트 광고 #articleImageTxtAd · 본문 배너)가 전부 .ad-wrapper 로 감싸져 있어 그것만 뺀다.
     { host: /(^|\.)khan\.co\.kr$/, sel: '[id="articleBody"]', name: '경향신문', skip: '.ad-wrapper' },
+    // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
+    //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
+    { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
