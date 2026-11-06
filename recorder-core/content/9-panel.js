@@ -491,7 +491,8 @@
     const name = (c) => c.top ? '본 페이지' : `frame ${esc(c.tag)} ${esc(c.host)}`;
     const MAX = 5;
     const rows = d.cands.slice(0, MAX).map(c =>
-      `${c.tag === d.tag ? '✓' : '·'} ${name(c)} — 유닛 ${c.units} · ${c.chars.toLocaleString()}자 · 루트 ${esc(c.how || '없음')}`);
+      // 숫자는 다른 출처 iframe 이 보낸 값이라 Number 로만 넣는다
+      `${c.tag === d.tag ? '✓' : '·'} ${name(c)} — 유닛 ${Number(c.units)} · ${Number(c.chars).toLocaleString()}자 · 루트 ${esc(c.how || '없음')}`);
     if (d.cands.length > MAX) rows.push(`… 외 ${d.cands.length - MAX}개`);
     const old = d.cands.find(c => c.tag === d.old);
     const verdict = d.old === d.tag
