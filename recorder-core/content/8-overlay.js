@@ -226,7 +226,7 @@
       if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
-      d.firstChild.textContent = `본문 상자 (Readability) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정');
+      d.firstChild.textContent = `본문 상자 (${a.by ? a.by + ' 지정' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정');
     }
   }
 

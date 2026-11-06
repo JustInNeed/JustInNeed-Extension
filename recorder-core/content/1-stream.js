@@ -18,6 +18,8 @@
  *     원본 페이지에는 아무것도 쓰지 않는다(쓰면 7-observer 가 재스캔한다).
  *   - 되찾은 뒤 대조: 복사본 상자에 남은 글 표본이 원본 상자 글에 다 들어 있어야 한다. 아니면 실패.
  *   - 플랫폼 지정 루트(how: site) = 루트가 곧 본문(§6 결정) → Readability 를 안 돌리고 전부 본문.
+ *   - 사이트 지정 본문 칸(SITE_BOXES, #43) = 루트는 그대로 두고 Readability 대신 그 칸들을 전부 상자로(art.by).
+ *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
  *   - 루트 글자 중 상자 안 비율 < noiseMin 이면 엉뚱한 곳을 고른 것으로 보고 미판정. noiseMin 은 근거 없는
  *     임시값 — 패널 슬라이더로 바꾼다(기록 중 잠김, 청킹과 같은 길).
  *   - 실패 · 미판정이면 조각에 noise 필드를 안 쓴다(없음 = 미판정, v3 그대로). 이유는 원문 그대로 art.why → 패널.
@@ -389,12 +391,21 @@
   // ==========================================================================
   const MARK = 'data-rbc-i';
   let noiseMin = 0.3;        // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
-  let art = null;            // { status: site|ok|fail, why, boxes[], ratio, ms, root, raw }
+  let art = null;            // { status: site|ok|fail, by?(사이트 지정 칸 이름), why, boxes[], ratio, ms, root, raw }
   let recordingNow = false;  // 5-recorder 소유 recording 의 미러. 기록 중엔 판정을 유지한다.
   bus.on('record:started', () => { recordingNow = true; });
   bus.on('record:stopped', () => { recordingNow = false; });
 
   const squash = (s) => (s || '').replace(/\s+/g, '');
+
+  // 사이트 지정 본문 칸 (#43) — 이 사이트에서는 Readability 대신 이 칸들을 전부 본문 상자로 쓴다. 루트는 그대로.
+  //   블로터: 읽다가 스크롤하면 다음 기사 1개를 #enters 에 이어 붙인다(articleScrollAdd.php, 주소 그대로).
+  //   루트가 두 기사를 다 담고 Readability 는 하나만 골라 아래 기사를 고르자 위 기사(주소의 기사)가 전부 noise 였다.
+  //   붙는 기사도 같은 id 라 id 가 겹친다 → [id=…] 로 전부 잡는다. 비율 · 문턱은 Readability 상자와 같게 본다.
+  const SITE_BOXES = [{ host: /(^|\.)bloter\.net$/, sel: '[id="article-view-content-div"]', name: '블로터' }];
+  const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
+  const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
+  const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
 
   // 복사본에서 Readability 를 돌려 원본의 상자 요소들을 돌려준다. 실패면 { why }.
   function findBoxes() {
@@ -446,26 +457,39 @@
   // 판정을 최신으로 맞춘다 (필요할 때만 다시 돈다). 2-units 가 조각을 만들 때 inArticle 을 통해 부른다.
   function judge() {
     if (!contentRoot) { art = null; return art; }
+    const rule = siteBoxRule();
     if (art && art.root === contentRoot) {
       const alive = art.status !== 'ok' || art.boxes.every(b => b.isConnected);
-      if (alive && (recordingNow || art.raw === raw)) return art;
+      if (alive && (recordingNow || art.raw === raw)) {
+        if (!art.by || art.raw === raw) return art;
+        // 기록 중 본문 글이 바뀜 + 사이트 지정 칸: 칸이 그대로면 유지, 늘었으면(붙은 기사) 다시 판정.
+        //   앞 조각은 그대로고 새 조각만 새 칸 목록으로 본다. 확인은 글이 바뀐 스캔마다 한 번(조각마다 아님).
+        if (sameEls(art.boxes, siteBoxes(rule))) { art.raw = raw; return art; }
+      }
     }
     const t0 = performance.now();
+    // 루트 글자(공백 빼고) 중 상자 안 비율
+    const ratioOf = (boxes) => {
+      let inside = 0, total = 0;
+      for (const s of segs) {
+        const c = sig[s.start + s.len] - sig[s.start];
+        total += c;
+        if (boxes.some(b => b.contains(s.node))) inside += c;
+      }
+      return total ? inside / total : 0;
+    };
+    const ruleEls = rule ? siteBoxes(rule) : [];
     if (rootInfo && rootInfo.how === 'site') {
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
+    } else if (ruleEls.length) {
+      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, ratio: ratioOf(ruleEls) };
     } else {
+      // 사이트 지정 칸이 없으면(그 사이트의 다른 모양 페이지) Readability 로 간다
       const r = findBoxes();
       if (!r.boxes) {
         art = { status: 'fail', why: r.why, boxes: [], ratio: null };
       } else {
-        // 루트 글자(공백 빼고) 중 상자 안 비율
-        let inside = 0, total = 0;
-        for (const s of segs) {
-          const c = sig[s.start + s.len] - sig[s.start];
-          total += c;
-          if (r.boxes.some(b => b.contains(s.node))) inside += c;
-        }
-        art = { status: 'ok', why: '', boxes: r.boxes, ratio: total ? inside / total : 0 };
+        art = { status: 'ok', why: '', boxes: r.boxes, ratio: ratioOf(r.boxes) };
       }
     }
     art.ms = Math.round(performance.now() - t0);
@@ -491,7 +515,7 @@
     const a = art;
     if (!a) return null;
     return {
-      status: a.status, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
+      status: a.status, by: a.by || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
       boxes: a.boxes.map(describe), boxEls: a.boxes,
     };
   }

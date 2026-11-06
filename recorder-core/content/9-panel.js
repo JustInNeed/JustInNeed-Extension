@@ -259,7 +259,8 @@
     } else if (n.status === 'site') {
       s += `<br><span style="color:#666">${NOISE_HOW.site}</span>`;
     } else {
-      s += `<br><span style="color:#7e22ce">상자 ${esc(n.boxes.join(', '))}</span> · 상자 안 비율 <b>${pct(n.ratio)}</b>` +
+      s += '<br>' + (n.by ? `<b style="color:#7e22ce">${esc(n.by)} 지정 본문 칸 ${n.boxes.length}개 (Readability 안 씀)</b><br>` : '') +
+        `<span style="color:#7e22ce">상자 ${esc(n.boxes.join(', '))}</span> · 상자 안 비율 <b>${pct(n.ratio)}</b>` +
         ` / 문턱 ${pct(n.min)} → ` + (n.decided ? '판정함' : '<b style="color:#b45309">미판정 (비율 &lt; 문턱)</b>');
     }
     if (n.ms != null) s += ` · ${n.ms}ms`;
