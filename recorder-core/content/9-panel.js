@@ -484,8 +484,8 @@
     render();
   });
 
-  // primary 뽑기 줄 (#47 청크 1): 후보(유닛 많은 순) · 뽑힌 것 ✓ · 새 규칙이면 같은지. 뽑기는 아직 지금 규칙.
-  //   잘 되던 글에서 "다름" 이 뜨면 새 규칙이 그 글을 바꾼다는 뜻 — 청크 2 전에 서현이 보고 판단한다.
+  // primary 뽑기 줄 (#47): 후보(유닛 많은 순) · 뽑힌 것 ✓ · 옛 규칙(유닛 최다)이었으면 같은지.
+  //   "다름" = 새 규칙의 예외가 끼어든 페이지(광고 · 위젯 대신 본 페이지를 고름).
   function electLine(d) {
     if (!d.cands) return '';
     const name = (c) => c.top ? '본 페이지' : `frame ${esc(c.tag)} ${esc(c.host)}`;
@@ -493,11 +493,11 @@
     const rows = d.cands.slice(0, MAX).map(c =>
       `${c.tag === d.tag ? '✓' : '·'} ${name(c)} — 유닛 ${c.units} · ${c.chars.toLocaleString()}자 · 루트 ${esc(c.how || '없음')}`);
     if (d.cands.length > MAX) rows.push(`… 외 ${d.cands.length - MAX}개`);
-    const alt = d.cands.find(c => c.tag === d.alt);
-    const verdict = d.alt === d.tag
+    const old = d.cands.find(c => c.tag === d.old);
+    const verdict = d.old === d.tag
       ? '<b style="color:#16a34a">같음</b>'
-      : `<b style="color:#dc2626">다름 → ${alt ? name(alt) : esc(d.alt)}</b>`;
-    return `<b>primary 뽑기</b> 후보 ${d.cands.length}개 · 새 규칙(#47)이면: ${verdict}<br>` + rows.join('<br>');
+      : `<b style="color:#b45309">다름 → 옛 규칙은 ${old ? name(old) : esc(d.old)} (#47 예외로 바꿈)</b>`;
+    return `<b>primary 뽑기</b> 후보 ${d.cands.length}개 · 옛 규칙이면: ${verdict}<br>` + rows.join('<br>');
   }
 
   // 본문으로 고른 요소와 이유. 루트를 잘못 고르면 유닛 수만으로는 티가 안 날 때가
