@@ -91,6 +91,8 @@
         border:4px solid rgba(147,51,234,.9); }
       .rbc-art-box > span{ position:absolute; left:-4px; top:-18px; font:11px/16px monospace;
         padding:0 4px; color:#fff; background:rgba(147,51,234,.95); white-space:nowrap; }
+      .rbc-art-box.skip{ border:3px dashed rgba(220,38,38,.95); }
+      .rbc-art-box.skip > span{ background:rgba(220,38,38,.95); }
     `;
     document.documentElement.appendChild(s);
   }
@@ -207,7 +209,10 @@
   // 본문 상자 테두리 — 뷰포트 기준으로 틱마다 다시 잰다.
   function drawBoxes() {
     const a = RBC.stream.article();
-    const els = (a && a.status === 'ok') ? a.boxEls : [];
+    // 본문 상자 뒤에 뺄 칸(광고 자리, #45)을 빨간 점선으로
+    const ok = a && a.status === 'ok';
+    const nBox = ok ? a.boxEls.length : 0;
+    const els = ok ? a.boxEls.concat(a.skipEls) : [];
     if (!boxLayer) {
       boxLayer = document.createElement('div');
       boxLayer.id = 'rbc-box';
@@ -226,7 +231,10 @@
       if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
-      d.firstChild.textContent = `본문 상자 (${a.by ? a.by + ' 지정' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정');
+      d.className = i < nBox ? 'rbc-art-box' : 'rbc-art-box skip';
+      d.firstChild.textContent = i < nBox
+        ? `본문 상자 (${a.by ? a.by + ' 지정' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
+        : `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}`;
     }
   }
 

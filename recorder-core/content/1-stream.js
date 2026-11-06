@@ -19,6 +19,7 @@
  *   - 되찾은 뒤 대조: 복사본 상자에 남은 글 표본이 원본 상자 글에 다 들어 있어야 한다. 아니면 실패.
  *   - 플랫폼 지정 루트(how: site) = 루트가 곧 본문(§6 결정) → Readability 를 안 돌리고 전부 본문.
  *   - 사이트 지정 본문 칸(SITE_BOXES, #43) = 루트는 그대로 두고 Readability 대신 그 칸들을 전부 상자로(art.by).
+ *     칸 안의 뺄 칸(art.skip, 광고 자리, #45)은 상자 밖처럼 noise.
  *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
  *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
  *     앞 조각은 noise 있음 · 뒤 조각은 미판정처럼 섞일 수 있다(블로터는 칸이 늘면 비율이 오르는 쪽이라 드물 것, 예상).
@@ -406,12 +407,23 @@
   //   붙는 기사도 같은 id 라 id 가 겹친다 → [id=…] 로 전부 잡는다. 비율 · 문턱은 Readability 상자와 같게 본다.
   //   전자신문(#45): 모바일 판에서 Readability 가 본문 칸 옆 기사 머리(분류 · 제목 · 발행일)까지 고른다 — 옆 칸 점수가
   //   본문 점수의 20% 를 넘으면 붙이는 규칙이라 짧은 기사일수록 붙는다. 본문 칸 #articleBody 만 상자로.
+  //   skip = 상자 안에서 뺄 칸(광고 자리). 그 안 글 = 상자 밖과 같게 noise, 비율에서도 상자 밖으로 센다.
+  //     전자신문은 광고 자리(쿠팡 광고 · 뉴스룸 홍보)가 본문 칸 안에 있고 스크립트가 나중에 채운다 → 판정 때
+  //     목록을 저장하지 않고 조각마다 조상으로 본다(기록 중에 채워져도 빠지게). 해시태그 · 기자 줄은 본문(11-06 서현).
   const SITE_BOXES = [
     { host: /(^|\.)bloter\.net$/, sel: '[id="article-view-content-div"]', name: '블로터' },
-    { host: /(^|\.)etnews\.com$/, sel: '[id="articleBody"]', name: '전자신문' },
+    { host: /(^|\.)etnews\.com$/, sel: '[id="articleBody"]', name: '전자신문',
+      skip: '.ad-300x250, #newsroom_etview_promotion' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
+  // 노드가 상자 안의 뺄 칸 안인가 (뺄 칸이 상자 밖 조상이면 아님)
+  const inSkip = (a, box, node) => {
+    const el = a.skip && (node.nodeType === 1 ? node : node.parentElement);
+    const s = el && el.closest(a.skip);
+    return !!s && s !== box && box.contains(s);
+  };
+  const inBox = (a, node) => a.boxes.some(b => b.contains(node) && !inSkip(a, b, node));
   const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
 
   // 복사본에서 Readability 를 돌려 원본의 상자 요소들을 돌려준다. 실패면 { why }.
@@ -476,12 +488,13 @@
     }
     const t0 = performance.now();
     // 루트 글자(공백 빼고) 중 상자 안 비율
-    const ratioOf = (boxes) => {
+    const ratioOf = (boxes, skip) => {
+      const a = { boxes, skip };
       let inside = 0, total = 0;
       for (const s of segs) {
         const c = sig[s.start + s.len] - sig[s.start];
         total += c;
-        if (boxes.some(b => b.contains(s.node))) inside += c;
+        if (inBox(a, s.node)) inside += c;
       }
       return total ? inside / total : 0;
     };
@@ -489,7 +502,8 @@
     if (rootInfo && rootInfo.how === 'site') {
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
     } else if (ruleEls.length) {
-      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, ratio: ratioOf(ruleEls) };
+      const skip = rule.skip || null;
+      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, skip, ratio: ratioOf(ruleEls, skip) };
     } else {
       // 사이트 지정 칸이 없으면(그 사이트의 다른 모양 페이지) Readability 로 간다
       const r = findBoxes();
@@ -513,7 +527,7 @@
     const a = judge();
     if (!decided(a)) return null;
     if (a.status === 'site') return true;
-    return a.boxes.some(b => b.contains(node));
+    return inBox(a, node);
   }
 
   // 패널 · 오버레이용 요약 (기록 데이터에는 안 나감). 마지막 판정을 읽기만 한다 — 다시 판정하는 건
@@ -521,9 +535,11 @@
   function article() {
     const a = art;
     if (!a) return null;
+    // 뺄 칸은 나중에 채워질 수 있어 읽을 때마다 찾는다(상자 안만, 글 있는 것만)
+    const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
     return {
       status: a.status, by: a.by || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
-      boxes: a.boxes.map(describe), boxEls: a.boxes,
+      boxes: a.boxes.map(describe), boxEls: a.boxes, skips: skipEls.map(describe), skipEls,
     };
   }
 
