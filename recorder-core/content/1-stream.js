@@ -404,7 +404,12 @@
   //   블로터: 읽다가 스크롤하면 다음 기사 1개를 #enters 에 이어 붙인다(articleScrollAdd.php, 주소 그대로).
   //   루트가 두 기사를 다 담고 Readability 는 하나만 골라 아래 기사를 고르자 위 기사(주소의 기사)가 전부 noise 였다.
   //   붙는 기사도 같은 id 라 id 가 겹친다 → [id=…] 로 전부 잡는다. 비율 · 문턱은 Readability 상자와 같게 본다.
-  const SITE_BOXES = [{ host: /(^|\.)bloter\.net$/, sel: '[id="article-view-content-div"]', name: '블로터' }];
+  //   전자신문(#45): 모바일 판에서 Readability 가 본문 칸 옆 기사 머리(분류 · 제목 · 발행일)까지 고른다 — 옆 칸 점수가
+  //   본문 점수의 20% 를 넘으면 붙이는 규칙이라 짧은 기사일수록 붙는다. 본문 칸 #articleBody 만 상자로.
+  const SITE_BOXES = [
+    { host: /(^|\.)bloter\.net$/, sel: '[id="article-view-content-div"]', name: '블로터' },
+    { host: /(^|\.)etnews\.com$/, sel: '[id="articleBody"]', name: '전자신문' },
+  ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
   const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
