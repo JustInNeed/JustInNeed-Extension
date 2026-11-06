@@ -407,7 +407,8 @@
   // 본문 상자 판정 (noise) — 헤더 "본문 상자 판정" 참고
   // ==========================================================================
   const MARK = 'data-rbc-i';
-  let noiseMin = 0.3;        // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
+  let noiseMin = 0.2;        // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
+                             //   30 → 20 (#53): 디지털데일리 짧은 기사는 상자가 맞는데 비율 29.8% 로 미판정이었다
   let art = null;            // { status: site|ok|fail, by?(사이트 지정 칸 이름), why, boxes[], ratio, ms, root, raw }
   let recordingNow = false;  // 5-recorder 소유 recording 의 미러. 기록 중엔 판정을 유지한다.
   bus.on('record:started', () => { recordingNow = true; });
