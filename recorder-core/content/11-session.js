@@ -154,6 +154,7 @@
     };
     bus.emit('session:changed', Object.assign({}, session));
     if (m.idle) bus.emit('idle:clock', m.idle);
+    if (!session.recording) toastWant = null;             // 보이기 전에 정지됐으면 알림도 안 띄운다 (#49)
     if (!session.recording && skipSent !== undefined) {   // 정지 = background 가 배지를 전부 뗐다 (#49)
       skipSent = undefined;
       bus.emit('skip:page', null);
@@ -163,19 +164,25 @@
   // --- 기록 안 할 주소 (#49, 헤더) ---
   //   skipSent = background 에 마지막으로 알린 규칙 url | null(안 걸림) | undefined(이 문서에서 아직 안 알림).
   //   새로 뜬 문서는 처음 한 번 null 도 보낸다 — 걸린 사이트에서 다른 사이트로 넘어간 탭의 배지를 떼려고.
-  let skipSent;
+  //   skipSid = 그 알림이 어느 세션 것인지. 정지 방송을 놓친 탭(얼었던 탭 · bfcache)이 새 세션에서 옛 값 때문에
+  //   안 알리면 새 세션의 배지 · 알림이 안 뜬다 → 세션이 바뀌면 처음부터 다시 알린다.
+  let skipSent, skipSid = null;
   function skipCheck() {
+    if (skipSid !== session.sessionId) { skipSid = session.sessionId; skipSent = undefined; }
     const r = RBC.util.skipMatch(location.href, session.skip);
     const rule = r ? r.url : null;
     // 대기 중(구간을 열기 전)에 걸림 = 규칙이 나중에 왔다(수집 제외 목록을 세션 시작 뒤 받음) → 대기를 그만둔다.
     //   이미 기록 중인 구간은 닫지 않는다(새 정지 이유를 만들지 않으려고) — 다음 합류부터 걸린다.
+    //   본문이 iframe 이면 primaryState 는 중계된 stat 이라 조금 늦을 수 있다 — 그 사이 구간이 막 열렸으면 'navigation' 으로 닫힘(드묾, 예상).
+    let open = false;
     if (r) {
       const ps = primaryState();
       if (ps.settling && !ps.recording) RBC.frames.send('stop', { reason: 'navigation' });
+      open = !!ps.recording;
     }
     if (rule !== skipSent) {
       skipSent = rule;
-      bus.emit('skip:page', r);
+      bus.emit('skip:page', r ? Object.assign({ open }, r) : null);   // open = 이미 열린 구간은 계속 기록 중 (패널)
       toBg({ rbc: 'skip', rule, why: r ? r.why : null }).then((a) => {
         if (r && a && a.first && skipSent === rule) skipToast(r.label || r.why);
       });

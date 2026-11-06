@@ -188,7 +188,8 @@
                 title="켜면 노션 펼치기가 실패한 것으로 친다 — 기록 전이면 기록 안 함, 기록 중이면 1초 안에 기록을 닫고 실패 창 (#37)">펼치기 실패 시험</button>
       </div>
       ${skipRule ? `<div class="rbc-link" style="color:#92400e;background:#fffbeb;border-color:#fde68a">` +
-        `<b>기록 안 함: ${esc(skipRule.label || skipRule.why)}</b> (규칙 ${esc(skipRule.url)}) — 읽기는 그대로, 구간을 안 엶</div>` : ''}
+        `<b>기록 안 함: ${esc(skipRule.label || skipRule.why)}</b> (규칙 ${esc(skipRule.url)}) — 읽기는 그대로, 구간을 안 엶` +
+        (skipRule.open ? '<br><b style="color:#dc2626">규칙이 늦게 와서 이미 열린 이 구간은 계속 기록 중</b>' : '') + '</div>' : ''}
       ${skipInfoLine()}
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}

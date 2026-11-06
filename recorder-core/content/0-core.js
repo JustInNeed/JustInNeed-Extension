@@ -200,17 +200,19 @@
   //     쿼리 = 규칙에 있는 이름=값이 주소에 다 있음
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
+  function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
   function skipMatch(href, rules) {
     if (!rules || !rules.length) return null;
     let u;
     try { u = new URL(href); } catch (e) { return null; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
     const host = u.hostname.toLowerCase().replace(/^www\.(?=[^.]+\.)/, '');
-    const path = u.pathname.replace(/\/+$/, '');
+    const path = dec(u.pathname.replace(/\/+$/, ''));           // BE 표시형 경로는 입력 그대로(한글이 안 풀렸을 수 있음) → 둘 다 풀어서 비교
     for (const r of rules) {
       const m = /^([^/?:]+)(?::(\d+))?(\/[^?]*)?(?:\?(.*))?$/.exec(String((r && r.url) || ''));
       if (!m) continue;
-      const [, rHost, rPort = '', rPath = '', rQuery = ''] = m;
+      const [, rHost, rPort = '', rRaw = '', rQuery = ''] = m;
+      const rPath = dec(rRaw);
       const h = rHost.toLowerCase();
       if (host !== h && !host.endsWith('.' + h)) continue;
       if (u.port !== rPort) continue;
