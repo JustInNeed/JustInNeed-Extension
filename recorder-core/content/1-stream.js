@@ -24,6 +24,8 @@
  *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
  *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
  *     앞 조각은 noise 있음 · 뒤 조각은 미판정처럼 섞일 수 있다(블로터는 칸이 늘면 비율이 오르는 쪽이라 드물 것, 예상).
+ *   - Readability 상자가 루트를 통째로 감싸면(상자 밖이 없음) 루트 안에 하나뿐인 itemprop="articleBody" 칸으로 바꾼다
+ *     (art.alt, #53). 칸이 없거나 여럿이면 Readability 상자 그대로.
  *   - 루트 글자 중 상자 안 비율 < noiseMin 이면 상자가 루트 안에 거의 없는 것(루트 밖을 고름)으로 보고 미판정.
  *     비율로는 엉뚱한 상자를 못 거른다 — "페이지 없음" 화면의 푸터 상자도 31~100% 였다(#53 jsdom). 반대로 짧은
  *     기사 + 메뉴 많은 루트는 상자가 맞아도 19~30% 라 낮게 둔다. noiseMin 은 근거 없는
@@ -498,6 +500,17 @@
     return { boxes };
   }
 
+  // Readability 상자가 루트를 통째로 감싸면(상자 밖이 없어 아무것도 못 가림) 사이트가 직접 표시한 본문 칸
+  //   (schema.org itemprop="articleBody")이 루트 안에 딱 하나 있을 때 그 칸으로 바꾼다 (#53, 11-06 서현).
+  //   Gatsby 블로그(ppeper.github.io): Readability 가 #article-body(점수 69)를 고르고도 "부모 점수가 더 높으면 올라간다"
+  //   규칙으로 페이지 맨 바깥 div#___gatsby 까지 올라가 제목 줄 · 시리즈 목록 · 이전/다음 글 · 글쓴이 소개가 다 본문이 됐다.
+  //   상자가 루트 안에 있으면(대부분의 사이트) 안 건드린다 — 늘 itemprop 을 쓰면 매경 · 이데일리 판정이 바뀐다.
+  function itempropBox(boxes) {
+    if (!boxes.some(b => b !== contentRoot && b.contains(contentRoot))) return null;
+    const els = Array.from(contentRoot.querySelectorAll('[itemprop="articleBody"]')).filter(el => textLen(el));
+    return els.length === 1 ? els[0] : null;
+  }
+
   // 판정을 최신으로 맞춘다 (필요할 때만 다시 돈다). 2-units 가 조각을 만들 때 inArticle 을 통해 부른다.
   function judge() {
     if (!contentRoot) { art = null; return art; }
@@ -536,6 +549,8 @@
         art = { status: 'fail', why: r.why, boxes: [], ratio: null };
       } else {
         art = { status: 'ok', why: '', boxes: r.boxes, ratio: ratioOf(r.boxes) };
+        const alt = itempropBox(r.boxes);
+        if (alt) art = { status: 'ok', why: '', boxes: [alt], ratio: ratioOf([alt]), alt: 'itemprop', altFrom: r.boxes.map(describe) };
       }
     }
     art.ms = Math.round(performance.now() - t0);
@@ -563,7 +578,7 @@
     // 뺄 칸은 나중에 채워질 수 있어 읽을 때마다 찾는다(상자 안만, 글 있는 것만)
     const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
     return {
-      status: a.status, by: a.by || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
+      status: a.status, by: a.by || null, alt: a.alt || null, altFrom: a.altFrom || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
       boxes: a.boxes.map(describe), boxEls: a.boxes, skips: skipEls.map(describe), skipEls,
     };
   }
