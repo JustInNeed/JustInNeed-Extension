@@ -72,6 +72,7 @@
 
     // --- 세션 · 페이지 구간 (background 연동) ---
     FLUSH_MS: 1000,           // timeline 조각을 background 로 넘기는 주기. 데이터 해상도와 무관
+    SKIP_TOAST_MS: 4500,      // "이 사이트는 기록할 수 없어요" 알림이 떠 있는 시간 (#49)
     URL_POLL_MS: 400,         // SPA 이동 감지 (pushState 는 격리 월드에서 못 잡는다)
 
     PANEL_ID: 'rbc-panel',
@@ -191,6 +192,40 @@
   }
 
   // ==========================================================================
+  // 기록 안 할 주소 (#49) — 규칙 목록은 background 가 준다(11-session 이 hello · 방송으로 받음)
+  //   규칙 url = BE · 웹의 수집 제외 표시형 "도메인[:포트][경로][?쿼리]"(프로토콜 · 맨 앞 www. 없음, 끝 슬래시 없음).
+  //   걸리는 주소(확장이 정한 기본값 — 웹 · BE 에는 맞춤 규칙이 없다, 11-06):
+  //     도메인 = 같거나 그 하위 도메인(zdnet.co.kr → m.zdnet.co.kr 도) · 포트 = 같음(없으면 기본 포트만)
+  //     경로 = 없으면 전부, 있으면 그 경로 또는 그 아래(/feed → /feed · /feed/1, /feeds 는 아님)
+  //     쿼리 = 규칙에 있는 이름=값이 주소에 다 있음
+  //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
+  // ==========================================================================
+  function skipMatch(href, rules) {
+    if (!rules || !rules.length) return null;
+    let u;
+    try { u = new URL(href); } catch (e) { return null; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    const host = u.hostname.toLowerCase().replace(/^www\.(?=[^.]+\.)/, '');
+    const path = u.pathname.replace(/\/+$/, '');
+    for (const r of rules) {
+      const m = /^([^/?:]+)(?::(\d+))?(\/[^?]*)?(?:\?(.*))?$/.exec(String((r && r.url) || ''));
+      if (!m) continue;
+      const [, rHost, rPort = '', rPath = '', rQuery = ''] = m;
+      const h = rHost.toLowerCase();
+      if (host !== h && !host.endsWith('.' + h)) continue;
+      if (u.port !== rPort) continue;
+      if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
+      if (rQuery) {
+        let all = true;
+        new URLSearchParams(rQuery).forEach((v, k) => { if (!u.searchParams.getAll(k).includes(v)) all = false; });
+        if (!all) continue;
+      }
+      return r;
+    }
+    return null;
+  }
+
+  // ==========================================================================
   // 공개
   // ==========================================================================
   window.RBC = {
@@ -199,6 +234,6 @@
     IS_TOP,
     TAG,
     bus,
-    util: { isWs, clean, esc, hash, uuid, searchQueryFromReferrer, pageKey, pageId },
+    util: { isWs, clean, esc, hash, uuid, searchQueryFromReferrer, pageKey, pageId, skipMatch },
   };
 })();

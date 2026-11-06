@@ -3,7 +3,7 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49)
  * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
@@ -49,6 +49,13 @@
  *   세션과 어긋난 채로 남는다. 그래서 탭이 보이게 될 때마다 hello 로 다시
  *   물어서 놓친 시작/정지를 따라잡는다. start 는 이미 기록 중이면 무시되므로
  *   여러 번 불러도 구간이 중복으로 열리지 않는다.
+ *
+ * --- 기록 안 할 주소 (#49) ----------------------------------------------------
+ *   규칙은 background 가 hello · 방송(sessionMsg.skip)으로 준다. 합류 직전에 이 탭 주소를 맞춰 보고(0-core skipMatch)
+ *   걸리면 start 를 안 보낸다 — 읽기 · 스크롤은 그대로, 기록만 안 함. 걸림 · 풀림이 바뀔 때만 background 에 skip 으로
+ *   알린다(툴바 배지 · 이 세션 처음인지). 처음이면 페이지 오른쪽 위에 알림을 4.5초 띄운다(팝업 스타일, 숨은 탭이면 보일 때).
+ *   무한 스크롤은 스크롤마다 주소가 바뀌어 SPA 경계 → 재스캔 → 합류를 다시 타지만, 매번 여기서 걸리고 알림은 처음 한 번.
+ *   판정은 최상위 주소로만(본문이 iframe 이어도 사이트는 최상위 주소). 패널에는 skip:page 로 알린다.
  *
  * --- 무동작 시계 (#26) -------------------------------------------------------
  *   시계는 background 가 갖는다(bg-core 헤더). 여기서는 4-input 의 activity 를 background 로
@@ -136,20 +143,86 @@
   // 세션 사본 (읽기 전용 — background 의 방송과 hello 응답으로만 갱신)
   // ==========================================================================
   //   mode = 확장 버전('download' 데이터 수집 · 'server' 실사용, #19). 패널이 머리에 표시한다.
-  let session = { recording: false, sessionId: null, epoch: 0, query: null, mode: null };
+  let session = { recording: false, sessionId: null, epoch: 0, query: null, mode: null, skip: [] };
 
   function applySession(m) {
     if (!m || (m.rbc !== 'start' && m.rbc !== 'stop')) return;
     session = {
       recording: m.rbc === 'start',
       sessionId: m.sessionId, epoch: m.epoch, query: m.query || null, mode: m.mode || null,
+      skip: Array.isArray(m.skip) ? m.skip : [],
     };
     bus.emit('session:changed', Object.assign({}, session));
     if (m.idle) bus.emit('idle:clock', m.idle);
+    if (!session.recording && skipSent !== undefined) {   // 정지 = background 가 배지를 전부 뗐다 (#49)
+      skipSent = undefined;
+      bus.emit('skip:page', null);
+    }
+  }
+
+  // --- 기록 안 할 주소 (#49, 헤더) ---
+  //   skipSent = background 에 마지막으로 알린 규칙 url | null(안 걸림) | undefined(이 문서에서 아직 안 알림).
+  //   새로 뜬 문서는 처음 한 번 null 도 보낸다 — 걸린 사이트에서 다른 사이트로 넘어간 탭의 배지를 떼려고.
+  let skipSent;
+  function skipCheck() {
+    const r = RBC.util.skipMatch(location.href, session.skip);
+    const rule = r ? r.url : null;
+    if (rule !== skipSent) {
+      skipSent = rule;
+      bus.emit('skip:page', r);
+      toBg({ rbc: 'skip', rule, why: r ? r.why : null }).then((a) => {
+        if (r && a && a.first && skipSent === rule) skipToast(r.label || r.why);
+      });
+    }
+    return !!r;
+  }
+
+  let toastEl = null, toastWant = null;
+  function skipToast(label) {
+    if (document.hidden) { toastWant = label; return; }      // 보일 때 (visibilitychange)
+    toastWant = null;
+    if (toastEl) toastEl.remove();
+    const host = document.createElement('div');
+    host.id = 'rbc-skip-toast';
+    host.style.cssText = 'all:initial;position:fixed;top:12px;right:16px;z-index:2147483647';
+    const sh = host.attachShadow({ mode: 'open' });          // 페이지 CSS 가 안 섞이게
+    sh.innerHTML = `<style>
+      .card{display:flex;align-items:center;gap:10px;padding:12px 14px;max-width:300px;
+        background:#fff;color:#1e211f;border:1px solid #e4e7e2;border-radius:14px;
+        box-shadow:0 6px 20px rgba(30,33,31,.14);cursor:pointer;
+        font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+        font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;
+        opacity:0;transform:translateY(-6px);transition:opacity .25s,transform .25s}
+      .card.on{opacity:1;transform:none}
+      .t{font-weight:400;color:#6a706b}
+      .b{display:inline-block;margin-top:4px;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:700;
+        color:#c0392b;background:#fdf3f2;border:1px solid #f0cdc8}
+    </style><div class="card" role="status" title="눌러서 닫기">
+      <svg width="28" height="28" viewBox="0 0 44 44" aria-hidden="true">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#78c957"/><stop offset="1" stop-color="#4caf3f"/></linearGradient></defs>
+        <rect width="44" height="44" rx="12" fill="url(#g)"/>
+        <path d="M22 33V21" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M22 22c0-5 3.4-8.4 8.6-8.4 0 5.2-3.6 8.4-8.6 8.4Z" fill="#fff"/>
+        <path d="M22 24.5c-4.2 0-7.2-2.8-7.2-7 4.4 0 7.2 2.9 7.2 7Z" fill="#fff" opacity=".85"/>
+      </svg>
+      <div><div class="t">이 사이트는 기록할 수 없어요</div><span class="b"></span></div></div>`;
+    sh.querySelector('.b').textContent = label;
+    const card = sh.querySelector('.card');
+    const close = () => {
+      card.classList.remove('on');
+      setTimeout(() => { host.remove(); if (toastEl === host) toastEl = null; }, 300);
+    };
+    card.onclick = close;
+    document.documentElement.appendChild(host);
+    toastEl = host;
+    requestAnimationFrame(() => requestAnimationFrame(() => card.classList.add('on')));
+    setTimeout(close, CFG.SKIP_TOAST_MS);
   }
 
   function joinIfRecording() {
     if (!session.recording) return;
+    if (skipCheck()) return;
     RBC.frames.send('start', {
       sessionId: session.sessionId, epoch: session.epoch, query: session.query,
     });
@@ -211,7 +284,11 @@
   }
 
   bus.on('scan:done', resync);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) resync(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (toastWant) skipToast(toastWant);
+    resync();
+  });
 
   // ==========================================================================
   // 디버그 패널 보이기 설정 → 9-panel (기본 숨김)

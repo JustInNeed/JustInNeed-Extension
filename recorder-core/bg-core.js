@@ -61,6 +61,13 @@
  *   service worker 는 쉬면 꺼지므로 시각은 S 에 저장하고, 알람으로 30초마다 깨어 본다.
  *   움직임이 오면 시계를 고치기 전에 먼저 넘겼는지 본다 — 알람 사이에 돌아와도 넘긴 시간은 잡힌다.
  *
+ * --- 기록 안 할 주소 (#49) ----------------------------------------------------
+ *   규칙 목록은 여기 하나다: 엔진의 NO_RECORD_SITES(기록할 수 없는 사이트, 서현이 직접 넣음) + 버전 파일의
+ *   VERSION.skipRules()(실사용 = 수집 제외 URL). sessionMsg 에 실어 탭에 준다. 주소를 맞춰 보는 건 탭(0-core skipMatch)
+ *   — hello 에 탭 주소를 싣지 않으려고(아래 hello 주석). 걸린 탭은 기록 구간을 안 열고 skip 으로 알려 온다 →
+ *   여기서 그 탭의 툴바 아이콘에 배지 · 설명을 달고, 이 세션에서 이 규칙이 처음인지 답한다(처음일 때만 탭이 알림을 띄움).
+ *   정지하면 배지를 전부 뗀다. 기록 데이터에는 아무것도 안 남는다.
+ *
  * --- service worker 라서 지키는 것 --------------------------------------------
  *   1) 유휴 30초면 종료된다. 메모리 상태는 캐시, 원본은 storage.
  *   2) 리스너는 최상위에서 동기적으로 등록해야 깨어날 때 이벤트를 받는다.
@@ -76,6 +83,15 @@ const IDLE_OUT_MS = 30 * 60 * 1000;   // 크롬 밖(창 포커스 없음) → �
 const IDLE_ALARM = 'rbc-idle';        // 무동작 검사 알람 (30초마다, 기록 중에만)
 const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험" 때의 값. 기록을 시작할 때마다 꺼진다
 
+// 기록할 수 없는 사이트 (#49). url = 0-core skipMatch 규칙(도메인[:포트][경로][?쿼리]), why = 탭 알림 · 패널의 이유 코드.
+//   infinite = 무한 스크롤: 읽다 스크롤하면 다음 글을 끝없이 붙이고 주소를 바꾼다. 앞 글이 DOM 에 남아 같은 글이
+//   여러 pageId 에 겹친다(예상). 자동 감지는 안 함 — 멀쩡한 사이트를 막을까 봐 목록으로만(11-06 서현).
+const NO_RECORD_SITES = [
+  { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
+];
+const SKIP_BADGE = { text: '–', color: '#9aa09b' };   // 팝업 --faint
+const SKIP_TITLE = { infinite: '무한 스크롤 사이트', excluded: '수집 제외 주소' };
+
 // ============================================================================
 // 버전 자리 — 버전 파일이 Object.assign(VERSION, {...}) 로 채운다
 // ============================================================================
@@ -88,6 +104,7 @@ const VERSION = {
   status() { return {}; },          // status 응답에 덧붙일 것
   async after() {},                 // server 모드: 기록 하나가 로그에 쌓인 뒤 (serial 안 — put 이 기다린다. 여기서 serial 을 기다리면 멈춘다)
   async beforeStart() {},           // 새 세션이 직전 로그를 지우기 전에 (serial 안 — 여기서 serial 을 기다리면 멈춘다)
+  skipRules() { return []; },       // 기록 안 할 주소 규칙 더하기 [{ url, why }] (#49, 실사용 = 수집 제외 URL)
 };
 
 // ============================================================================
@@ -111,6 +128,8 @@ function emptyState() {
     lastActSrc: null,    // 마지막 움직임이 어디서 왔나 (패널 표시용): input · tab · window · start · test
     idleErr: null,       // 무동작 시계 쪽 마지막 실패 원문 (패널 표시용)
     idleTest: false,     // 패널 "빠른 시험" (디버그). 새 세션은 언제나 꺼진 채 시작
+    skipTabs: {},        // tabId → 걸린 규칙 url (#49, 배지를 단 탭. 기록 데이터 아님)
+    skipShown: [],       // 이 세션에서 알림을 이미 띄운 규칙 url (#49)
   };
 }
 
@@ -403,7 +422,31 @@ function sessionMsg() {
     rbc: S.recording ? 'start' : 'stop',
     sessionId: S.sessionId, epoch: S.epoch, query: S.query, mode: VERSION.mode,
     idle: idleInfo(),                                      // 패널의 무동작 시계 표시용 (#26)
+    skip: skipRules(),                                     // 기록 안 할 주소 규칙 (#49)
   };
+}
+
+// 기록 안 할 주소 규칙 (#49) — label = 탭 알림 · 패널 · 배지 설명에 쓰는 이유 문구
+function skipRules() {
+  return NO_RECORD_SITES.concat(VERSION.skipRules() || [])
+    .map((r) => Object.assign({ label: SKIP_TITLE[r.why] || r.why }, r));
+}
+
+// 툴바 아이콘 배지 (#49). 실패는 콘솔에 원문 — 배지는 안내일 뿐이라 기록은 막지 않는다.
+function skipBadge(tabId, why) {
+  const t = why ? SKIP_BADGE.text : '';
+  const title = why ? '이 사이트는 기록할 수 없어요: ' + (SKIP_TITLE[why] || why) : '';   // '' = manifest 기본 제목으로
+  return Promise.all([
+    chrome.action.setBadgeText({ tabId, text: t }),
+    why ? chrome.action.setBadgeBackgroundColor({ tabId, color: SKIP_BADGE.color }) : null,
+    chrome.action.setTitle({ tabId, title }),
+  ]).catch((e) => console.warn('[RBC] 배지 실패', tabId, (e && e.message) || e));
+}
+
+async function skipClearAll() {
+  const ids = Object.keys(S.skipTabs).map(Number);
+  S.skipTabs = {};
+  await Promise.all(ids.map((id) => skipBadge(id, null)));
 }
 
 // ============================================================================
@@ -414,6 +457,24 @@ const handlers = {
   // 출석 신호일 뿐이다: 메시지에 페이지 데이터가 없고, sender(탭 URL 등)도 읽지 않으며
   // 아무것도 저장하지 않는다. 탭의 URL·원문은 첫 틱 뒤의 page 기록으로만 들어온다.
   async hello() { return sessionMsg(); },
+
+  // 기록 안 할 주소에 걸렸다 / 풀렸다 (#49). 탭이 판정해 보낸다(rule = 규칙 url, null = 안 걸림). 주소는 안 받는다.
+  //   first = 이 세션에서 이 규칙 알림이 처음 — 처음일 때만 탭이 알림을 띄운다(무한 스크롤은 주소가 계속 바뀌어 매번 걸림).
+  async skip(m, sender) {
+    const tabId = sender.tab ? sender.tab.id : null;
+    const rule = (m && m.rule) || null;
+    let first = false;
+    if (rule && S.recording) {
+      first = !S.skipShown.includes(rule);
+      if (first) S.skipShown.push(rule);
+      if (tabId != null) { S.skipTabs[tabId] = rule; await skipBadge(tabId, m.why || null); }
+    } else if (tabId != null && S.skipTabs[tabId] !== undefined) {
+      delete S.skipTabs[tabId];
+      await skipBadge(tabId, null);
+    }
+    await saveState();
+    return { ok: true, first };
+  },
 
   async start(m) {
     if (S.recording) return sessionMsg();
@@ -444,6 +505,7 @@ const handlers = {
     const reason = (m && m.reason) || 'user';
     await put({ k: 'stop', t: tNow(), reason });
     S.recording = false;
+    await skipClearAll();                                  // 기록 안 하면 "여기선 기록 안 됨" 배지도 뜻이 없다 (#49)
     await saveState();
     await chrome.alarms.clear(IDLE_ALARM);
     // reason 은 방송에만 싣는다 — idle 이면 기록하던 탭이 autostop 이벤트를 남긴다(#26)
@@ -579,7 +641,9 @@ chrome.alarms.onAlarm.addListener((a) => {
 ready.then(() => { if (S.recording) return idleAlarmOn(); }).catch((e) => console.warn('[RBC] 무동작 알람', e));
 
 chrome.tabs.onRemoved.addListener((tabId) => serial(async () => {
-  if (S.tabPage[tabId] === undefined) return;
+  const badged = S.skipTabs[tabId] !== undefined;          // 닫힌 탭의 배지는 크롬이 같이 지운다 (#49)
+  delete S.skipTabs[tabId];
+  if (S.tabPage[tabId] === undefined) { if (badged) await saveState(); return; }
   delete S.tabPage[tabId];
   delete S.tabSeg[tabId];
   await saveState();
