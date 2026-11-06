@@ -89,9 +89,9 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 const NO_RECORD_SITES = [
   { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
 ];
-// 이유별 문구 — label = 알림 배지 · 패널, head = 알림 윗줄, note = 툴바 팝업 · 아이콘 설명
+// 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
 const SKIP_TEXT = {
-  infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '무한 스크롤 사이트라 기록할 수 없어요' },
+  infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
 };
 const ICON = (off) => ({ 16: `icons/icon16${off}.png`, 32: `icons/icon32${off}.png`, 48: `icons/icon48${off}.png`, 128: `icons/icon128${off}.png` });
@@ -133,7 +133,7 @@ function emptyState() {
     lastActSrc: null,    // 마지막 움직임이 어디서 왔나 (패널 표시용): input · tab · window · start · test
     idleErr: null,       // 무동작 시계 쪽 마지막 실패 원문 (패널 표시용)
     idleTest: false,     // 패널 "빠른 시험" (디버그). 새 세션은 언제나 꺼진 채 시작
-    skipTabs: {},        // tabId → 걸린 규칙 url (#49, 아이콘을 회색으로 바꾼 탭. 기록 데이터 아님)
+    skipTabs: {},        // tabId → { rule, why } (#49, 아이콘을 회색으로 바꾼 탭 · 팝업 "기록 일시 정지". 기록 데이터 아님)
   };
 }
 
@@ -440,11 +440,17 @@ function skipRules() {
 // 툴바 아이콘 (#49): 걸린 탭만 회색 + 설명. 실패는 콘솔에 원문 — 아이콘은 안내일 뿐이라 기록은 막지 않는다.
 function skipBadge(tabId, why) {
   const t = why && SKIP_TEXT[why];
-  const title = why ? (t ? t.head + ' — ' + t.note : '기록 안 함: ' + why) : '';   // '' = manifest 기본 제목으로
+  const title = why ? (t ? `${t.head} (${t.label})` : '기록 안 함: ' + why) : '';   // '' = manifest 기본 제목으로
   return Promise.all([
     chrome.action.setIcon({ tabId, path: ICON(why ? '-off' : '') }),
     chrome.action.setTitle({ tabId, title }),
   ]).catch((e) => console.warn('[RBC] 아이콘 바꾸기 실패', tabId, (e && e.message) || e));
+}
+
+function skipTabsText() {
+  const out = {};
+  for (const [id, v] of Object.entries(S.skipTabs)) out[id] = Object.assign({ label: v.why }, SKIP_TEXT[v.why], v);
+  return out;
 }
 
 async function skipClearAll() {
@@ -467,7 +473,7 @@ const handlers = {
     const tabId = sender.tab ? sender.tab.id : null;
     const rule = (m && m.rule) || null;
     if (rule && S.recording) {
-      if (tabId != null) { S.skipTabs[tabId] = rule; await skipBadge(tabId, m.why || null); }
+      if (tabId != null) { S.skipTabs[tabId] = { rule, why: m.why || null }; await skipBadge(tabId, m.why || null); }
     } else if (tabId != null && S.skipTabs[tabId] !== undefined) {
       delete S.skipTabs[tabId];
       await skipBadge(tabId, null);
@@ -596,6 +602,7 @@ const handlers = {
       pages: pids.length,
       units: pids.reduce((n, a) => n + a.length, 0),
       records: S.seq,
+      skipTabs: skipTabsText(),                            // 팝업: 지금 탭이 기록 안 하는 사이트면 "기록 일시 정지" (#49)
     }, VERSION.status());
   },
 };

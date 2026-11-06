@@ -285,8 +285,9 @@
       //   늦게 뜨면 그 뒤로는 아무도 다시 찾지 않아, 팝업의 "잠시 뒤 다시 열어 보세요"가 거짓말이 됐다(2026-10-09 3G 실측).
       //   이번 답은 옛 값(0개) — 다시 열면 새 값이 보인다. 기록을 시작하면 5-recorder 대기가 같은 일을 한다(settle:empty).
       if (!ps.units && !ps.recording && !ps.settling) RBC.frames.doScan();
+      //   skip = 이 탭은 기록 안 하는 사이트 (#49) — 팝업이 본문 준비를 기다리지 않고 바로 닫힌다
       reply({ ok: true, units: ps.units, root: ri.sel || null, how: ri.how || null,
-        recording: ps.recording, settling: ps.settling });
+        recording: ps.recording, settling: ps.settling, skip: session.recording && skipSent ? skipSent : null });
     }
     return false;
   });

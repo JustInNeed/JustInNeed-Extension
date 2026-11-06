@@ -26,6 +26,10 @@
  * [웹에서 내 기록 보기](#40): 로그인 화면엔 없다. status 의 web 주소(웹의 내 세션 목록)를 이 창이 직접 새 탭으로 연다(분석 상태 확인용).
  *   background 명령으로 보내면 기록 시작 직후 줄(serial)에 밀려 늦게 열려서 직접 연다(11-06 서현).
  *
+ * 기록 안 하는 사이트(#49): 기록 중인데 지금 탭이 무한 스크롤 · 수집 제외 사이트면(status.skipTabs[이 탭]) "기록 일시 정지" +
+ *   이유 태그 · 설명, [기록 정지] 아래에 "아예 멈춤 / 다른 탭으로 가면 이어짐" 안내. 기록 시작을 이 탭에서 눌렀으면 본문 준비를
+ *   기다리지 않고 바로 닫는다(ping 의 skip) — 페이지 아래 가운데 알림이 보이게.
+ *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
  * ========================================================================== */
@@ -77,8 +81,13 @@
     $('login-sink').hidden = !(k && k.queued);
     if (needLogin) return;
     renderSink(k);
-    $('dot').classList.toggle('on', st.recording);
-    $('state').textContent = st.recording ? '기록 중' : '기록 대기';
+    const sk = st.recording && tabId != null && st.skipTabs ? st.skipTabs[tabId] : null;   // 기록 안 하는 사이트 (#49)
+    $('dot').classList.toggle('on', st.recording && !sk);
+    $('state').textContent = sk ? '기록 일시 정지' : st.recording ? '기록 중' : '기록 대기';
+    $('pause').hidden = !sk;
+    $('pause-tag').textContent = sk ? sk.label : '';
+    $('pause-note').textContent = sk ? sk.note || '' : '';
+    $('stop-hint').hidden = !sk;
     $('meta').textContent = st.records > 0 ? `글 ${st.pages}개 · 유닛 ${st.units}개 · 기록 ${st.records}건` : '';
     const btn = $('btn-rec');
     btn.className = st.recording ? '' : 'primary';
@@ -220,7 +229,7 @@
     const poll = async () => {
       let r = null;
       try { if (tabId != null) r = await chrome.tabs.sendMessage(tabId, { rbc: 'ping' }); } catch (e) { r = null; }
-      if (!r || !r.ok || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
+      if (!r || !r.ok || r.skip || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
       setTimeout(poll, PREP_POLL_MS);
     };
     setTimeout(poll, PREP_POLL_MS);

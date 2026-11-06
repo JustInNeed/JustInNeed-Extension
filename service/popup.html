@@ -50,6 +50,10 @@
   #btn-clear:disabled { cursor: default; color: var(--sub); background: #f4f5f3; }
 
   .hint { margin-top: 10px; font-size: 12.5px; color: var(--sub); }
+  /* 기록 안 하는 사이트 (#49) — 페이지 알림과 같은 이유 태그 */
+  .pause { margin-top: 4px; font-size: 13px; color: var(--sub); }
+  .tag { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 6px; font-size: 12px; font-weight: 700;
+    color: var(--red-ink); background: var(--red-tint); border: 1px solid var(--red-line); }
   .who { font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; }
   .err { margin-top: 10px; font-size: 12px; color: var(--red-ink); word-break: break-all; }
   .note { margin-top: 10px; font-size: 12px; color: var(--sub); word-break: break-all; }
@@ -98,8 +102,10 @@
     <div class="head"><i class="dot" id="dot"></i>
       <span class="who"><span id="who"></span> <button id="btn-logout" type="button" class="link" hidden>로그아웃</button></span></div>
     <div class="state" id="state">기록 대기</div>
+    <div class="pause" id="pause" hidden><span class="tag" id="pause-tag"></span><span id="pause-note"></span></div>
     <div class="meta" id="meta"></div>
     <button id="btn-rec" type="button">기록 시작</button>
+    <div class="hint" id="stop-hint" hidden>[기록 정지]를 누르면 기록을 아예 멈춰요. 그냥 다른 탭으로 가면 기록이 저절로 다시 이어져요.</div>
     <div class="err" id="main-err" hidden></div>
     <div class="note" id="main-note" hidden></div>
     <div class="note" id="sink"></div>

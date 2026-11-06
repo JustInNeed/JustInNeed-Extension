@@ -74,6 +74,10 @@
 
   .warn { margin-top: 8px; font-size: 12.5px; color: #7a5b0c; }
   .hint { margin-top: 8px; font-size: 12.5px; color: var(--sub); }
+  /* 기록 안 하는 사이트 (#49) — 페이지 알림과 같은 이유 태그 */
+  .pause { margin-top: 4px; font-size: 13px; color: var(--sub); }
+  .tag { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 6px; font-size: 12px; font-weight: 700;
+    color: #c0392b; background: #fdf3f2; border: 1px solid #f0cdc8; }
   .conn { margin: 2px 0 10px; font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px; }
   .conn i { width: 7px; height: 7px; border-radius: 50%; background: #bbb; flex: none; }
   .conn.ok i { background: var(--green); }
@@ -123,6 +127,7 @@
     <div class="card">
       <div class="head"><i class="dot" id="dot"></i><span id="elapsed"></span></div>
       <div class="state" id="state">기록 대기</div>
+      <div class="pause" id="pause" hidden><span class="tag" id="pause-tag"></span><span id="pause-note"></span></div>
       <div class="meta" id="meta"></div>
 
       <label class="q" id="l-edit">
