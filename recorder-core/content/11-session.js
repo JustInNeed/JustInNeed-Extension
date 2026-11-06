@@ -150,7 +150,7 @@
     session = {
       recording: m.rbc === 'start',
       sessionId: m.sessionId, epoch: m.epoch, query: m.query || null, mode: m.mode || null,
-      skip: Array.isArray(m.skip) ? m.skip : [],
+      skip: Array.isArray(m.skip) ? m.skip : [], skipInfo: m.skipInfo || null,
     };
     bus.emit('session:changed', Object.assign({}, session));
     if (m.idle) bus.emit('idle:clock', m.idle);
@@ -167,6 +167,12 @@
   function skipCheck() {
     const r = RBC.util.skipMatch(location.href, session.skip);
     const rule = r ? r.url : null;
+    // 대기 중(구간을 열기 전)에 걸림 = 규칙이 나중에 왔다(수집 제외 목록을 세션 시작 뒤 받음) → 대기를 그만둔다.
+    //   이미 기록 중인 구간은 닫지 않는다(새 정지 이유를 만들지 않으려고) — 다음 합류부터 걸린다.
+    if (r) {
+      const ps = primaryState();
+      if (ps.settling && !ps.recording) RBC.frames.send('stop', { reason: 'navigation' });
+    }
     if (rule !== skipSent) {
       skipSent = rule;
       bus.emit('skip:page', r);

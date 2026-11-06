@@ -105,6 +105,7 @@ const VERSION = {
   async after() {},                 // server 모드: 기록 하나가 로그에 쌓인 뒤 (serial 안 — put 이 기다린다. 여기서 serial 을 기다리면 멈춘다)
   async beforeStart() {},           // 새 세션이 직전 로그를 지우기 전에 (serial 안 — 여기서 serial 을 기다리면 멈춘다)
   skipRules() { return []; },       // 기록 안 할 주소 규칙 더하기 [{ url, why }] (#49, 실사용 = 수집 제외 URL)
+  skipInfo() { return null; },      // 그 규칙 목록 상태 { kind, n, at, err, mine } — 디버그 패널 표시용 (#49)
 };
 
 // ============================================================================
@@ -423,6 +424,7 @@ function sessionMsg() {
     sessionId: S.sessionId, epoch: S.epoch, query: S.query, mode: VERSION.mode,
     idle: idleInfo(),                                      // 패널의 무동작 시계 표시용 (#26)
     skip: skipRules(),                                     // 기록 안 할 주소 규칙 (#49)
+    skipInfo: VERSION.skipInfo(),                          // 버전 파일 규칙 목록의 상태 (패널, #49)
   };
 }
 
