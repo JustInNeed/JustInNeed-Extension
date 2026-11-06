@@ -27,6 +27,7 @@
  * --- primary 선출 -----------------------------------------------------------
  *   전 프레임에 주입된 뒤 각자 스캔하고, 유닛이 가장 많은 프레임 1개를 고른다.
  *   (네이버 블로그: 본문이 #mainFrame iframe 안 → 그 프레임이 primary)
+ *   짧은 기사에서 광고 iframe 이 유닛으로 이기는 문제(#47) → 아래 pickNew. 청크 1 은 패널 표시만, 뽑기는 그대로.
  *   패널은 최상위 프레임에만 뜨므로, primary 가 iframe 이면 통계·목록·payload 가
  *   전부 이 중계를 타고 올라온다.
  * ========================================================================== */
@@ -148,6 +149,7 @@
       scanTries = 0;
       scanBucket.sort((a, b) => b.units - a.units || b.chars - a.chars);
       const win = scanBucket[0];
+      const alt = pickNew(scanBucket);                // #47 청크 1: 계산 · 패널 표시만, 뽑기는 아직 win
       primaryTag = win.tag;
 
       send('primary', { tag: primaryTag });
@@ -162,9 +164,30 @@
         units: win.units,
         chars: win.chars,
         root: win.root || null,
+        // 패널 뽑기 줄 (#47): 후보 전부 + 새 규칙이 고를 프레임
+        cands: scanBucket.map(c => ({ tag: c.tag, units: c.units, chars: c.chars,
+          how: (c.root && c.root.how) || null, top: c.tag === TAG, host: hostOf(c.href) })),
+        alt: alt.tag,
       });
     }, CFG.SCAN_COLLECT_MS);
   }
+
+  // 새 뽑기 규칙 (#47, 11-06 서현 승인) — 지금 규칙(유닛 최다)을 그대로 두고 세 조건이 다 맞을 때만 최상위를 고른다.
+  //   ① 지금 규칙의 승자가 iframe ② 그 iframe 루트가 제대로 못 찾은 것(body · fallback) ③ 최상위 루트는 제대로 찾은 것(semantic · site).
+  //   짧은 기사 + 광고 문구 많은 광고 iframe(경향 202609062013025: 최상위 4 유닛 vs ACROSS 광고 19 유닛)에서 광고가 뽑혔다.
+  //   블로그 PC 처럼 본문 iframe 이 루트를 제대로 찾는 경우 · iframe 없는 페이지 · 최상위가 이미 이기는 페이지는 결과가 같다.
+  //   bucket 은 지금 규칙 순서로 정렬된 것. 최상위는 유닛이 있어야 bucket 에 있다(collectScan).
+  const GOOD_ROOT = { site: true, semantic: true };
+  function pickNew(bucket) {
+    const win = bucket[0];
+    if (win.tag === TAG) return win;
+    const top = bucket.find(c => c.tag === TAG);
+    const how = (c) => c.root && c.root.how;
+    if (top && GOOD_ROOT[how(top)] && !GOOD_ROOT[how(win)]) return top;
+    return win;
+  }
+
+  const hostOf = (href) => { try { return new URL(href).hostname; } catch (e) { return String(href || ''); } };
 
   // primary 다시 뽑기 — 대기 중인 primary 가 본문을 못 찾았을 때(settle:empty, 5-recorder).
   //   블로그 PC: 본문 iframe 이 최상위의 스캔 재시도보다 늦게 뜨면 선출이 실패하고 최상위가 기본 primary 로 남는다.
