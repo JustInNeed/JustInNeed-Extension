@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, RBC.stream(펼치기 실패 시험 #37), RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock
+ *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock, skip:page(#49)
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -91,6 +91,8 @@
   let noiseMinPct = 30;                  // 본문 문턱 슬라이더 표시값(%) — 실제 값은 primary 의 1-stream, stat 으로 맞춘다
   let noiseHtml = '';                    // 마지막 noise 판정 줄 (#11)
   let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
+  let skipRule = null;                   // 이 주소가 걸린 기록 안 할 주소 규칙 { url, why, label } (#49). skip:page 로만 바뀐다
+  let skipInfo = null;                   // 버전 파일 규칙 목록 상태 (실사용 = 수집 제외 URL, #49). session:changed 로
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -185,6 +187,10 @@
         <button data-act="unfoldtest" class="${RBC.stream.unfoldTest() ? 'on' : ''}"
                 title="켜면 노션 펼치기가 실패한 것으로 친다 — 기록 전이면 기록 안 함, 기록 중이면 1초 안에 기록을 닫고 실패 창 (#37)">펼치기 실패 시험</button>
       </div>
+      ${skipRule ? `<div class="rbc-link" style="color:#92400e;background:#fffbeb;border-color:#fde68a">` +
+        `<b>기록 안 함: ${esc(skipRule.label || skipRule.why)}</b> (규칙 ${esc(skipRule.url)}) — 읽기는 그대로, 구간을 안 엶` +
+        (skipRule.closed ? '<br><b style="color:#dc2626">규칙이 늦게 와서 기록 중이던 구간을 닫음 (segend excluded)</b>' : '') + '</div>' : ''}
+      ${skipInfoLine()}
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
@@ -346,7 +352,10 @@
   bus.on('session:changed', (d) => {
     const on = !!(d && d.recording);
     const mode = (d && d.mode) || null;
-    if (on === uiRecording && mode === uiMode) return;
+    const info = (d && d.skipInfo) || null;
+    const infoSame = JSON.stringify(info) === JSON.stringify(skipInfo);
+    skipInfo = info;
+    if (on === uiRecording && mode === uiMode && infoSame) return;
     uiRecording = on;
     uiMode = mode;
     render();
@@ -451,6 +460,18 @@
     applyOverlay();
     render();
   });
+
+  bus.on('skip:page', (d) => { skipRule = d || null; render(); });
+
+  // 수집 제외 URL 목록 줄 (#49, 실사용만). 받은 개수 · 때 · 실패 원문
+  function skipInfoLine() {
+    const k = skipInfo;
+    if (!k) return '';
+    const when = k.at ? new Date(k.at).toTimeString().slice(0, 8) + ' 받음' : '아직 못 받음';
+    return `<div class="rbc-stat">${esc(k.kind)} <b>${Number(k.n)}</b>개 · ${when}` +
+      (k.mine ? '' : ' <span style="color:#999">(로그인한 회원 목록 없음 — 규칙 안 씀)</span>') +
+      (k.err ? `<br><span style="color:#dc2626">${esc(k.err)}</span>` : '') + '</div>';
+  }
 
   bus.on('session:link', (d) => {
     const why = d && d.why;

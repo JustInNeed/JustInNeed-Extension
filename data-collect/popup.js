@@ -21,6 +21,10 @@
  *   때까지 기다렸다 구간을 여는데(5-recorder), 그동안 이 창이 "본문 준비 중"을 보여 주고 ping 으로 확인해
  *   기록이 실제로 시작되면 닫힌다. 최대 PREP_MAX_MS. 참가자에게 대기를 보여 줄 곳이 여기뿐이다(패널은 숨김).
  *
+ * 기록 안 하는 사이트(#49, 실사용 팝업과 같음): 기록 중인데 지금 탭이 무한 스크롤 · 수집 제외 사이트면(status.skipTabs[이 탭])
+ *   "기록 일시 정지" + 이유 태그 · 설명, 안내 줄은 "아예 멈춤 / 다른 탭으로 가면 이어짐", [다 읽었어요]는 숨김.
+ *   이 탭에서 기록을 시작했으면 본문 준비를 기다리지 않고 바로 닫는다(ping 의 skip).
+ *
  * 내보내기 · 참여 정보는 consent.html 탭을 연다 (#export 면 그 탭이 바로 내보낸다).
  *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
@@ -98,8 +102,13 @@
     }
 
     const rec = st.recording;
-    $('dot').classList.toggle('on', rec);
-    $('state').textContent = rec ? '기록 중' : '기록 대기';
+    // 기록 안 하는 사이트 (#49, 실사용 팝업과 같은 규칙): 기록 중인데 지금 탭이 걸렸으면 "기록 일시 정지" + 이유 · 안내
+    const sk = rec && tabId != null && st.skipTabs ? st.skipTabs[tabId] : null;
+    $('dot').classList.toggle('on', rec && !sk);
+    $('state').textContent = sk ? '기록 일시 정지' : rec ? '기록 중' : '기록 대기';
+    $('pause').hidden = !sk;
+    $('pause-tag').textContent = sk ? sk.label : '';
+    $('pause-note').textContent = sk ? sk.note || '' : '';
     $('elapsed').textContent = rec && st.startedAt ? fmtElapsed(Date.now() - st.startedAt) : '';
     $('meta').textContent = st.records ? `글 ${st.pages}개, 유닛 ${st.units}개` : '쌓인 기록 없음';
 
@@ -114,7 +123,7 @@
     $('s-show').hidden = !rec || !st.scenario;
     $('s-val').textContent = st.scenario || '';
     if (!rec && !sTouched) $('s').value = st.scenario || '';
-    $('btn-label').hidden = !rec;
+    $('btn-label').hidden = !rec || !!sk;                    // 기록 안 하는 사이트는 평가할 글이 없다
 
     const btn = $('btn-rec');
     if (!btn.classList.contains('armed')) {
@@ -128,7 +137,9 @@
 
     $('btn-export').disabled = rec || !st.records;
     $('btn-export').title = rec ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
-    $('hint').textContent = rec
+    $('hint').textContent = sk
+      ? '[기록 정지]를 누르면 기록을 아예 멈춰요. 그냥 다른 탭으로 가면 기록이 저절로 다시 이어져요.'
+      : rec
       ? '이 창을 닫고 글을 읽으세요. 끝까지 내리면 평가 질문이 뜹니다. 안 뜨면 다시 열어 [다 읽었어요]를 누르세요.'
       : !$('link').value ? '먼저 링크 번호를 고르세요. 고르면 [기록 시작]을 누를 수 있어요.'
         : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
@@ -179,6 +190,7 @@
     $('conn-text').textContent = !conn ? '이 탭 확인 중…'
       : bad && conn.closed ? '이 페이지는 브라우저 내부 페이지라 기록할 수 없어요. 읽을 글을 연 탭에서 다시 열어 주세요.'
       : bad ? '이 탭은 기록할 준비가 안 됐어요. [이 탭 새로고침]을 누른 뒤 다시 열어 주세요.'
+        : conn.skip ? '이 탭 연결됨 · 기록하지 않는 사이트예요'   // #49
         : conn.units ? `이 탭 연결됨 · 본문 ${conn.units}부분 인식`
           : '이 탭 연결됨 · 본문을 찾는 중 — 잠시 뒤 다시 열어 보세요';
     $('btn-reload').hidden = !bad || !!conn.closed;
@@ -262,7 +274,7 @@
     const poll = async () => {
       let r = null;
       try { if (tabId != null) r = await chrome.tabs.sendMessage(tabId, { rbc: 'ping' }); } catch (e) { r = null; }
-      if (!r || !r.ok || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
+      if (!r || !r.ok || r.skip || (r.recording && !r.settling) || Date.now() - t0 > PREP_MAX_MS) { window.close(); return; }
       setTimeout(poll, PREP_POLL_MS);
     };
     setTimeout(poll, PREP_POLL_MS);
