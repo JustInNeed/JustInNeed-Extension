@@ -234,7 +234,7 @@
       d.className = i < nBox ? 'rbc-art-box' : 'rbc-art-box skip';
       d.firstChild.textContent = i < nBox
         ? `본문 상자 (${a.by ? a.by + ' 지정' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
-        : `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}`;
+        : `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}` + (a.decided ? '' : ' · 미판정');
     }
   }
 
