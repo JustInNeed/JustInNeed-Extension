@@ -53,8 +53,10 @@
  * --- 기록 안 할 주소 (#49) ----------------------------------------------------
  *   규칙은 background 가 hello · 방송(sessionMsg.skip)으로 준다. 합류 직전에 이 탭 주소를 맞춰 보고(0-core skipMatch)
  *   걸리면 start 를 안 보낸다 — 읽기 · 스크롤은 그대로, 기록만 안 함. 걸림 · 풀림이 바뀔 때만 background 에 skip 으로
- *   알린다(툴바 배지 · 이 세션 처음인지). 처음이면 페이지 오른쪽 위에 알림을 4.5초 띄운다(팝업 스타일, 숨은 탭이면 보일 때).
- *   무한 스크롤은 스크롤마다 주소가 바뀌어 SPA 경계 → 재스캔 → 합류를 다시 타지만, 매번 여기서 걸리고 알림은 처음 한 번.
+ *   알린다(툴바 아이콘을 그 탭만 회색으로). 알림은 화면 아래 가운데에 4.5초(팝업 스타일, 숨은 탭이면 보일 때) —
+ *     그 사이트 페이지를 열 때 · 다른 사이트에서 넘어올 때 · 다른 탭에서 이 탭으로 돌아올 때마다(까먹지 않게, 11-06 서현).
+ *     아래 가운데 = 구글 스낵바 자리. 툴바 팝업(오른쪽 위)에 가리지 않고 디버그 패널(오른쪽 아래)과도 안 겹친다.
+ *   무한 스크롤은 스크롤마다 주소가 바뀌어 SPA 경계 → 재스캔 → 합류를 다시 타지만, 규칙이 그대로면 다시 안 띄운다.
  *   판정은 최상위 주소로만(본문이 iframe 이어도 사이트는 최상위 주소). 패널에는 skip:page 로 알린다.
  *
  * --- 무동작 시계 (#26) -------------------------------------------------------
@@ -163,9 +165,9 @@
 
   // --- 기록 안 할 주소 (#49, 헤더) ---
   //   skipSent = background 에 마지막으로 알린 규칙 url | null(안 걸림) | undefined(이 문서에서 아직 안 알림).
-  //   새로 뜬 문서는 처음 한 번 null 도 보낸다 — 걸린 사이트에서 다른 사이트로 넘어간 탭의 배지를 떼려고.
+  //   새로 뜬 문서는 처음 한 번 null 도 보낸다 — 걸린 사이트에서 다른 사이트로 넘어간 탭의 회색 아이콘을 되돌리려고.
   //   skipSid = 그 알림이 어느 세션 것인지. 정지 방송을 놓친 탭(얼었던 탭 · bfcache)이 새 세션에서 옛 값 때문에
-  //   안 알리면 새 세션의 배지 · 알림이 안 뜬다 → 세션이 바뀌면 처음부터 다시 알린다.
+  //   안 알리면 새 세션의 아이콘 · 알림이 안 뜬다 → 세션이 바뀌면 처음부터 다시 알린다.
   let skipSent, skipSid = null;
   function skipCheck() {
     if (skipSid !== session.sessionId) { skipSid = session.sessionId; skipSent = undefined; }
@@ -183,32 +185,38 @@
     if (rule !== skipSent) {
       skipSent = rule;
       bus.emit('skip:page', r ? Object.assign({ open }, r) : null);   // open = 이미 열린 구간은 계속 기록 중 (패널)
-      toBg({ rbc: 'skip', rule, why: r ? r.why : null }).then((a) => {
-        if (r && a && a.first && skipSent === rule) skipToast(r.label || r.why);
-      });
+      toBg({ rbc: 'skip', rule, why: r ? r.why : null });
+      if (r) skipToast(r);                                   // 걸리기 시작함 = 이 페이지를 엶 · 다른 사이트에서 넘어옴
     }
     return !!r;
   }
 
+  // 다른 탭에서 돌아옴 → 걸린 탭이면 다시 알린다 (visibilitychange)
+  function skipAgain() {
+    if (!session.recording || !skipSent) return;
+    const r = RBC.util.skipMatch(location.href, session.skip);
+    if (r) skipToast(r);
+  }
+
   let toastEl = null, toastWant = null;
-  function skipToast(label) {
-    if (document.hidden) { toastWant = label; return; }      // 보일 때 (visibilitychange)
+  function skipToast(r) {
+    if (document.hidden) { toastWant = r; return; }          // 보일 때 (visibilitychange)
     toastWant = null;
     if (toastEl) toastEl.remove();
     const host = document.createElement('div');
     host.id = 'rbc-skip-toast';
-    host.style.cssText = 'all:initial;position:fixed;top:12px;right:16px;z-index:2147483647';
+    host.style.cssText = 'all:initial;position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2147483647';
     const sh = host.attachShadow({ mode: 'open' });          // 페이지 CSS 가 안 섞이게
     sh.innerHTML = `<style>
-      .card{display:flex;align-items:center;gap:10px;padding:12px 14px;max-width:300px;
-        background:#fff;color:#1e211f;border:1px solid #e4e7e2;border-radius:14px;
+      .card{display:flex;align-items:center;gap:10px;padding:12px 16px;max-width:340px;
+        background:#fff;color:#1e211f;border:1px solid #e4e7e2;border-radius:10px;
         box-shadow:0 6px 20px rgba(30,33,31,.14);cursor:pointer;
         font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
         font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;
-        opacity:0;transform:translateY(-6px);transition:opacity .25s,transform .25s}
+        opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s}
       .card.on{opacity:1;transform:none}
       .t{font-weight:400;color:#6a706b}
-      .b{display:inline-block;margin-top:4px;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:700;
+      .b{display:inline-block;margin-top:4px;padding:2px 8px;border-radius:6px;font-size:12.5px;font-weight:700;
         color:#c0392b;background:#fdf3f2;border:1px solid #f0cdc8}
     </style><div class="card" role="status" title="눌러서 닫기">
       <svg width="28" height="28" viewBox="0 0 44 44" aria-hidden="true">
@@ -219,8 +227,9 @@
         <path d="M22 22c0-5 3.4-8.4 8.6-8.4 0 5.2-3.6 8.4-8.6 8.4Z" fill="#fff"/>
         <path d="M22 24.5c-4.2 0-7.2-2.8-7.2-7 4.4 0 7.2 2.9 7.2 7Z" fill="#fff" opacity=".85"/>
       </svg>
-      <div><div class="t">이 사이트는 기록할 수 없어요</div><span class="b"></span></div></div>`;
-    sh.querySelector('.b').textContent = label;
+      <div><div class="t"></div><span class="b"></span></div></div>`;
+    sh.querySelector('.t').textContent = r.head || '이 사이트는 기록할 수 없어요';
+    sh.querySelector('.b').textContent = r.label || r.why;
     const card = sh.querySelector('.card');
     const close = () => {
       card.classList.remove('on');
@@ -300,6 +309,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     if (toastWant) skipToast(toastWant);
+    else skipAgain();
     resync();
   });
 
