@@ -415,6 +415,9 @@
     { host: /(^|\.)bloter\.net$/, sel: '[id="article-view-content-div"]', name: '블로터' },
     { host: /(^|\.)etnews\.com$/, sel: '[id="articleBody"]', name: '전자신문',
       skip: '.ad-300x250, #newsroom_etview_promotion' },
+    // 경향신문(#45): Readability 상자(section.art_cont)가 사실상 #articleBody 하나라 본문은 잘 잡는다. 칸 안 광고 자리
+    //   (사진 아래 텍스트 광고 #articleImageTxtAd · 본문 배너)가 전부 .ad-wrapper 로 감싸져 있어 그것만 뺀다.
+    { host: /(^|\.)khan\.co\.kr$/, sel: '[id="articleBody"]', name: '경향신문', skip: '.ad-wrapper' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
