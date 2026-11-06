@@ -14,8 +14,9 @@
  *   받은 목록은 'excl' 키에 회원 id 와 같이 둔다 — 서비스 워커가 쉬었다 깨도 · 다음 세션 첫 탭도 바로 쓰게.
  *   지금 로그인한 회원의 목록일 때만 쓴다(로그아웃 · 다른 회원 = 규칙 없음).
  *   다시 받는 때: 'auth' 키가 써짐(연결 · 로그아웃 · 다른 회원 · 팝업 열 때 로그인 확인 · 토큰 재발급 — 기록 여부와 상관없이) ·
- *     기록 중 탭이 규칙을 물었는데(hello · 방송) 마지막으로 받으려 한 지 EXCL_MAX_AGE_MS 가 지남(기록 시작 포함, 실패도 한 번으로 침).
- *     주기 알람은 없다 — 기록 중 웹에서 바꾼 것은 1분이 지난 뒤 탭이 다시 물을 때(스캔 끝 · 탭 다시 보임) 먹는다.
+ *     새 세션이 시작됨(마지막으로 받은 지 상관없이) · 기록 중 탭을 옮김(다른 탭 · 다른 창, EXCL_SWITCH_MS 에 한 번 —
+ *     웹 설정 탭에서 제외를 켜고 그 사이트 탭으로 돌아오면 바로 먹게, 11-06 서현 실측: 블로터를 켜도 그대로였음) ·
+ *     기록 중 탭이 규칙을 물었는데(hello · 방송) 마지막으로 받으려 한 지 EXCL_MAX_AGE_MS 가 지남(실패도 한 번으로 침).
  *     받는 중에 회원이 바뀌었으면 그 결과는 버리고 끝난 뒤 한 번 더 받는다.
  *   목록 · 실패 원문이 바뀌었고 기록 중이면 세션 방송을 다시 보낸다 → 탭이 새 규칙으로 다시 맞춰 보고 패널도 바뀐다
  *     (이미 열린 구간은 그대로, 11-session 헤더). 저장본을 읽기 전에 빈 규칙을 준 적이 있으면 같아도 다시 보낸다.
@@ -27,6 +28,8 @@
 const EXCL_PATH = '/settings/collection/excluded-urls';
 const K_EXCL = 'excl';                       // { memberId, urls: [표시형 url], at(마지막으로 받은 때), err }
 const EXCL_MAX_AGE_MS = 60 * 1000;          // 기록 중 다시 받는 간격 (실패해도 이만큼 쉬고 다시)
+const EXCL_SWITCH_MS = 3 * 1000;            // 탭을 옮길 때 다시 받는 최소 간격
+let exclSid = null;                         // 마지막으로 받으려 한 때의 세션 — 바뀌면(새 세션) 바로 받음
 let exclTried = 0;                          // 마지막으로 받으려 한 때 (메모리 — 서비스 워커가 깨면 기록 중 첫 물음에 한 번 받음)
 
 let X = { memberId: null, urls: [], at: 0, err: null };
@@ -45,6 +48,7 @@ function refreshExcluded() {
 }
 async function fetchExcluded() {
   exclTried = Date.now();
+  exclSid = S.sessionId;
   await exclReady;
   await authReady;
   if (!A) return;
@@ -77,7 +81,7 @@ Object.assign(VERSION, {
   mode: 'server',
   skipRules() {
     if (!exclLoaded) exclGaveEarly = true;
-    if (S.recording && A && (!exclLoaded || Date.now() - exclTried > EXCL_MAX_AGE_MS)) {
+    if (S.recording && A && (!exclLoaded || exclSid !== S.sessionId || Date.now() - exclTried > EXCL_MAX_AGE_MS)) {
       refreshExcluded().catch((e) => console.warn('[RBC] 수집 제외 URL', e));
     }
     return exclMine() ? X.urls.map((url) => ({ url, why: 'excluded' })) : [];
@@ -87,6 +91,15 @@ Object.assign(VERSION, {
       err: X.err, mine: exclMine() };
   },
 });
+
+// 기록 중 탭 · 창을 옮기면 다시 받는다 (헤더). 리스너는 최상위 동기 등록 — 서비스 워커를 깨운다.
+function exclOnSwitch() {
+  if (S.recording && A && Date.now() - exclTried > EXCL_SWITCH_MS) {
+    refreshExcluded().catch((e) => console.warn('[RBC] 수집 제외 URL', e));
+  }
+}
+chrome.tabs.onActivated.addListener(() => exclReady.then(exclOnSwitch));
+chrome.windows.onFocusChanged.addListener((w) => { if (w !== chrome.windows.WINDOW_ID_NONE) exclReady.then(exclOnSwitch); });
 
 // 로그인이 바뀌면(연결 · 로그아웃 · 다른 회원) 다시 받는다. 리스너는 최상위 동기 등록.
 chrome.storage.onChanged.addListener((ch, area) => {

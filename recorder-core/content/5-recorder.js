@@ -499,6 +499,7 @@
 
   // 구간을 닫는다. 세션을 닫는 게 아니다 — 세션 종료는 background 가 정한다.
   // reason: 'user'(세션 정지 방송) | 'idle'(background 무동작 자동 정지 방송, #26) | 'demoted' | 'navigation'(11-session) | 'unfold'(기록 중 노션 다시 펼치기 실패, #37)
+  //         | 'excluded'(기록 중에 기록 안 할 주소 규칙이 늦게 와 닫음 — 웹에서 수집 제외를 켬 등, 11-session #49)
   function stop(reason) {
     RBC.stream.restoreNotion();                        // 노션 펼친 것을 되돌린다 (#37, 기록 중에만 펼침)
     RBC.stream.curtain(null);                          // 실패 창이 떠 있었으면 닫는다 (노션 안 이동 뒤 남지 않게)

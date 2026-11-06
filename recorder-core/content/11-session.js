@@ -173,18 +173,18 @@
     if (skipSid !== session.sessionId) { skipSid = session.sessionId; skipSent = undefined; }
     const r = RBC.util.skipMatch(location.href, session.skip);
     const rule = r ? r.url : null;
-    // 대기 중(구간을 열기 전)에 걸림 = 규칙이 나중에 왔다(수집 제외 목록을 세션 시작 뒤 받음) → 대기를 그만둔다.
-    //   이미 기록 중인 구간은 닫지 않는다(새 정지 이유를 만들지 않으려고) — 다음 합류부터 걸린다.
-    //   본문이 iframe 이면 primaryState 는 중계된 stat 이라 조금 늦을 수 있다 — 그 사이 구간이 막 열렸으면 'navigation' 으로 닫힘(드묾, 예상).
-    let open = false;
+    // 대기 중 · 기록 중에 걸림 = 규칙이 나중에 왔다(수집 제외 목록을 세션 시작 뒤 · 웹에서 바꾼 뒤 받음) → 그만둔다.
+    //   기록 중이던 구간은 segend.reason 'excluded' 로 닫는다(11-06 서현: 늦게 제외돼도 기록은 멈춘다). 대기 중이면 구간이 없어 아무것도 안 남는다.
+    //   닫기 전에 이미 기록된 부분(보통 몇 초)은 남는다.
+    let closed = false;
     if (r) {
       const ps = primaryState();
-      if (ps.settling && !ps.recording) RBC.frames.send('stop', { reason: 'navigation' });
-      open = !!ps.recording;
+      if (ps.settling || ps.recording) RBC.frames.send('stop', { reason: 'excluded' });
+      closed = !!ps.recording;
     }
     if (rule !== skipSent) {
       skipSent = rule;
-      bus.emit('skip:page', r ? Object.assign({ open }, r) : null);   // open = 이미 열린 구간은 계속 기록 중 (패널)
+      bus.emit('skip:page', r ? Object.assign({ closed }, r) : null);   // closed = 기록 중이던 구간을 닫음 (패널)
       toBg({ rbc: 'skip', rule, why: r ? r.why : null });
       if (r) skipToast(r);                                   // 걸리기 시작함 = 이 페이지를 엶 · 다른 사이트에서 넘어옴
     }

@@ -38,7 +38,7 @@
  *   팝업은 exported 면 "새로 시작하면 지워집니다" 경고 · 두 번 누르기를 하지 않는다(이미 파일로 나갔으므로).
  *   파일이 실제로 저장됐는지는 모른다(a.download) — 저장 창에서 취소해도 내보낸 것으로 친다(예상: 크롬 기본은 창 없이 저장).
  * ========================================================================== */
-/* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField */
+/* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField, skipClearAll */
 'use strict';
 
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
@@ -192,6 +192,7 @@ Object.assign(handlers, {
       S.recording = false;
       await broadcast(sessionMsg());
     }
+    await skipClearAll();                // 기록 안 하는 사이트 탭의 회색 아이콘도 되돌린다 (#49)
     await removeLog();
     S = emptyState();
     await saveState();
