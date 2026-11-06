@@ -168,7 +168,7 @@
   function elementFilter(el) {
     if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
     if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
-    if (el.matches && el.matches(AD_WIDGETS)) return NodeFilter.FILTER_REJECT;   // #51
+    if (el.matches && el.matches(AD_WIDGETS)) return NodeFilter.FILTER_REJECT;   // #51 · #53
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
       return NodeFilter.FILTER_REJECT;
     if (isExcluded(el)) return NodeFilter.FILTER_REJECT;   // [0-5]
