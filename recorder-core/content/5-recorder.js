@@ -288,6 +288,17 @@
   // focusMs)와 paragraphs 는 background 가 채운다.
   // 이 모양은 extract_features.py 와의 계약이다 — 바꾸려면 schemaVersion 을
   // 올리고 양쪽을 같이 고칠 것.
+  // 페이지 제목과 어디서 가져왔나 (#43). 기본 = document.title.
+  //   블로터: 다음 기사를 이어 붙인 뒤 <title> 을 그 기사 제목으로 바꾼다(주소 그대로) → 붙은 뒤 구간을 열면
+  //   제목이 엉뚱한 기사가 됐다. og:title 은 안 바꾼다 = 주소의 기사 제목. 없으면 document.title.
+  const SITE_TITLES = [{ host: /(^|\.)bloter\.net$/, sel: 'meta[property="og:title"]', from: 'og:title' }];
+  function pageTitle() {
+    const rule = SITE_TITLES.find(r => r.host.test(location.hostname));
+    const el = rule && document.querySelector(rule.sel);
+    const t = el && (el.getAttribute('content') || '').trim();
+    return t ? { text: t, from: rule.from } : { text: document.title, from: 'document.title' };
+  }
+
   function buildMeta() {
     const ri = RBC.stream.rootInfo();
     return {
@@ -297,7 +308,7 @@
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
-      title: document.title,
+      title: pageTitle().text,                        // 블로터는 og:title (#43)
       referrer: document.referrer || null,
       enteredAt: new Date().toISOString(),
       devicePixelRatio: window.devicePixelRatio,
@@ -543,6 +554,8 @@
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
       noise: noiseStat(),
+      // 제목 (#43): 기록 중 = 이 구간 meta 에 들어간 값, 아니면 지금 구간을 열면 들어갈 값
+      title: recording && segMeta ? { text: segMeta.title, from: 'seg' } : pageTitle(),
       unfold: RBC.stream.unfoldState(),                // 노션 펼침 (#37) — 노션이 아니면 null
     });
   }
