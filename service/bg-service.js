@@ -12,14 +12,15 @@
  *   사용자가 웹 설정에서 켠 "수집 제외 URL"(BE GET /settings/collection/excluded-urls, isExcluded 인 것만)을
  *   엔진의 기록 안 할 주소 규칙(VERSION.skipRules, why 'excluded')으로 준다. 맞춰 보는 건 탭(0-core skipMatch).
  *   받은 목록은 'excl' 키에 회원 id 와 같이 둔다 — 서비스 워커가 쉬었다 깨도 · 다음 세션 첫 탭도 바로 쓰게.
- *   지금 로그인한 회원의 목록일 때만 쓴다(로그아웃 · 다른 회원 = 규칙 없음).
+ *   지금 로그인한 회원의 목록일 때만 쓴다(다른 회원 = 규칙 없음). 로그아웃 중이면 마지막 회원 목록을 그대로 쓴다 —
+ *     기록은 로그아웃돼도 이어지므로(bg-auth 헤더), 제외한 사이트가 로그아웃 순간 다시 기록되지 않게(검토 11-06).
  *   다시 받는 때: 'auth' 키가 써짐(연결 · 로그아웃 · 다른 회원 · 팝업 열 때 로그인 확인 · 토큰 재발급 — 기록 여부와 상관없이) ·
- *     새 세션이 시작됨(마지막으로 받은 지 상관없이) · 기록 중 탭을 옮김(다른 탭 · 다른 창, EXCL_SWITCH_MS 에 한 번 —
+ *     새 세션이 시작됨(마지막으로 받은 지 상관없이) · 기록 중 탭을 옮김(다른 탭 · 다른 창, EXCL_SWITCH_MS(1초)에 한 번 —
  *     웹 설정 탭에서 제외를 켜고 그 사이트 탭으로 돌아오면 바로 먹게, 11-06 서현 실측: 블로터를 켜도 그대로였음) ·
  *     기록 중 탭이 규칙을 물었는데(hello · 방송) 마지막으로 받으려 한 지 EXCL_MAX_AGE_MS 가 지남(실패도 한 번으로 침).
  *     받는 중에 회원이 바뀌었으면 그 결과는 버리고 끝난 뒤 한 번 더 받는다.
  *   목록 · 실패 원문이 바뀌었고 기록 중이면 세션 방송을 다시 보낸다 → 탭이 새 규칙으로 다시 맞춰 보고 패널도 바뀐다
- *     (이미 열린 구간은 그대로, 11-session 헤더). 저장본을 읽기 전에 빈 규칙을 준 적이 있으면 같아도 다시 보낸다.
+ *     (기록 중이던 구간은 segend.reason 'excluded' 로 닫힘, 11-session 헤더). 저장본을 읽기 전에 빈 규칙을 준 적이 있으면 같아도 다시 보낸다.
  *   실패하면 옛 목록을 그대로 쓰고 원문을 skipInfo.err → 디버그 패널 · 서비스 워커 콘솔(조용히 삼키지 않는다).
  * ========================================================================== */
 /* global VERSION, S, serial, broadcast, sessionMsg, A, authed, authReady */
@@ -28,7 +29,7 @@
 const EXCL_PATH = '/settings/collection/excluded-urls';
 const K_EXCL = 'excl';                       // { memberId, urls: [표시형 url], at(마지막으로 받은 때), err }
 const EXCL_MAX_AGE_MS = 60 * 1000;          // 기록 중 다시 받는 간격 (실패해도 이만큼 쉬고 다시)
-const EXCL_SWITCH_MS = 3 * 1000;            // 탭을 옮길 때 다시 받는 최소 간격
+const EXCL_SWITCH_MS = 1000;                // 탭을 옮길 때 다시 받는 최소 간격 (설정 탭에서 바꾸고 바로 돌아와도 받게)
 let exclSid = null;                         // 마지막으로 받으려 한 때의 세션 — 바뀌면(새 세션) 바로 받음
 let exclTried = 0;                          // 마지막으로 받으려 한 때 (메모리 — 서비스 워커가 깨면 기록 중 첫 물음에 한 번 받음)
 
@@ -75,7 +76,7 @@ async function fetchExcluded() {
   return false;
 }
 
-function exclMine() { return !!A && X.memberId === A.memberId; }
+function exclMine() { return X.memberId != null && (!A || X.memberId === A.memberId); }   // 로그아웃 중 = 마지막 회원 목록
 
 Object.assign(VERSION, {
   mode: 'server',

@@ -51,8 +51,9 @@
  *   여러 번 불러도 구간이 중복으로 열리지 않는다.
  *
  * --- 기록 안 할 주소 (#49) ----------------------------------------------------
- *   규칙은 background 가 hello · 방송(sessionMsg.skip)으로 준다. 합류 직전에 이 탭 주소를 맞춰 보고(0-core skipMatch)
- *   걸리면 start 를 안 보낸다 — 읽기 · 스크롤은 그대로, 기록만 안 함. 걸림 · 풀림이 바뀔 때만 background 에 skip 으로
+ *   규칙은 background 가 hello · 방송(sessionMsg.skip)으로 준다. 합류 직전 · SPA 이동 직후에 이 탭 주소를 맞춰 보고
+ *   (0-core skipMatch) 걸리면 start 를 안 보낸다 — 읽기 · 스크롤은 그대로, 기록만 안 함. 규칙이 늦게 와 대기 · 기록 중이면
+ *   그만두고, 기록 중이던 구간은 segend.reason 'excluded' 로 닫는다(11-06 서현). 걸림 · 풀림이 바뀔 때만 background 에 skip 으로
  *   알린다(툴바 아이콘을 그 탭만 회색으로). 알림은 화면 아래 가운데에 4.5초(팝업 스타일, 숨은 탭이면 보일 때) —
  *     그 사이트 페이지를 열 때 · 다른 사이트에서 넘어올 때 · 다른 탭에서 이 탭으로 돌아올 때마다(까먹지 않게, 11-06 서현).
  *     아래 가운데 = 구글 스낵바 자리. 툴바 팝업(오른쪽 위)에 가리지 않고 디버그 패널(오른쪽 아래)과도 안 겹친다.
@@ -169,7 +170,8 @@
   //   skipSid = 그 알림이 어느 세션 것인지. 정지 방송을 놓친 탭(얼었던 탭 · bfcache)이 새 세션에서 옛 값 때문에
   //   안 알리면 새 세션의 아이콘 · 알림이 안 뜬다 → 세션이 바뀌면 처음부터 다시 알린다.
   let skipSent, skipSid = null;
-  function skipCheck() {
+  //   moved = SPA 이동 직후 (방금 'navigation' 으로 닫았으니 여기서 또 닫지 않는다)
+  function skipCheck(moved) {
     if (skipSid !== session.sessionId) { skipSid = session.sessionId; skipSent = undefined; }
     const r = RBC.util.skipMatch(location.href, session.skip);
     const rule = r ? r.url : null;
@@ -177,13 +179,14 @@
     //   기록 중이던 구간은 segend.reason 'excluded' 로 닫는다(11-06 서현: 늦게 제외돼도 기록은 멈춘다). 대기 중이면 구간이 없어 아무것도 안 남는다.
     //   닫기 전에 이미 기록된 부분(보통 몇 초)은 남는다.
     let closed = false;
-    if (r) {
+    if (r && !moved) {
       const ps = primaryState();
       if (ps.settling || ps.recording) RBC.frames.send('stop', { reason: 'excluded' });
       closed = !!ps.recording;
     }
     if (rule !== skipSent) {
       skipSent = rule;
+      if (!r) skipToastOff();                                // 풀림 (제외를 끔 등) → 떠 있거나 기다리던 알림도 거둔다
       bus.emit('skip:page', r ? Object.assign({ closed }, r) : null);   // closed = 기록 중이던 구간을 닫음 (패널)
       toBg({ rbc: 'skip', rule, why: r ? r.why : null });
       if (r) skipToast(r);                                   // 걸리기 시작함 = 이 페이지를 엶 · 다른 사이트에서 넘어옴
@@ -191,7 +194,8 @@
     return !!r;
   }
 
-  // 다른 탭에서 돌아옴 → 걸린 탭이면 다시 알린다 (visibilitychange)
+  // 다른 탭에서 돌아옴 → 걸린 탭이면 다시 알린다 (visibilitychange). 새 규칙을 받은 뒤에 본다(resync 뒤) —
+  //   웹에서 제외를 끄고 돌아왔는데 옛 규칙으로 "기록하지 않아요"가 뜨지 않게. 그 뒤 목록이 바뀌어 풀리면 skipCheck 가 거둔다.
   function skipAgain() {
     if (!session.recording || !skipSent) return;
     const r = RBC.util.skipMatch(location.href, session.skip);
@@ -199,6 +203,10 @@
   }
 
   let toastEl = null, toastWant = null;
+  function skipToastOff() {
+    toastWant = null;
+    if (toastEl) { toastEl.remove(); toastEl = null; }
+  }
   function skipToast(r) {
     if (document.hidden) { toastWant = r; return; }          // 보일 때 (visibilitychange)
     toastWant = null;
@@ -295,7 +303,7 @@
   // 합류: 스캔이 끝날 때마다, 그리고 탭이 다시 보일 때마다 묻는다.
   //   세션이 멈춰 있는데 이 탭이 아직 기록 중이면(정지 방송을 놓친 경우) 닫는다.
   function resync() {
-    toBg({ rbc: 'hello' }).then((m) => {
+    return toBg({ rbc: 'hello' }).then((m) => {
       if (!m) return;
       const wasRecording = session.recording;
       applySession(m);
@@ -307,11 +315,20 @@
   }
 
   bus.on('scan:done', resync);
+  // 뒤로 가기 캐시(bfcache)에서 살아난 문서: 떠나 있는 동안 background 는 이 탭을 다른 문서로 봤다 → 처음부터 다시 알린다 (#49 검토)
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    skipSent = undefined;                                  // 합류 때 skipCheck 가 다시 알리고 알림도 띄운다
+    resync();
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
-    if (toastWant) skipToast(toastWant);
-    else skipAgain();
-    resync();
+    const want = toastWant;
+    toastWant = null;
+    resync().then(() => {                                    // 새 규칙으로 맞춰 본 뒤에 (skipAgain 주석)
+      if (want && skipSent) skipToast(want);
+      else skipAgain();
+    });
   });
 
   // ==========================================================================
@@ -402,6 +419,9 @@
 
     // 지금 글의 구간만 닫는다. primary 가 iframe 이어도 6-frames 가 전달한다.
     if (session.recording) RBC.frames.send('stop', { reason: 'navigation' });
+    // 기록 안 할 주소 (#49): 새 주소로 바로 맞춰 본다 — 스캔이 실패하면(본문 없는 목록 페이지 등) 합류가 안 일어나
+    //   회색 아이콘 · 팝업 "일시 정지"가 옛 주소 것으로 남았다(검토 11-06). 걸리면 아래 스캔 뒤 합류에서도 다시 걸린다.
+    if (session.recording) skipCheck(true);
 
     // 새 글의 본문이 붙기를 기다렸다가 다시 스캔 → scan:done → 합류.
     setTimeout(() => RBC.frames.doScan(), CFG.FIRST_SCAN_DELAY);

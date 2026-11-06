@@ -64,7 +64,8 @@
  * --- 기록 안 할 주소 (#49) ----------------------------------------------------
  *   규칙 목록은 여기 하나다: 엔진의 NO_RECORD_SITES(기록할 수 없는 사이트, 서현이 직접 넣음) + 버전 파일의
  *   VERSION.skipRules()(실사용 = 수집 제외 URL). sessionMsg 에 실어 탭에 준다. 주소를 맞춰 보는 건 탭(0-core skipMatch)
- *   — hello 에 탭 주소를 싣지 않으려고(아래 hello 주석). 걸린 탭은 기록 구간을 안 열고 skip 으로 알려 온다 →
+ *   — hello 에 탭 주소를 싣지 않으려고(아래 hello 주석). 걸린 탭은 기록 구간을 안 열고(규칙이 늦게 와 이미 열렸으면
+ *   segend.reason 'excluded' 로 닫고) skip 으로 알려 온다 →
  *   여기서 그 탭의 툴바 아이콘을 회색(icons/*-off.png)으로 바꾸고 설명을 단다. 알림은 탭이 알아서 띄운다.
  *   정지하면 전부 되돌린다. 기록 데이터에는 아무것도 안 남는다.
  *
@@ -472,13 +473,15 @@ const handlers = {
   async skip(m, sender) {
     const tabId = sender.tab ? sender.tab.id : null;
     const rule = (m && m.rule) || null;
+    let changed = false;
     if (rule && S.recording) {
-      if (tabId != null) { S.skipTabs[tabId] = { rule, why: m.why || null }; await skipBadge(tabId, m.why || null); }
+      if (tabId != null) { S.skipTabs[tabId] = { rule, why: m.why || null }; changed = true; await skipBadge(tabId, m.why || null); }
     } else if (tabId != null && S.skipTabs[tabId] !== undefined) {
       delete S.skipTabs[tabId];
+      changed = true;
       await skipBadge(tabId, null);
     }
-    await saveState();
+    if (changed) await saveState();                        // 새 문서마다 오는 null 은 대개 바뀐 게 없다
     return { ok: true };
   },
 
