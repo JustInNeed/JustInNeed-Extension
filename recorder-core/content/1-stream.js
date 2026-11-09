@@ -67,10 +67,11 @@
  *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
  *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
  *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
- *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫.
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` 은 아래 AD_WIDGETS 에서 뺀다).
  *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
- *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다 — 역시 DOM 만 보고 정한다.
+ *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다.
+ *     예외: 위키백과 각주의 스크린리더 전용 글(아주 먼 화면 밖에 놓여 조각 사각형을 늘림)도 여기서 뺀다(#53) — 역시 DOM 만 보고 정한다.
  *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
@@ -169,7 +170,11 @@
   //     옮겨 넣고 광고 글이 방문마다 바뀌어, 본문 유닛에 본문으로 섞이고 그 유닛 pid 가 방문마다 갈렸다(#53 jsdom).
   //   .sharedaddy · #jp-relatedposts = 워드프레스 Jetpack 공유 · 좋아요 상자("Share this:" · Like)와 관련 글 상자.
   //     본문 칸(.entry-content) 안 끝에 붙어 마지막 유닛 끝 조각이 됐다(#53, 워드프레스닷컴 블로그 jsdom).
-  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts';
+  //   .cite-accessibility-label = 위키백과(미디어위키) 각주의 스크린리더 전용 글 "이동: ". 위젯은 아니지만 예외로 여기 둔다.
+  //     페이지 스크립트가 나중에 넣고, 문서 맨 위보다 약 10만 px 위에 놓아 숨긴다. 그래서 그 각주 조각의
+  //     외곽 사각형이 그 위치부터 각주까지 늘어나, 각주보다 위 어디를 봐도 매 틱 vis 에 들어갔다(#53, 11-09 서현).
+  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
+    '.cite-accessibility-label';
 
   // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
   // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
