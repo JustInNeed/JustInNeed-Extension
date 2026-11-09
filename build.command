@@ -72,17 +72,21 @@ release() {
   rel=build/release; day=$(date +'%m%d')
   mkdir -p "$rel" || return 1
   local made=() v
+  # 중간에 실패하면 그때까지 만든 zip 과 임시 폴더를 지운다 — build/release 에는 검사를 통과한 zip 만 남게 (#67 검토)
+  bail() { rm -f "${made[@]}"; rm -rf "${rel:?}/data-collect" "${rel:?}/service"; echo "$1 — 만든 zip 을 지움" >&2; return 1; }
   for v in data-collect service; do
-    merge "$v" "$rel/$v" no-mark || return 1
-    ver=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$rel/$v/manifest.json") || return 1
+    merge "$v" "$rel/$v" no-mark || { bail "$v 합치기 실패"; return 1; }
+    ver=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$rel/$v/manifest.json") || { bail "$v 버전 읽기 실패"; return 1; }
     z="$rel/justinneed-$v-$ver-$day-$head.zip"
     rm -f "$z"
-    (cd "$rel/$v" && zip -qr "../$(basename "$z")" . -x '.*') || { echo "$z 묶기 실패" >&2; return 1; }
-    rm -rf "${rel:?}/$v"
     made+=("$z")
+    # git 이 지키는 파일만 들어가야 한다 — .gitignore 된 기록 JSON · CSV 가 폴더에 있어도 zip 에 실려 나가지 않게 (#67 검토)
+    git ls-files -- "$CORE" "$v" | sed -e "s#^$CORE/##" -e "s#^$v/##" | sort -u > "$rel/$v.tracked" || { bail "$v 파일 목록 실패"; return 1; }
+    (cd "$rel/$v" && zip -qr "../$(basename "$z")" . -x '.*') || { bail "$z 묶기 실패"; return 1; }
+    rm -rf "${rel:?}/$v"
   done
   # zip 안 검사 — 실패면 zip 을 지운다
-  python3 - "${made[@]}" <<'PY2' || { rm -f "${made[@]}"; echo "검사 실패 — zip 을 지움. 위 ✗ 줄을 볼 것" >&2; return 1; }
+  python3 - "${made[@]}" <<'PY2' || { rm -f "${made[@]}" "$rel"/*.tracked; echo "검사 실패 — zip 을 지움. 위 ✗ 줄을 볼 것" >&2; return 1; }
 import json, sys, zipfile
 ok = True
 def check(cond, msg):
@@ -102,6 +106,9 @@ for z in sys.argv[1:]:
     check('version_name' not in m, f"개발 표시(version_name) 없음 — 카드에 {m['version']} 만 보임")
     check(not any(n.endswith('.pem') for n in names), '개인 키(.pem) 없음')
     check(not any(p.startswith('.') for n in names for p in n.split('/') if p), '숨김 파일(.DS_Store 등) 없음')
+    tracked = set(open(z.rsplit('/', 1)[0] + f'/{kind}.tracked', encoding='utf-8').read().split('\n')) - {''}
+    extra = sorted(n for n in names if not n.endswith('/') and n not in tracked)
+    check(not extra, 'git 이 지키는 파일만 (기록 JSON · CSV 같은 무시 파일 없음)' + (f' — 섞인 것: {extra[:5]}' if extra else ''))
     check('localhost' not in json.dumps(m), 'manifest 에 localhost 없음')
     if kind == 'service':
         check(bool(m.get('key')), '확장 ID 고정 key 있음 (ID pgmclbgdbaiigahdhpnieemifhgoikpa 그대로)')
@@ -113,12 +120,13 @@ for z in sys.argv[1:]:
 check(len(set(vers)) == 1, f"두 버전 번호 같음: {vers}")
 sys.exit(0 if ok else 1)
 PY2
+  rm -f "$rel"/*.tracked
   echo "배포 zip 끝 (main $head):"; printf '  %s\n' "${made[@]}"
 }
 
 # 합치기: 엔진 + 버전 폴더 → out. 세 번째 인자 no-mark 면 개발 표시를 안 넣는다(배포용)
 merge() {
-  local v=$1 out=$2 mark=${3:-mark} src
+  local v=$1 out=$2 mark=${3:-mark} src clash
   # 아는 버전 이름만 — out 을 지우므로 '../x' · 'build' 같은 이름이 레포 폴더를 지우지 않게
   case "$v" in
     data-collect|service) src=$v ;;
@@ -138,6 +146,7 @@ merge() {
   if [ "$v" = service-dev ]; then
     to_dev "$out" || { echo "$v: 시험 서버 주소로 바꾸기 실패 — 위 메시지를 볼 것" >&2; rm -rf "$out"; return 1; }
   fi
+  # 개발 표시는 맨 마지막 — mark_dev 가 manifest 를 json 으로 다시 써서 줄 모양이 바뀌므로, 글자 그대로 바꾸는 swap(to_dev)은 그 앞에
   if [ "$mark" = mark ]; then
     mark_dev "$out" || { echo "$v: 개발 빌드 표시 넣기 실패" >&2; rm -rf "$out"; return 1; }
   fi
