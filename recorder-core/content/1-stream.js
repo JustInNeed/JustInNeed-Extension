@@ -583,7 +583,9 @@
   const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
 
   // 복사본에서 Readability 를 돌려 원본의 상자 요소들을 돌려준다. 실패면 { why }.
+  let onAttrs = null;                     // 마지막 findBoxes 가 복사본에서 지운 on* 속성 수 (#27, 패널 표시용)
   function findBoxes() {
+    onAttrs = null;
     if (typeof Readability !== 'function') return { why: 'Readability 로드 안 됨' };
     const orig = Array.from(document.getElementsByTagName('*'));
     const doc = document.cloneNode(true);
@@ -592,6 +594,15 @@
     for (let i = 0; i < copy.length; i++) copy[i].setAttribute(MARK, String(i));
     // 우리 화면 요소(패널 · 오버레이 · 라벨)는 본문 후보에서 뺀다
     doc.querySelectorAll('[id^="rbc-"]').forEach(el => el.remove());
+    // 복사본의 인라인 이벤트 속성(onclick 등)을 지운다 (#27). 글이 짧으면 Readability 가 복사본에 HTML 문자열을 다시
+    //   넣어 재시도하는데(readability.js _grabArticle `page.innerHTML = pageCacheHtml`), 그때 이 속성들이 페이지 CSP
+    //   (구글 검색 = nonce)에 막혀 확장 오류 페이지에 위반 경고가 쌓였다. 판정은 이벤트 속성을 안 본다 → 결과 그대로(jsdom 확인).
+    onAttrs = 0;
+    for (const el of doc.getElementsByTagName('*')) {
+      for (const at of Array.from(el.attributes)) {
+        if (at.name.length > 2 && at.name.startsWith('on')) { el.removeAttribute(at.name); onAttrs++; }
+      }
+    }
 
     let res;
     try { res = new Readability(doc, { serializer: el => el }).parse(); }
@@ -688,6 +699,7 @@
         const alt = itempropBox(r.boxes);
         if (alt) art = { status: 'ok', why: '', boxes: [alt.el], ratio: ratioOf([alt.el]), alt: alt.prop, altFrom: r.boxes.map(describe) };
       }
+      art.onAttrs = onAttrs;
     }
     art.ms = Math.round(performance.now() - t0);
     art.root = contentRoot;
@@ -715,6 +727,7 @@
     const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
     return {
       status: a.status, by: a.by || null, alt: a.alt || null, altFrom: a.altFrom || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
+      onAttrs: a.onAttrs == null ? null : a.onAttrs,
       boxes: a.boxes.map(describe), boxEls: a.boxes, skips: skipEls.map(describe), skipEls,
     };
   }
