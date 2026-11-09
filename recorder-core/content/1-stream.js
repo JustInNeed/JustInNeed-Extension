@@ -448,6 +448,11 @@
     // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
     //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
     { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
+    // 향토문화전자대전(#53): Readability 상자는 본문 칸(.info_div)만 — 위 정보 표(항목 ID · 별칭 · 지역 · 집필자 …) ·
+    //   [상세정보] · 아래 [참고문헌] 이 noise 가 된다. 위키백과 정보 상자처럼 본문으로 넣는다(11-09 서현).
+    //   네 칸이 형제라 전부 상자로, 표 밑 공통 안내문(※ 본 항목의 내용은 …)만 뺀다.
+    { host: /(^|\.)grandculture\.net$/, sel: '[id="pic_info_div"], .info_detail, .info_div, .info_reference',
+      name: '향토문화전자대전', skip: '[id="pic_info_div"] > .contents_para' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
