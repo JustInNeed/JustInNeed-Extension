@@ -668,11 +668,21 @@
         RBC.stream.commit(built);
         syncStream();
         const kept = units.map(u => ({ ...u }));
-        // 있던 표 유닛은 pid 를 그대로 둔다 (#54) — 전부 글 해시로 다시 매기면, 앞서 splice 로 줄이 늘거나 칸 값이
-        //   바뀌고도 pid 를 이어받은 표 유닛이 여기서 새 pid 를 받는다. 일반 유닛은 예전 그대로(다시 매김).
-        const oldPid = units.map(u => u.pid);
-        const next = assignIds(chunkFrom(tailFrom, kept));
-        next.forEach((u, q) => { if (q < oldPid.length && u.kind === 'table') u.pid = oldPid[q]; });
+        // 있던 유닛은 pid 를 그대로 둔다 (#54 표 · #56 일반) — 글 해시로 다시 매기면, 짧은 덧붙은 글이 마지막 유닛에
+        //   흡수되거나 앞서 splice 의 문단 안 변경으로 글이 바뀐 유닛이 새 pid 를 받아 한 글이 두 pid 로 남는다.
+        //   새 유닛만 글 해시로 매기고, 있던 pid 와 겹치면 _2 · _3 (splice 와 같은 방식).
+        const oldN = units.length;
+        const next = chunkFrom(tailFrom, kept);
+        const taken = new Set(units.map(u => u.pid));
+        next.forEach((u, q) => {
+          u.order = q;
+          if (q < oldN) return;                      // kept[q] 를 그대로 늘린 것 — pid 도 kept 것
+          const base = 'u' + hash(u.text.slice(0, 160));
+          let pid = base, c = 1;
+          while (taken.has(pid)) pid = base + '_' + (++c);
+          u.pid = pid;
+          taken.add(pid);
+        });
         units = fillPieces(next);
         bus.emit('units:rescanned', { mode: 'append', count: units.length, root: rootTo,
           ms: Math.round(performance.now() - t0) });
