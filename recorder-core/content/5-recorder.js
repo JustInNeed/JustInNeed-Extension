@@ -542,7 +542,7 @@
       if (n) units++;
       if (n && n === u.pieces.length) allUnits++;
     }
-    return { status: a.status, by: a.by, why: a.why, ratio: a.ratio, min: a.min, decided: a.decided, ms: a.ms,
+    return { status: a.status, by: a.by, why: a.why, ratio: a.ratio, min: a.min, decided: a.decided, ms: a.ms, onAttrs: a.onAttrs,
       boxes: a.boxes, skips: a.skips, pieces, units, allUnits, none };
   }
 

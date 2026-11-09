@@ -275,6 +275,8 @@
         ` / 문턱 ${pct(n.min)} → ` + (n.decided ? '판정함' : '<b style="color:#b45309">미판정 (비율 &lt; 문턱)</b>');
     }
     if (n.ms != null) s += ` · ${n.ms}ms`;
+    // 복사본에서 지운 on* 속성 수 (#27) — Readability 를 돌렸을 때만. 원본 페이지는 그대로.
+    if (n.onAttrs != null) s += ` · <span style="color:#666" title="Readability 복사본에서만 지움 — 원본 페이지 그대로. CSP 위반 경고 막기(#27)">복사본 on* 속성 ${n.onAttrs}개 지움</span>`;
     return s;
   }
 
