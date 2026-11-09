@@ -456,6 +456,11 @@
     // 국립국어원 온라인가나다(#53): Readability 상자(div.boardView)가 질문 · 답변 아래 이전 글 · 다음 글(.page)까지 담고,
     //   비밀번호 창 · 재질문 · 목록 버튼까지 본문이 된다. 질문 · 답변의 머리(제목 · 작성자)와 몸만 상자로.
     { host: /(^|\.)korean\.go\.kr$/, sel: '.boardView > .head, .boardView > .body', name: '국립국어원' },
+    // 우체국 EMS(#53): 요금표 페이지는 글이 거의 다 표라 Readability 가 버튼 칸(div.btn_wrap)을 골라 비율 0% → 미판정,
+    //   왼쪽 메뉴까지 noise 표시 없이 들어간다. 제목과 탭 안 내용(요금표 · 아래 안내문)만 상자로 — 탭 이름 · 요금계산기 ·
+    //   인쇄 버튼은 밖.
+    { host: /(^|\.)ems\.epost\.go\.kr$/, sel: '[id="contents_layout3"] > .page_title > h3, [id="contents_layout3"] .menu_wrap > .tab_contents',
+      name: '우체국 EMS' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
