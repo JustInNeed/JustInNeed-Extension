@@ -259,7 +259,10 @@
   function paragraphs() {
     const alive = RBC.units.all();
     const one = (u, order, gone) => {
-      const p = { pid: u.pid, order, charLen: u.charLen, text: u.text.slice(0, 1000), pieces: u.pieces || [] };
+      // 표 유닛(#54)은 글을 자르지 않는다 — 조각 off 가 1,000자 뒤를 가리켜서. 보통 유닛은 340자 이하라 원래 안 잘림.
+      const p = { pid: u.pid, order, charLen: u.charLen,
+        text: u.kind === 'table' ? u.text : u.text.slice(0, 1000), pieces: u.pieces || [] };
+      if (u.kind) p.kind = u.kind;
       if (gone) { p.retired = true; p.after = u.after || null; }   // 사라질 때 바로 앞 유닛 pid (글 순서 복원용)
       return p;
     };
