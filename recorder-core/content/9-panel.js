@@ -561,7 +561,8 @@
     const warn = r.how === 'body';
     return `<br><span style="color:${warn ? '#c00' : '#999'}">루트 ${esc(r.sel)} · ` +
       `${ROOT_HOW[r.how] || esc(r.how)} · 링크 ${Number(r.link || 0).toLocaleString()}자` +
-      (r.toggles != null ? ` · 토글 ${r.toggles}개 인식(둘레에만 벽)` : '') + '</span>';
+      (r.toggles != null ? ` · 토글 ${r.toggles}개 인식(둘레에만 벽)` : '') +
+      (r.shadow ? ` · <span style="color:#0369a1">shadow 안 읽은 칸 ${Number(r.shadow.n)}개(${esc(r.shadow.name)})</span>` : '') + '</span>';
   }
 
   // ==========================================================================

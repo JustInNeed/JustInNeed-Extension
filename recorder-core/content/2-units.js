@@ -302,12 +302,13 @@
 
   function pathOf(blk, root) {
     const path = [];
-    if (!blk || !root || blk === root || !root.contains(blk)) return { path, cut: false };
+    // shadow 안 블록(#70)은 바깥 칸으로 루트 안인지 보고, 위로 갈 때 shadow 맨 위에서 host 로 건너간다
+    if (!blk || !root || blk === root || !root.contains(RBC.stream.lightOf(blk))) return { path, cut: false };
     let el = blk;
     while (el && el !== root) {
       if (path.length === PATH_MAX) return { path, cut: true };
       path.push(RBC.stream.attrs(el));
-      el = el.parentElement;
+      el = RBC.stream.parentOf(el);
     }
     return { path, cut: false };
   }

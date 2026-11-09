@@ -74,6 +74,7 @@
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
  *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다.
  *     예외: 위키백과 각주의 스크린리더 전용 글(아주 먼 화면 밖에 놓여 조각 사각형을 늘림)도 여기서 뺀다(#53) — 역시 DOM 만 보고 정한다.
+ *   - shadow DOM 안 글은 원래 안 들어간다(TreeWalker 가 못 들어감). 예외: SHADOW_READ 에 적은 칸만 안을 읽는다(#70, MDN 코드 칸).
  *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
@@ -181,6 +182,29 @@
   //     외곽 사각형이 그 위치부터 각주까지 늘어나, 각주보다 위 어디를 봐도 매 틱 vis 에 들어갔다(#53, 11-09 서현).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label';
+
+  // 안을 읽는 shadow DOM 칸 (#70, 11-10 서현) — 페이지 안에 따로 숨긴 작은 문서(shadow root)는 TreeWalker 가
+  //   들어가지 않아 화면에 보이는 글이 스트림에 없었다. 사이트마다 사람이 확인한 칸만 안을 읽는다(열린 shadow 만).
+  //   MDN: 코드 예제(mdn-code-example)가 shadow 안에 그려진다 — 서버 HTML 엔 light DOM 에 있던 코드를 페이지 스크립트가
+  //   옮김. "시도해 보기"(interactive-example) 코드 · 편집기 · 호환성 표는 안 읽는다(11-10 서현).
+  //   안을 읽은 칸 안 글은 일반 글과 똑같이 seg 가 된다(blk = shadow 안 블록). 루트를 고르는 잣대(measure)는 shadow 를
+  //   안 세므로 루트 선택은 그대로다. 한계: 7-observer 는 shadow 안 변경을 못 본다 — 칸이 바뀌어 light DOM 이 바뀔 때만
+  //   재스캔한다(MDN 코드는 처음 그린 뒤 안 바뀜). 칸 안의 칸(mdn-copy-button 등)은 들어가지 않는다.
+  const SHADOW_READ = [
+    // .interactive-example = "시도해 보기" 가 가져다 쓰는 숨은 원본 코드 칸(화면엔 안 그려짐, 브라우저 실측) → 안 읽음.
+    { host: /(^|\.)developer\.mozilla\.org$/, sel: 'mdn-code-example:not(.interactive-example)', name: 'MDN 코드 칸' },
+  ];
+  let shadowHosts = [];      // 마지막으로 커밋한 스트림에서 안을 읽은 칸들 (3-hittest 커서 · 오버레이)
+  const shadowRule = () => SHADOW_READ.find(r => r.host.test(location.hostname)) || null;
+  // shadow 안 노드 → 문서에 놓인 바깥 칸(host, 겹치면 가장 바깥). 문서 노드는 그대로. 상자 안인가 · 루트 안인가 판정용
+  //   (contains · closest 는 shadow 경계를 못 넘는다).
+  function lightOf(node) {
+    let n = node, r = n && n.getRootNode ? n.getRootNode() : null;
+    while (r && r !== document && r.host) { n = r.host; r = n.getRootNode(); }
+    return n;
+  }
+  // 부모 칸 — shadow 맨 위 칸이면 그 host 로 건너간다 (조각 path)
+  const parentOf = (el) => el.parentElement || (el.parentNode && el.parentNode.host) || null;
 
   // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
   // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
@@ -378,23 +402,24 @@
   function build() {
     contentRoot = findContentRoot();
     const root = contentRoot;
+    const sh = shadowRule();
+    const newHosts = [];                 // 안을 읽은 shadow 칸 (#70)
+    const isHost = (el) => !!(sh && el.shadowRoot && el.matches(sh.sel));
 
-    const walker = document.createTreeWalker(
-      root,
-      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
-      {
-        acceptNode(node) {
-          if (node.nodeType === 1) {
-            const f = elementFilter(node);
-            if (f === NodeFilter.FILTER_REJECT) return f;
-            if (node.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
-            return f;
-          }
-          if (!node.data || !node.data.trim()) return NodeFilter.FILTER_REJECT;
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      }
-    );
+    const filter = {
+      acceptNode(node) {
+        if (node.nodeType === 1) {
+          const f = elementFilter(node);
+          if (f === NodeFilter.FILTER_REJECT) return f;
+          if (node.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
+          if (isHost(node)) return NodeFilter.FILTER_ACCEPT;   // 아래 루프에서 안을 읽는다 (#70)
+          return f;
+        }
+        if (!node.data || !node.data.trim()) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    };
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, filter);
 
     const newSegs = [];
     const newBreaks = new Set();
@@ -460,8 +485,7 @@
     let lastBlock = null;
     let n;
 
-    while ((n = walker.nextNode())) {
-      if (n.nodeType === 1) { pendingBreak = true; continue; }  // <br>
+    const addText = (n) => {
       const blk = nearestBlock(n);
       if (blk !== lastBlock) pendingBreak = true;
       if (useWalls) {
@@ -489,11 +513,33 @@
       parts.push(n.data);
       len += n.data.length;
       pendingBreak = false;
+    };
+
+    while ((n = walker.nextNode())) {
+      if (n.nodeType === 1) {
+        pendingBreak = true;                                     // <br> · shadow 칸 앞뒤 = 줄 경계
+        if (n.tagName === 'BR' || !isHost(n)) continue;
+        // shadow 칸 (#70): 안을 같은 잣대로 훑는다. 안의 shadow 칸은 isHost 가 아니면 들어가지 않는다.
+        newHosts.push(n);
+        const sw = document.createTreeWalker(n.shadowRoot, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, filter);
+        let m;
+        while ((m = sw.nextNode())) {
+          if (m.nodeType === 1) { pendingBreak = true; continue; }
+          addText(m);
+        }
+        pendingBreak = true;
+        continue;
+      }
+      addText(n);
     }
 
     if (useWalls && rootInfo) rootInfo.toggles = [...togCache.values()].filter(Boolean).length;
+    if (rootInfo) {                                              // 패널 루트 줄 (meta.root 에는 안 나감)
+      if (newHosts.length) rootInfo.shadow = { n: newHosts.length, name: sh.name };
+      else delete rootInfo.shadow;
+    }
     for (const T of newTables) delete T.grid;
-    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks, walls: newWalls,
+    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks, walls: newWalls, hosts: newHosts,
       tables: newTables, layouts: [...newLayouts].map(el => ({ el, why: kind(el).slice(7) })) };
   }
 
@@ -515,6 +561,7 @@
     walls = built.walls || [];
     tables = built.tables || [];
     layouts = built.layouts || [];
+    shadowHosts = built.hosts || [];
     sig = buildSig(raw);
     nodeIndex = new Map();
     for (const s of segs) nodeIndex.set(s.node, s);
@@ -580,12 +627,14 @@
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
   // 노드가 상자 안의 뺄 칸 안인가 (뺄 칸이 상자 밖 조상이면 아님)
+  //   shadow 안 노드(#70)는 바깥 칸(lightOf)으로 본다 — contains · closest 가 shadow 경계를 못 넘는다.
   const inSkip = (a, box, node) => {
-    const el = a.skip && (node.nodeType === 1 ? node : node.parentElement);
+    const ln = lightOf(node);
+    const el = a.skip && (ln.nodeType === 1 ? ln : ln.parentElement);
     const s = el && el.closest(a.skip);
     return !!s && s !== box && box.contains(s);
   };
-  const inBox = (a, node) => a.boxes.some(b => b.contains(node) && !inSkip(a, b, node));
+  const inBox = (a, node) => { const ln = lightOf(node); return a.boxes.some(b => b.contains(ln) && !inSkip(a, b, ln)); };
   const sameEls = (a, b) => a.length === b.length && a.every((el, i) => el === b[i]);
 
   // 복사본에서 Readability 를 돌려 원본의 상자 요소들을 돌려준다. 실패면 { why }.
@@ -985,6 +1034,9 @@
     root: () => contentRoot,
     rootInfo: () => rootInfo,           // { how: semantic|fallback|body, sel, len, link, el }
     attrs,                              // el → [tag, id, class, role]
+    lightOf,                            // shadow 안 노드 → 문서에 놓인 바깥 칸 (#70)
+    parentOf,                           // 부모 칸, shadow 맨 위면 host (#70)
+    shadowHosts: () => shadowHosts,     // 안을 읽은 shadow 칸 (#70) — 3-hittest 커서
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
     adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
