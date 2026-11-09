@@ -78,6 +78,17 @@
   // ==========================================================================
   function caretAt(x, y) {
     try {
+      // 안을 읽은 shadow 칸이 있으면(#70, MDN 코드) 그 안까지 찌른다. caretRangeFromPoint 는 shadow 안 글자를
+      //   못 주고 칸 바깥 위치를 준다(브라우저 실측). 칸이 없는 페이지는 아래 옛 길 그대로.
+      const hosts = RBC.stream.shadowHosts();
+      if (hosts.length && document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y, { shadowRoots: hosts.map(h => h.shadowRoot).filter(Boolean) });
+        if (!p) return null;
+        const r = document.createRange();
+        r.setStart(p.offsetNode, p.offset);
+        r.collapse(true);
+        return r;
+      }
       if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
       if (document.caretPositionFromPoint) {
         const p = document.caretPositionFromPoint(x, y);
