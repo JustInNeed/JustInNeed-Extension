@@ -180,8 +180,11 @@
   //   .cite-accessibility-label = 위키백과(미디어위키) 각주의 스크린리더 전용 글 "이동: ". 위젯은 아니지만 예외로 여기 둔다.
   //     페이지 스크립트가 나중에 넣고, 문서 맨 위보다 약 10만 px 위에 놓아 숨긴다. 그래서 그 각주 조각의
   //     외곽 사각형이 그 위치부터 각주까지 늘어나, 각주보다 위 어디를 봐도 매 틱 vis 에 들어갔다(#53, 11-09 서현).
+  //   sc-shared-material-rich-tooltip = 구글 고객센터 피드백 말풍선("피드백을 보낼 섹션을 선택하세요."). 본문 루트(article) 끝에
+  //     붙고 평소엔 안 보이게 숨겨지는데 자리가 남아, 화면 오른쪽에 유닛 하나로 매 틱 vis 에 들어갔다(#70, 서현 기록 83틱 중 57틱).
+  //     vis 검사를 넓히는 일반 처방 대신 이 칸만 뺀다(11-10 서현 — 지난 기록 vis 기준이 갈리지 않게).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
-    '.cite-accessibility-label';
+    '.cite-accessibility-label, sc-shared-material-rich-tooltip';
 
   // 안을 읽는 shadow DOM 칸 (#70, 11-10 서현) — 페이지 안에 따로 숨긴 작은 문서(shadow root)는 TreeWalker 가
   //   들어가지 않아 화면에 보이는 글이 스트림에 없었다. 사이트마다 사람이 확인한 칸만 안을 읽는다(열린 shadow 만).
