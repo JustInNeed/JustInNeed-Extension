@@ -453,6 +453,9 @@
     //   네 칸이 형제라 전부 상자로(표 밑 안내문 "※ 본 항목의 내용은 …" 도 본문, 11-09 서현).
     { host: /(^|\.)grandculture\.net$/, sel: '[id="pic_info_div"], .info_detail, .info_div, .info_reference',
       name: '향토문화전자대전' },
+    // 국립국어원 온라인가나다(#53): Readability 상자(div.boardView)가 질문 · 답변 아래 이전 글 · 다음 글(.page)까지 담고,
+    //   비밀번호 창 · 재질문 · 목록 버튼까지 본문이 된다. 질문 · 답변의 머리(제목 · 작성자)와 몸만 상자로.
+    { host: /(^|\.)korean\.go\.kr$/, sel: '.boardView > .head, .boardView > .body', name: '국립국어원' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
