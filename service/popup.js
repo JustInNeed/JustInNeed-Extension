@@ -56,7 +56,7 @@
     chrome.storage.local.set({ [K_PERF]: {
       at: Date.now(), script: perf.script, first: perf.first, st0: perf.st0,
       last: s.length ? s[s.length - 1] : null, max: s.length ? Math.max(...s) : null, n: s.length, whoami: perf.whoami,
-    } }).catch((e) => show(`팝업 속도 저장 실패 (${K_PERF}: ${e.message || e})`));
+    } }).catch((e) => console.warn('[RBC] 팝업 속도 저장 실패', K_PERF, e));   // 디버그용 — 참가자 팝업엔 안 띄움 (#66 검토)
   }
 
   async function bg(msg) {
@@ -166,8 +166,8 @@
       perf.st.push(Math.round(performance.now() - t0));
       if (perf.st.length > 60) perf.st.shift();          // 최근 1분만 (첫 번째는 따로 남김)
       const firstNow = perf.first == null;
-      if (firstNow) { perf.first = Math.round(performance.now()); perf.st0 = perf.st[0]; }
       render();
+      if (firstNow) { perf.first = Math.round(performance.now()); perf.st0 = perf.st[0]; }   // 첫 화면 = 첫 status 를 그린 뒤
       savePerf(firstNow);
     } catch (e) {
       show(e.message);
