@@ -30,6 +30,12 @@
  *   이유 태그 · 설명, [기록 정지] 아래에 "아예 멈춤 / 다른 탭으로 가면 이어짐" 안내. 기록 시작을 이 탭에서 눌렀으면 본문 준비를
  *   기다리지 않고 바로 닫는다(ping 의 skip) — 페이지 아래 가운데 알림이 보이게.
  *
+ * 팝업 속도 재기(#66, 11-09 서현 — 버튼을 누르면 버벅임): 팝업이 열릴 때마다 "열림 → 스크립트 시작 · 첫 화면 N ms" 와
+ *   background 응답 시간(status 첫 번째 · 최근 · 최대, whoami)을 재서 chrome.storage.local 'ui:popupPerf' 에 쓴다.
+ *   팝업에는 안 띄운다(보기 흉함, 11-09 서현) — 디버그 패널이 11-session 을 거쳐 받아 한 줄로 보여 준다.
+ *   열림 = 팝업 문서가 만들어진 때(performance.now() 의 0). background 응답이 크면 서비스 워커 깨우기 · 줄(serial) 대기,
+ *   작으면 팝업 그리기나 크롬 쪽 — 원인을 숫자로 가른 뒤 고친다. 기록 데이터와 무관.
+ *
  * 화면은 기본이 '불러오는 중…' 이고 첫 render 가 지운다. 스크립트가 안 뜨면 그 문구에서
  * 멈춰 보인다 (빈 화면으로 조용히 실패하지 않게).
  * ========================================================================== */
@@ -38,6 +44,20 @@
 
   const $ = (id) => document.getElementById(id);
   const K_PANEL = 'ui:panel';
+
+  // 팝업 속도 재기 (#66). 숫자는 ms, 열림(performance.now() 0) 기준. 패널이 읽도록 저장만 한다.
+  const K_PERF = 'ui:popupPerf';
+  const perf = { script: Math.round(performance.now()), first: null, st0: null, st: [], whoami: null };
+  let perfSaved = 0;
+  function savePerf(force) {
+    if (!force && Date.now() - perfSaved < 5000) return;   // 열려 있는 동안은 5초에 한 번만 쓴다
+    perfSaved = Date.now();
+    const s = perf.st;
+    chrome.storage.local.set({ [K_PERF]: {
+      at: Date.now(), script: perf.script, first: perf.first, st0: perf.st0,
+      last: s.length ? s[s.length - 1] : null, max: s.length ? Math.max(...s) : null, n: s.length, whoami: perf.whoami,
+    } }).catch((e) => show(`팝업 속도 저장 실패 (${K_PERF}: ${e.message || e})`));
+  }
 
   async function bg(msg) {
     let r;
@@ -141,8 +161,14 @@
 
   async function refresh() {
     try {
+      const t0 = performance.now();
       st = await bg({ rbc: 'status' });
+      perf.st.push(Math.round(performance.now() - t0));
+      if (perf.st.length > 60) perf.st.shift();          // 최근 1분만 (첫 번째는 따로 남김)
+      const firstNow = perf.first == null;
+      if (firstNow) { perf.first = Math.round(performance.now()); perf.st0 = perf.st[0]; }
       render();
+      savePerf(firstNow);
     } catch (e) {
       show(e.message);
     }
@@ -251,7 +277,8 @@
   });
 
   // 열릴 때마다 로그인이 아직 살아 있는지 서버에 확인 (#30). 결과는 1초 status 에 나온다.
-  bg({ rbc: 'whoami' }).catch((e) => show(e.message));
+  const tw = performance.now();
+  bg({ rbc: 'whoami' }).then(() => { perf.whoami = Math.round(performance.now() - tw); savePerf(true); }).catch((e) => show(e.message));
   refresh();
   setInterval(refresh, 1000);
 })();

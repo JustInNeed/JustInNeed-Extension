@@ -3,7 +3,7 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49)
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66)
  * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
@@ -344,6 +344,17 @@
       if (area === 'local' && ch[K_PANEL]) emitPanel(ch[K_PANEL].newValue);
     });
   } catch (e) { /* 고아 탭: 패널은 숨김 그대로 */ }
+
+  // 팝업 속도 (#66, 실사용 팝업이 'ui:popupPerf' 에 씀) → 9-panel. 데이터 수집 버전은 안 써서 줄이 안 생긴다.
+  const K_POPPERF = 'ui:popupPerf';
+  const emitPopPerf = (v) => bus.emit('popup:perf', v || null);
+  try {
+    chrome.storage.local.get(K_POPPERF).then((r) => emitPopPerf(r[K_POPPERF]))
+      .catch((e) => console.warn('[RBC] 팝업 속도 읽기 실패', e));
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch[K_POPPERF]) emitPopPerf(ch[K_POPPERF].newValue);
+    });
+  } catch (e) { /* 고아 탭: 줄 없음 */ }
 
   // ==========================================================================
   // 오버레이 켜짐 기억 → 9-panel (#36, 11-03 서현 — 새 탭마다 켜기 번거로움)
