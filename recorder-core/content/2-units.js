@@ -48,7 +48,13 @@
  *   자료 표(1-stream tables) 구간은 통째로 유닛 하나, u.kind = 'table'. 길이 제한 없음(아주 큰 표도 하나) · 벽 무시 ·
  *   짧아도 앞 유닛에 안 붙이고, 표 바로 뒤 짧은 글도 표에 안 붙인다. 표 밖 청킹은 표 시작을 벽처럼 보고 끊는다.
  *   표가 없는 페이지는 예전과 완전히 같다(§6 "청킹 200 고정"의 예외는 표 유닛만).
- *   기록 중: 표 끝에 줄이 덧붙으면(append) 표 유닛을 늘린다(pid = 글 앞 160자 해시라 그대로). 표 안이 바뀌면 splice 가
+ *   기록 중: 표 끝에 줄이 덧붙으면(append) 표 유닛을 늘린다(pid = 글 앞 160자 해시라 그대로).
+ *     표 안에 새 글이 생기면 splice 가 새 표 구간에 걸친 옛 유닛을 전부 다시 자른다 — 줄이 붙어 배치용 → 자료 표로
+ *     바뀐 표(옛 줄글 유닛 여러 개)도 표 유닛 하나가 된다. append 인데 옛 끝에 걸친 표의 앞부분이 표 유닛이 아니면 splice 로.
+ *     옛 pid 이어받기는 종류(표 · 줄글)가 같을 때만. 단 pid = 글 앞 160자 해시라, 표로 바뀐 유닛이 같은 글로 시작하면
+ *     같은 pid 가 kind 만 바뀌어 나올 수 있다(그 pid 의 마지막 paragraphs 값이 맞음).
+ *     알려진 한계: 글은 그대로이고 표 구조만 바뀌면('same' 재스캔 — 빈 머리 줄 추가 · 속성 변경) 유닛 kind · 조각 cell 은
+ *     옛 값 그대로다(조각 noise 처럼 처음 만들 때 정함). 칸 번호가 실제와 한 줄 어긋날 수 있다(예상, 재현 안 함). 표 안이 바뀌면 splice 가
  *   표 유닛을 다시 만든다 — 앞부분이 같으면 옛 pid 를 이어받고, 아니면 새 pid · 옛 것은 retired(지금 규칙 그대로).
  *
  * --- 기록 중 본문이 바뀌면: splice (0-B, 2026-10-08) -----------------------------
@@ -488,13 +494,13 @@
       while (i < old.length && old[i].end <= h.oa) i++;
       let j = i;
       while (j < old.length && old[j].start < h.ob) j++;
-      // 표 (#54): 새 글이 표 안인데 옛 표 유닛에 맞닿아 있으면(표 끝에 줄 추가 · 첫 줄 앞에 줄 추가) 표 유닛도 같이
-      //   다시 자른다 — 안 그러면 새 줄만 따로 표 유닛이 돼 표 하나가 두 유닛으로 갈린다. 사이에 공백뿐이면 맞닿은 것.
-      //   표 밖 글(표 앞뒤에 끼어든 문단)이면 표 유닛은 건드리지 않는다.
-      const blank = (a, b) => !oldRaw.slice(a, b).trim();
-      if (newTbl.some(r => r[0] < h.nb && h.na < r[1])) {
-        if (i > 0 && old[i - 1].kind === 'table' && old[i - 1].end <= h.oa && blank(old[i - 1].end, h.oa)) i--;
-        if (j < old.length && old[j].kind === 'table' && h.ob <= old[j].start && blank(h.ob, old[j].start)) j++;
+      // 표 (#54): 새 글이 표 안이면 그 표 구간(새 위치)에 걸치는 옛 유닛을 전부 같이 다시 자른다 — 표 끝 · 첫 줄 앞에
+      //   줄이 붙은 옛 표 유닛, 줄이 붙어 배치용 → 자료 표로 바뀐 표의 옛 줄글 유닛들. 안 그러면 표 하나가 여러 유닛으로
+      //   갈린다(reviewer 재현). 표 밖 글(표 앞뒤에 끼어든 문단)이면 표 유닛은 건드리지 않는다.
+      for (const r of newTbl) {
+        if (!(r[0] < h.nb && h.na < r[1])) continue;
+        while (i > 0 && mapEnd(old[i - 1].end) > r[0]) i--;
+        while (j < old.length && mapStart(old[j].start) < r[1]) j++;
       }
       h.i = i; h.j = j;
     }
@@ -545,7 +551,9 @@
         const E = g.j < old.length ? mapStart(old[g.j].start) : raw.length;
         const fresh = E > a ? chunkFrom(a, null, E) : [];
         const lo = wallOf.get(firstH);
+        // 종류가 다르면(표 ↔ 줄글, 표가 배치용 · 자료 표로 바뀜) 안 이어받는다 — 한 pid 의 kind 가 바뀌지 않게 (#54)
         const inherit = mid.length && fresh.length && fresh[0].start === mapStart(mid[0].start) && mapStart(mid[0].start) < lo
+          && fresh[0].kind === mid[0].kind
           ? mid[0].pid : null;
         for (const u of fresh) {
           if (inherit && u === fresh[0] && !taken.has(inherit)) { u.pid = inherit; taken.add(inherit); continue; }
@@ -629,6 +637,14 @@
     return [bad, uncover];
   }
 
+  // 덧붙은 글이 옛 끝에 걸친 표의 뒷부분인데, 그 표 앞부분이 표 유닛이 아니면(줄이 붙어 배치용 → 자료 표) append 로
+  //   이으면 표가 갈린다 → splice 로 보낸다 (#54, reviewer 재현). 옛 표 유닛 끝에 줄이 붙은 경우는 append 가 늘린다.
+  function tableSplits(built) {
+    const L = RBC.stream.len();
+    return (built.tables || []).some(t => t.start >= 0 && t.start < L && L < t.end
+      && !units.some(u => u.kind === 'table' && u.start <= t.start && t.start < u.end));
+  }
+
   function rescan(opts) {
     const t0 = performance.now();                  // 재스캔 비용 측정 (이벤트 ms, 패널 · [6] 표시)
     const preserve = opts && opts.preserve;
@@ -647,7 +663,7 @@
         syncStream();
         bus.emit('units:rescanned', { mode: 'same', count: units.length, root: rootTo,
           ms: Math.round(performance.now() - t0) });
-      } else if (built.raw.startsWith(RBC.stream.raw())) {
+      } else if (built.raw.startsWith(RBC.stream.raw()) && !tableSplits(built)) {
         const tailFrom = RBC.stream.len();
         RBC.stream.commit(built);
         syncStream();
