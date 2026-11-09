@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, RBC.stream(펼치기 실패 시험 #37), RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock, skip:page(#49)
+ *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock, skip:page(#49), popup:perf(#66)
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -192,6 +192,7 @@
         `<b>기록 안 함: ${esc(skipRule.label || skipRule.why)}</b> (규칙 ${esc(skipRule.url)}) — 읽기는 그대로, 구간을 안 엶` +
         (skipRule.closed ? '<br><b style="color:#dc2626">규칙이 늦게 와서 기록 중이던 구간을 닫음 (segend excluded)</b>' : '') + '</div>' : ''}
       ${skipInfoLine()}
+      ${popPerfLine()}
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}
       <div class="rbc-stat" id="rbc-stat">${keep}</div>
@@ -489,6 +490,18 @@
     return `<div class="rbc-stat">${esc(k.kind)} <b>${Number(k.n)}</b>개 · ${when}` +
       (k.mine ? '' : ' <span style="color:#999">(로그인한 회원 목록 없음 — 규칙 안 씀)</span>') +
       (k.err ? `<br><span style="color:#dc2626">${esc(k.err)}</span>` : '') + '</div>';
+  }
+
+  // 팝업 속도 줄 (#66, 실사용만). 마지막으로 연 팝업의 첫 화면 · background 응답(ms). 300ms 넘으면 주황.
+  let popPerf = null;
+  bus.on('popup:perf', (d) => { popPerf = d; render(); });
+  function popPerfLine() {
+    const p = popPerf;
+    if (!p) return '';
+    const ms = (v) => (v == null ? '…' : `<b style="color:${v > 300 ? '#b45309' : '#111'}">${Number(v)}ms</b>`);
+    return `<div class="rbc-stat">팝업 속도 (${new Date(p.at).toTimeString().slice(0, 8)} 연 팝업): 첫 화면 ${ms(p.first)}` +
+      ` · background 응답 첫 ${ms(p.st0)} / 최근 ${ms(p.last)} / 최대 ${ms(p.max)} (${Number(p.n)}번) · whoami ${ms(p.whoami)}` +
+      `<br><span style="color:#999">열림 → 스크립트 ${Number(p.script)}ms. 응답이 크면 background(깨우기 · 줄 대기), 작으면 팝업 그리기 · 크롬 쪽</span></div>`;
   }
 
   bus.on('session:link', (d) => {
