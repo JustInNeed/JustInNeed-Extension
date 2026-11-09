@@ -683,6 +683,9 @@
           u.pid = pid;
           taken.add(pid);
         });
+        // 사라졌던 글이 끝에 다시 붙으면(마지막 문단 지우기 → 되돌리기) 같은 pid 를 받는다 → 되살아난 것으로 보고
+        //   사라짐 목록에서 뺀다 (splice 와 같은 방식). 안 빼면 같은 pid 가 살아 있음 · 사라짐으로 두 번 나간다.
+        retired = retired.filter(u => !taken.has(u.pid));
         units = fillPieces(next);
         bus.emit('units:rescanned', { mode: 'append', count: units.length, root: rootTo,
           ms: Math.round(performance.now() - t0) });
