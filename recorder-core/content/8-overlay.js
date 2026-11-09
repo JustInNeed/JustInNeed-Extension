@@ -238,7 +238,7 @@
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
       d.className = i < nBox ? 'rbc-art-box' : i < nBox + nSkip ? 'rbc-art-box skip' : 'rbc-art-box ad';
       d.firstChild.textContent = i < nBox
-        ? `본문 상자 (${a.by ? a.by + ' 지정' : a.alt ? 'itemprop 본문 칸' : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
+        ? `본문 상자 (${a.by ? a.by + ' 지정' : a.alt ? `itemprop="${a.alt}" 칸` : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
         : i < nBox + nSkip
           ? `광고 칸 제외 = noise (${a.by} 지정) ${a.skips[i - nBox]}` + (a.decided ? '' : ' · 미판정')
           : '본문 아닌 위젯 = 스트림에서 뺌';
