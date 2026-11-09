@@ -570,6 +570,12 @@
     { host: /(^|\.)ems\.epost\.go\.kr$/, sel: '[id="contents_layout3"] > .page_title > h3, [id="contents_layout3"] .menu_wrap > .tab_contents, '
       + '[id="contents_layout3"] > .contents:not(:has(.tab_contents))',
       name: '우체국 EMS' },
+    // MDN(#70): main#content 안이 머리 칸(.layout__header — 제목 h1 · 소개 문단) · 오른쪽 목차 · 몸 칸(.layout__body —
+    //   상태 · 구문 · 예제 · 명세서 · 호환성 · 같이 보기)으로 나뉜 형제 구조. 몸 칸 글이 짧은 페이지(HTTP 418)는
+    //   Readability 가 머리 칸만 골라 몸 칸이 전부 noise 가 됐다. 머리 칸 + 몸 칸을 상자로(h1 도 본문, 11-10 서현).
+    //   번역 안내 띠 · 설문 자리 · 맨 아래 피드백 칸("Help improve MDN" · GitHub 링크)은 뺀다. 목차는 상자 밖 = noise.
+    { host: /(^|\.)developer\.mozilla\.org$/, sel: 'main#content > .layout__header, main#content > .layout__body',
+      skip: '.translation-banner, mdn-survey, .article-footer', name: 'MDN' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
