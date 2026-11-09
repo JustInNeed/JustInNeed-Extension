@@ -29,6 +29,7 @@
  *   재발급이 401 = 로그인이 끝남(만료 · 웹에서 로그아웃 → 서버가 토큰 묶음 삭제) → 토큰 삭제, 로그아웃 상태.
  *   네트워크 오류 · 5xx = 토큰을 지우지 않는다. 다음 확인 때 다시.
  *   팝업이 열릴 때마다 whoami 명령으로 GET /members/me 를 불러 로그인이 아직 살아 있는지 확인한다.
+ *   같은 때 회색 알림(authNote)은 한 번 보여 준 다음 열 때 지운다(noteShown, #66).
  *
  * --- 기록과의 관계 -------------------------------------------------------------
  *   로그인 안 했으면 기록 시작 거절(why 'no-login', §6 10-31 팀).
@@ -64,19 +65,29 @@ let A = null;          // { accessToken, refreshToken, memberId, at, checkedAt }
 let loginGen = 0;      // 로그아웃할 때마다 +1. 연결이 서버를 기다리는 사이 로그아웃됐으면 새 토큰을 버린다
 let authErr = null;    // 마지막 실패 원문 (팝업 빨간 줄). 성공하면 지운다
 let authNote = null;   // 실패는 아니지만 알릴 것 (팝업 회색 줄) — 예: 팝업을 저절로 못 엶
+let noteSeen = false;  // 그 알림을 팝업이 한 번 보여 줬는가 (#66) — 다음에 팝업을 열 때 지운다
 
 const authReady = Promise.all([
   chrome.storage.local.get(K_AUTH).then((r) => { A = r[K_AUTH] || null; }),
-  chrome.storage.session.get(K_MSG).then((r) => { const m = r[K_MSG] || {}; authErr = m.err || null; authNote = m.note || null; }),
+  chrome.storage.session.get(K_MSG).then((r) => { const m = r[K_MSG] || {}; authErr = m.err || null; authNote = m.note || null; noteSeen = !!m.seen; }),
 ]);
 
 // 문구는 바꿀 때마다 storage.session 에도 둔다. 저장이 실패해도 메모리 값은 그대로 보인다 — 실패는 콘솔에
 function persistMsg() {
-  chrome.storage.session.set({ [K_MSG]: { err: authErr, note: authNote } })
+  chrome.storage.session.set({ [K_MSG]: { err: authErr, note: authNote, seen: noteSeen } })
     .catch((e) => console.warn('[RBC] 로그인 문구 저장 실패', e));
 }
 function setErr(v) { authErr = v; persistMsg(); }
-function setNote(v) { authNote = v; persistMsg(); }
+function setNote(v) { authNote = v; noteSeen = false; persistMsg(); }
+// 알림(회색 줄)은 한 번 보면 할 일을 다 한 것 (#66, 11-09 서현 — "팝업을 저절로 못 열었어요"가 다음 로그인까지 남았음).
+//   팝업이 열릴 때(whoami) 부른다: 처음 열면 '봤음'만 표시해 이번 화면엔 보이고, 그다음에 열면 지운다.
+//   빨간 줄(authErr, 실패 원문)은 그대로 — 실패는 고쳐질 때까지 남긴다.
+function noteShown() {
+  if (!authNote) return;
+  if (noteSeen) { setNote(null); return; }
+  noteSeen = true;
+  persistMsg();
+}
 
 // 서버를 기다리는 로그인 일(연결 · 확인)은 서로 줄을 세운다. 엔진 serial 과는 따로.
 //   상태 묻기 · 로그아웃은 서버를 기다리지 않으므로 줄에 서지 않는다 — 느린 네트워크에서 앞 일이 오래 걸려도 바로 답한다.
@@ -273,6 +284,8 @@ Object.assign(handlers, {
   },
   // 팝업이 열릴 때: 로그인 확인을 걸어 두고 바로 답한다 (결과는 status 로)
   async whoami() {
+    await authReady;
+    noteShown();
     authSerial(check).catch((e) => setErr(`로그인 확인 실패: ${e.message || e}`));
     return { ok: true };
   },
