@@ -1,7 +1,7 @@
 /* =============================================================================
  * 1-stream.js — 본문 루트 탐색 + 텍스트 스트림 구축
  *
- * 소유: raw, sig, segs, nodeIndex, breaks, contentRoot, art(본문 상자 판정), noiseMin, unfolded(노션 펼치기, #37)
+ * 소유: raw, sig, segs, nodeIndex, breaks, tables · layouts(표, #54), contentRoot, art(본문 상자 판정), noiseMin, unfolded(노션 펼치기, #37)
  * 의존(직접 호출): 0-core, vendor/readability.js (전역 Readability)
  * 발행: unfold:lost(#37)   구독: record:started, record:stopped
  *
@@ -121,6 +121,10 @@
   //   22 → 23 으로 바뀌었다(캡션 등 다른 부모 줄이 따로 떨어짐). 티스토리 · 네이버 블로그의 접은글은 CSS 로만
   //   숨겨 글이 처음부터 스트림에 있으므로 끼어듦 자체가 없다.
   let walls = [];
+  // 표 (#54): 자료 표 { el, start, end(원문 위치, 표 안 첫 글자 ~ 끝 글자), rows, cols, why } · 배치용 표 { el, why }.
+  //   seg.tbl = 이 목록 번호, seg.cell = [줄, 칸] | null. 청크 1 은 표시만 — 유닛 · 청킹은 아직 이 값을 안 쓴다.
+  let tables = [];
+  let layouts = [];
   let contentRoot = null;
   let rootInfo = null;       // 루트를 왜 골랐나 — { how, sel, len, link, el }. 패널 · meta.root
 
@@ -301,6 +305,62 @@
   }
 
   // ==========================================================================
+  // 표 (#54) — 자료 표를 찾고 칸마다 [줄, 칸] 을 매긴다. 아직 유닛은 안 바꾼다(청크 2).
+  //   자료 표 / 배치용 표 판정 = Readability _markDataTables · _getRowAndColumnCount 규칙 그대로(파이어폭스가
+  //   화면 읽기 프로그램용으로 쓰는 규칙). 문턱을 새로 만들지 않는다(11-09 서현).
+  //   표 유닛이 될 표 = 글자에서 위로 올라가며 만나는 표 중 가장 바깥 자료 표. 자료 표 안의 표는 바깥 표에 속하고,
+  //   배치용 표 안의 자료 표는 따로 표가 된다(옛날식 전체 배치 표 안에 든 요금표 등).
+  //   칸 번호 = 그 표의 줄 · 칸 격자(합친 칸은 시작 칸, rowspan="0" 은 1로). 표 안의 표 글자는 그 표가 든 바깥 칸.
+  //   표 제목(caption) 처럼 칸 밖 글자는 칸 번호 없음.
+  // ==========================================================================
+  function tableSize(t) {                // Readability _getRowAndColumnCount 그대로 (표 안의 표 줄도 센다)
+    let rows = 0, cols = 0;
+    for (const tr of t.getElementsByTagName('tr')) {
+      rows += parseInt(tr.getAttribute('rowspan'), 10) || 1;
+      let c = 0;
+      for (const td of tr.getElementsByTagName('td')) c += parseInt(td.getAttribute('colspan'), 10) || 1;
+      cols = Math.max(cols, c);
+    }
+    return { rows, cols };
+  }
+
+  // → 판정 이유 문자열. 'data:…' = 자료 표, 'layout:…' = 배치용 (Readability _markDataTables 순서 그대로)
+  function tableKind(t) {
+    if (t.getAttribute('role') === 'presentation') return 'layout:role';
+    if (t.getAttribute('datatable') === '0') return 'layout:datatable';
+    if (t.getAttribute('summary')) return 'data:summary';
+    const cap = t.getElementsByTagName('caption')[0];
+    if (cap && cap.childNodes.length) return 'data:caption';
+    for (const tag of ['col', 'colgroup', 'tfoot', 'thead', 'th']) if (t.getElementsByTagName(tag)[0]) return 'data:' + tag;
+    if (t.getElementsByTagName('table')[0]) return 'layout:nested';
+    const { rows, cols } = tableSize(t);
+    if (cols === 1 || rows === 1) return 'layout:1줄';
+    if (rows >= 10 || cols > 4) return 'data:size';
+    return rows * cols > 10 ? 'data:size' : 'layout:size';
+  }
+
+  // 표의 칸 → [줄, 칸]. 자기 줄만(t.rows = thead · tbody · tfoot 줄, 표 안의 표 줄은 안 셈).
+  function cellGrid(t) {
+    const map = new Map(), taken = [];
+    let cols = 0;
+    Array.from(t.rows).forEach((tr, r) => {
+      let c = 0;
+      for (const cell of tr.cells) {
+        while (taken[r] && taken[r][c]) c++;
+        map.set(cell, [r, c]);
+        const rs = Math.max(1, cell.rowSpan | 0), cs = Math.min(Math.max(1, cell.colSpan | 0), 1000);
+        for (let i = 0; i < rs; i++) {
+          taken[r + i] = taken[r + i] || [];
+          for (let j = 0; j < cs; j++) taken[r + i][c + j] = true;
+        }
+        c += cs;
+      }
+      cols = Math.max(cols, c);
+    });
+    return { map, rows: t.rows.length, cols };
+  }
+
+  // ==========================================================================
   // 텍스트 스트림 구축
   // ==========================================================================
   function nearestBlock(node) {
@@ -365,6 +425,35 @@
       }
       return root;                       // 토글 밖
     };
+    // 표 (#54): 표 요소 → 판정 이유 · 자료 표 → 표 목록 칸 번호
+    const kindOf = new Map();
+    const kind = (t) => { if (!kindOf.has(t)) kindOf.set(t, tableKind(t)); return kindOf.get(t); };
+    const newTables = [];                // 자료 표 = 표 유닛 후보 { el, start, end, rows, cols, why, grid }
+    const tblIdx = new Map();            // 표 요소 → newTables 번호
+    const newLayouts = new Set();        // 글자가 든 배치용 표 (자료 표 안에 든 것은 빼고)
+    // 글자 → { t: 표 번호, cell: [줄, 칸] | null } | null
+    const tableOf = (node) => {
+      let top = null;
+      const lays = [];
+      for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
+        if (el.tagName !== 'TABLE') continue;
+        if (kind(el).startsWith('data:')) { top = el; lays.length = 0; } else lays.push(el);
+      }
+      // 가장 바깥 자료 표 밖에 있는 배치용 표만 남긴다 (lays 는 top 보다 바깥 것만 남아 있음)
+      for (const l of lays) newLayouts.add(l);
+      if (!top) return null;
+      if (!tblIdx.has(top)) {
+        const g = cellGrid(top);
+        tblIdx.set(top, newTables.length);
+        newTables.push({ el: top, start: -1, end: -1, rows: g.rows, cols: g.cols, why: kind(top).slice(5), grid: g.map });
+      }
+      const t = tblIdx.get(top);
+      let cell = null;
+      for (let el = node.parentElement; el && el !== top; el = el.parentElement) {
+        if ((el.tagName === 'TD' || el.tagName === 'TH') && el.closest('table') === top) { cell = newTables[t].grid.get(el) || null; break; }
+      }
+      return { t, cell };
+    };
     const parts = [];
     let len = 0;
     let pendingBreak = true;
@@ -383,18 +472,29 @@
       lastBlock = blk;
 
       if (pendingBreak) newBreaks.add(len);
-      newSegs.push({
+      const seg = {
         node: n, start: len, len: n.data.length,
         blk,                                                     // 조각 경계 (v3)
         link: !!(n.parentElement && n.parentElement.closest('a')),  // linkChars (v3)
-      });
+      };
+      const tb = tableOf(n);
+      if (tb) {                                                  // 자료 표 안 글자 (#54)
+        seg.tbl = tb.t;
+        seg.cell = tb.cell;
+        const T = newTables[tb.t];
+        if (T.start < 0) T.start = len;
+        T.end = len + n.data.length;
+      }
+      newSegs.push(seg);
       parts.push(n.data);
       len += n.data.length;
       pendingBreak = false;
     }
 
     if (useWalls && rootInfo) rootInfo.toggles = [...togCache.values()].filter(Boolean).length;
-    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks, walls: newWalls };
+    for (const T of newTables) delete T.grid;
+    return { raw: parts.join(''), segs: newSegs, breaks: newBreaks, walls: newWalls,
+      tables: newTables, layouts: [...newLayouts].map(el => ({ el, why: kind(el).slice(7) })) };
   }
 
   function buildSig(s) {
@@ -413,6 +513,8 @@
     segs = built.segs;
     breaks = built.breaks;
     walls = built.walls || [];
+    tables = built.tables || [];
+    layouts = built.layouts || [];
     sig = buildSig(raw);
     nodeIndex = new Map();
     for (const s of segs) nodeIndex.set(s.node, s);
@@ -863,6 +965,12 @@
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
     adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
+    tables: () => tables,               // 자료 표 (#54) [{ el, start, end, rows, cols, why }]
+    layouts: () => layouts,             // 글자가 든 배치용 표 (#54) [{ el, why }] — 오버레이용
+    tableStat: () => ({                 // 패널용 (#54)
+      data: tables.map(t => ({ rows: t.rows, cols: t.cols, why: t.why, chars: t.end - t.start })),
+      layout: layouts.map(l => l.why),
+    }),
     noiseMin: () => noiseMin,
     setNoiseMin: (v) => { noiseMin = v; },   // 기록 중 차단은 6-frames(chunk 명령) · 9-panel
   };

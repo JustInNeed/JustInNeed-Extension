@@ -23,6 +23,8 @@
  *   Readability 가 고른 본문 상자(1-stream article().boxEls)는 보라 굵은 테두리 + "본문 상자" 라벨.
  *   테두리가 기사 본문을 감싸면 상자를 제대로 되찾은 것이고, 사이드바 · 댓글 · 페이지 전체면 잘못 찾은 것.
  *   스트림에서 통째로 뺀 본문 아닌 위젯(1-stream AD_WIDGETS — 광고 · 추천 상자, #51 · #53)은 회색 점선 + "본문 아닌 위젯" 라벨 — 그 안엔 조각이 없어야 맞다.
+ *   표(#54): 자료 표(1-stream tables — 표 유닛이 될 표)는 초록 점선 + "자료 표 줄×칸 (판정 이유)", 배치용 표(layouts — 지금처럼
+ *   줄글로)는 회색 점점선. 이름표는 오른쪽 위. 페이지 대부분이 초록 상자 하나로 덮이면 배치용 표를 자료 표로 잘못 본 것.
  *   상자 위치는 틱마다 다시 잰다(상자는 몇 개뿐). Highlight 미지원 폴백에는 noise 칠하기를 안 넣었다(크롬은 지원).
  *
  * --- 판정 기준 --------------------------------------------------------------
@@ -96,6 +98,10 @@
       .rbc-art-box.skip > span{ background:rgba(220,38,38,.95); }
       .rbc-art-box.ad{ border:3px dashed rgba(107,114,128,.95); }
       .rbc-art-box.ad > span{ background:rgba(107,114,128,.95); }
+      .rbc-art-box.tbl{ border:3px dashed rgba(22,163,74,.95); }
+      .rbc-art-box.tbl > span{ background:rgba(22,163,74,.95); left:auto; right:-4px; }
+      .rbc-art-box.lay{ border:2px dotted rgba(107,114,128,.95); }
+      .rbc-art-box.lay > span{ background:rgba(107,114,128,.8); left:auto; right:-4px; }
     `;
     document.documentElement.appendChild(s);
   }
@@ -217,7 +223,12 @@
     const nBox = ok ? a.boxEls.length : 0;
     const nSkip = ok ? a.skipEls.length : 0;
     // 그 뒤에 스트림에서 통째로 뺀 본문 아닌 위젯(#51 · #53)을 회색 점선으로 — 판정과 무관하게 늘 그린다
-    const els = (ok ? a.boxEls.concat(a.skipEls) : []).concat(RBC.stream.adWidgets());
+    const nAd = RBC.stream.adWidgets().length;
+    // 그 뒤에 표 (#54): 자료 표(= 표 유닛이 될 표) 초록 점선 · 배치용 표 회색 점점선. 이름표는 오른쪽 위(본문 상자 이름표와 안 겹치게)
+    const tbls = RBC.stream.tables(), lays = RBC.stream.layouts();
+    const els = (ok ? a.boxEls.concat(a.skipEls) : []).concat(RBC.stream.adWidgets(),
+      tbls.map(t => t.el), lays.map(l => l.el));
+    const nT = nBox + nSkip + nAd;
     if (!boxLayer) {
       boxLayer = document.createElement('div');
       boxLayer.id = 'rbc-box';
@@ -236,6 +247,12 @@
       if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
+      if (i >= nT) {
+        const t = tbls[i - nT];
+        d.className = t ? 'rbc-art-box tbl' : 'rbc-art-box lay';
+        d.firstChild.textContent = t ? `자료 표 ${t.rows}×${t.cols} (${t.why})` : `배치용 표 (${lays[i - nT - tbls.length].why}) = 줄글로`;
+        continue;
+      }
       d.className = i < nBox ? 'rbc-art-box' : i < nBox + nSkip ? 'rbc-art-box skip' : 'rbc-art-box ad';
       d.firstChild.textContent = i < nBox
         ? `본문 상자 (${a.by ? a.by + ' 지정' : a.alt ? `itemprop="${a.alt}" 칸` : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')

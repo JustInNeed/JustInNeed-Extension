@@ -555,6 +555,7 @@
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
       noise: noiseStat(),
+      tables: RBC.units.count() ? RBC.stream.tableStat() : null,   // 표 판정 (#54) — 패널용, 기록 데이터에는 안 나감
       // 제목 (#43): 기록 중 = 이 구간 meta 에 들어간 값, 아니면 지금 구간을 열면 들어갈 값
       title: recording && segMeta ? { text: segMeta.title, from: 'seg' } : pageTitle(),
       unfold: RBC.stream.unfoldState(),                // 노션 펼침 (#37) — 노션이 아니면 null
