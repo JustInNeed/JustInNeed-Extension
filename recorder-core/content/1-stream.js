@@ -286,7 +286,15 @@
   //   글 아래 카드 목록까지 든 div#ct(모바일)를 골라 프로필 · 카테고리 · 다른 글 제목이 유닛이 됐다 → 참가자가 평정까지 해야 했음
   //   (stepL_iframe: 유닛 25 · 링크 글자 조각 119/345). 벽 없음(일반 사이트와 같은 청킹).
   //   실제 DOM 으로 확인 안 한 선택자 — 패널 루트 줄이 "div.se-main-container (site)" 인지로 확인. 옛 에디터 글은 이 상자가 없어 폴백 그대로.
-  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' }];
+  //   host(선택) = 그 사이트에서만 본다 — 선택자가 흔한 이름일 때.
+  //   뉴시스(#72, 11-10 서현): 기사 칸은 .viewer > article (지금도 1) 시맨틱 첫 article 로 같은 칸). [속보] 기사는 본문이
+  //   "후속기사가 이어집니다" 한 줄이라 문턱(MIN_ROOT_TEXT)에서 떨어져 2) 폴백이 맨 아래 회사 주소 칸(div#footer)을 골랐다(jsdom).
+  //   문턱 없이 이 칸을 루트로 — 보통 기사는 루트 · 유닛 그대로. 지정 루트라 본문 판정(Readability)은 건너뛰고 루트 전체가
+  //   본문이 된다 — 본문이 <p> 없이 맨 글자 + <br> 라 Readability 가 짧고 사진 있는 기사에서 사진 설명 칸(div.thumCont)만
+  //   골라 본문 전체를 noise 로 만들던 것(jsdom 30개 중 5개)도 같이 풀린다. 보통 기사도 이미 비율 1 · noise 0 이었다.
+  //   속보 본문(11자)은 유닛 최소 글자(MIN_UNIT_CHARS)보다 짧아 유닛 0개 — 주소 칸을 기록하던 것보다 낫다(11-10).
+  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' },
+    { host: /(^|\.)newsis\.com$/, sel: '.viewer > article' }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
@@ -294,6 +302,7 @@
     // 0) 알려진 플랫폼
     useWalls = false;
     for (const site of SITE_ROOTS) {
+      if (site.host && !site.host.test(location.hostname)) continue;
       const el = document.querySelector(site.sel);
       if (!el || !textLen(el)) continue;
       const m = measure(el);
