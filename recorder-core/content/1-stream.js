@@ -22,9 +22,15 @@
  *     칸 안의 뺄 칸(art.skip, 광고 자리, #45)은 상자 밖처럼 noise. 뺄 칸은 기록 중에도 조각마다 조상으로 다시 본다 —
  *     광고가 나중에 채워지면 그 뒤 조각부터 noise(앞 조각 · 비율은 처음 그대로). 아래 "기록 중" 의 또 다른 예외.
  *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
- *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
+ *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로).
+ *     칸이 하나라도 잡히면 Readability 는 안 돌린다 — 칸 여럿을 따로 잡는 규칙은 그중 일부만 있는 페이지에서
+ *     그 칸만 상자가 된다(#53 우체국 EMS 탭 없는 페이지에서 제목만 상자 → 미판정, 그 페이지용 칸을 더함). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
  *     앞 조각은 noise 있음 · 뒤 조각은 미판정처럼 섞일 수 있다(블로터는 칸이 늘면 비율이 오르는 쪽이라 드물 것, 예상).
- *   - 루트 글자 중 상자 안 비율 < noiseMin 이면 엉뚱한 곳을 고른 것으로 보고 미판정. noiseMin 은 근거 없는
+ *   - Readability 상자가 루트를 통째로 감싸면(상자 밖이 없음) 루트 안에 하나뿐인 itemprop="articleBody" 칸으로 바꾼다
+ *     (art.alt, #53). 없으면 하나뿐인 itemprop="text" 칸. 칸이 없거나 여럿이면 Readability 상자 그대로.
+ *   - 루트 글자 중 상자 안 비율 < noiseMin 이면 상자가 루트 안에 거의 없는 것(루트 밖을 고름)으로 보고 미판정.
+ *     비율로는 엉뚱한 상자를 못 거른다 — "페이지 없음" 화면의 푸터 상자도 31~100% 였다(#53 jsdom). 반대로 짧은
+ *     기사 + 메뉴 많은 루트는 상자가 맞아도 19~30% 라 낮게 둔다. noiseMin 은 근거 없는
  *     임시값 — 패널 슬라이더로 바꾼다(기록 중 잠김, 청킹과 같은 길).
  *   - 실패 · 미판정이면 조각에 noise 필드를 안 쓴다(없음 = 미판정, v3 그대로). 이유는 원문 그대로 art.why → 패널.
  *   언제 다시 판정하나: 조각을 새로 만들 때만(inArticle), 그중 루트가 바뀌었거나 상자가 DOM 에서 빠졌을 때,
@@ -63,10 +69,11 @@
  *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
  *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
  *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
- *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫.
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` 은 아래 AD_WIDGETS 에서 뺀다).
  *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
- *   - 확실한 광고 위젯(AD_WIDGETS, #51)은 통째로 뺀다 — 역시 DOM 만 보고 정한다.
+ *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다.
+ *     예외: 위키백과 각주의 스크린리더 전용 글(아주 먼 화면 밖에 놓여 조각 사각형을 늘림)도 여기서 뺀다(#53) — 역시 DOM 만 보고 정한다.
  *
  * --- 입력 필드 제외 [0-5] — 여기까지만 한다 ---------------------------------
  *   막는 것: 네이티브 입력 태그(INPUT/TEXTAREA/SELECT/BUTTON/OPTION)와
@@ -152,20 +159,31 @@
     return false;
   }
 
-  // 광고 위젯 (#51, 11-06 서현) — 광고가 확실한 칸만 통째로 스트림에서 뺀다. 모든 사이트.
-  //   본문 아닌 글은 보통 조각에 noise 로 표시만 하지만(§6), 이 칸들은 방문마다 붙었다 안 붙었다 해서
-  //   넣어 두면 같은 글의 주변 유닛 pid 가 방문마다 갈린다. 빼면 광고 유무와 상관없이 같은 유닛이 된다.
-  //   목록은 사람이 확인한 것만 넣는다(이름으로 광고가 확실한 것). 오버레이가 회색 점선으로 보여 준다.
+  // 본문 아닌 위젯 (#51 → #53, 11-06 서현) — 본문이 아닌 게 확실한 칸(광고 · 떠다니는 추천 상자 · 공유 상자)만
+  //   통째로 스트림에서 뺀다. 모든 사이트. 이름은 #51 때 광고만 넣던 그대로 AD_WIDGETS.
+  //   본문 아닌 글은 보통 조각에 noise 로 표시만 하지만(§6), 이 칸들은 방문마다 붙었다 안 붙었다 · 내용이 바뀌어
+  //   넣어 두면 같은 글의 주변 유닛 pid 가 방문마다 갈린다. 빼면 위젯 유무와 상관없이 같은 유닛이 된다.
+  //   목록은 사람이 확인한 것만 넣는다(이름으로 본문 아님이 확실한 것). 오버레이가 회색 점선으로 보여 준다.
   //   .gliaplayer-container = GliaStudios 동영상 광고 플레이어. 뉴시스 기사 본문 사이에 끼고,
-  //     안의 숨은 조작 글자(play_arrow · volume_mute · AD …)가 빈 동영상 자리에 조각으로 찍혔다.
-  const AD_WIDGETS = '.gliaplayer-container';
+  //     안의 숨은 조작 글자(play_arrow · volume_mute · AD …)가 빈 동영상 자리에 조각으로 찍혔다(#51).
+  //   [data-area-name="플로팅추천영역"] = 한국일보 떠다니는 추천 기사 상자(스크립트가 넣음, sticky · 평소 숨김).
+  //     댓글 뒤에 붙어 마지막 유닛 끝 조각이 됐고, 숨어 있어도 자리가 있어 본문 위를 떠다니며 찍혔다(#53).
+  //   [id^="svcad_"] = 서울경제 광고 자리(svcad_28 이노레임 글 광고 · 구글 광고 등). 스크립트가 본문 첫 문단 앞뒤로
+  //     옮겨 넣고 광고 글이 방문마다 바뀌어, 본문 유닛에 본문으로 섞이고 그 유닛 pid 가 방문마다 갈렸다(#53 jsdom).
+  //   .sharedaddy · #jp-relatedposts = 워드프레스 Jetpack 공유 · 좋아요 상자("Share this:" · Like)와 관련 글 상자.
+  //     본문 칸(.entry-content) 안 끝에 붙어 마지막 유닛 끝 조각이 됐다(#53, 워드프레스닷컴 블로그 jsdom).
+  //   .cite-accessibility-label = 위키백과(미디어위키) 각주의 스크린리더 전용 글 "이동: ". 위젯은 아니지만 예외로 여기 둔다.
+  //     페이지 스크립트가 나중에 넣고, 문서 맨 위보다 약 10만 px 위에 놓아 숨긴다. 그래서 그 각주 조각의
+  //     외곽 사각형이 그 위치부터 각주까지 늘어나, 각주보다 위 어디를 봐도 매 틱 vis 에 들어갔다(#53, 11-09 서현).
+  const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
+    '.cite-accessibility-label';
 
   // 요소를 스트림에 넣을지. build() 와 measure() 가 같이 쓴다 — 루트를 고르는
   // 잣대와 실제로 뽑는 잣대가 달라서 헤럴드경제가 유닛 1개가 됐다(감사 §6-F).
   function elementFilter(el) {
     if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
     if (el.id === CFG.PANEL_ID) return NodeFilter.FILTER_REJECT;
-    if (el.matches && el.matches(AD_WIDGETS)) return NodeFilter.FILTER_REJECT;   // #51
+    if (el.matches && el.matches(AD_WIDGETS)) return NodeFilter.FILTER_REJECT;   // #51 · #53
     if (el.getAttribute && el.getAttribute('aria-hidden') === 'true')
       return NodeFilter.FILTER_REJECT;
     if (isExcluded(el)) return NodeFilter.FILTER_REJECT;   // [0-5]
@@ -404,7 +422,8 @@
   // 본문 상자 판정 (noise) — 헤더 "본문 상자 판정" 참고
   // ==========================================================================
   const MARK = 'data-rbc-i';
-  let noiseMin = 0.3;        // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
+  let noiseMin = 0.05;       // 근거 없는 임시값. 루트 글자 중 상자 안 비율이 이보다 낮으면 미판정 (패널 슬라이더)
+                             //   30 → 5 (#53): 상자가 맞는데 디지털데일리 29.8% · 이데일리 19.0% 로 미판정이었다
   let art = null;            // { status: site|ok|fail, by?(사이트 지정 칸 이름), why, boxes[], ratio, ms, root, raw }
   let recordingNow = false;  // 5-recorder 소유 recording 의 미러. 기록 중엔 판정을 유지한다.
   bus.on('record:started', () => { recordingNow = true; });
@@ -428,6 +447,23 @@
     // 경향신문(#45): Readability 상자(section.art_cont)가 사실상 #articleBody 하나라 본문은 잘 잡는다. 칸 안 광고 자리
     //   (사진 아래 텍스트 광고 #articleImageTxtAd · 본문 배너)가 전부 .ad-wrapper 로 감싸져 있어 그것만 뺀다.
     { host: /(^|\.)khan\.co\.kr$/, sel: '[id="articleBody"]', name: '경향신문', skip: '.ad-wrapper' },
+    // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
+    //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
+    { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
+    // 향토문화전자대전(#53): Readability 상자는 본문 칸(.info_div)만 — 위 정보 표(항목 ID · 별칭 · 지역 · 집필자 …) ·
+    //   [상세정보] · 아래 [참고문헌] 이 noise 가 된다. 위키백과 정보 상자처럼 본문으로 넣는다(11-09 서현).
+    //   네 칸이 형제라 전부 상자로(표 밑 안내문 "※ 본 항목의 내용은 …" 도 본문, 11-09 서현).
+    { host: /(^|\.)grandculture\.net$/, sel: '[id="pic_info_div"], .info_detail, .info_div, .info_reference',
+      name: '향토문화전자대전' },
+    // 국립국어원 온라인가나다(#53): Readability 상자(div.boardView)가 질문 · 답변 아래 이전 글 · 다음 글(.page)까지 담고,
+    //   비밀번호 창 · 재질문 · 목록 버튼까지 본문이 된다. 질문 · 답변의 머리(제목 · 작성자)와 몸만 상자로.
+    { host: /(^|\.)korean\.go\.kr$/, sel: '.boardView > .head, .boardView > .body', name: '국립국어원' },
+    // 우체국 EMS(#53): 요금표 페이지는 글이 거의 다 표라 Readability 가 버튼 칸(div.btn_wrap)을 골라 비율 0% → 미판정,
+    //   왼쪽 메뉴까지 noise 표시 없이 들어간다. 제목과 탭 안 내용(요금표 · 아래 안내문)만 상자로 — 탭 이름 · 요금계산기 ·
+    //   인쇄 버튼은 밖. 탭이 없는 페이지(통관 수수료 안내 등)는 본문 칸 .contents 통째로 — 안 그러면 제목만 상자가 돼 미판정.
+    { host: /(^|\.)ems\.epost\.go\.kr$/, sel: '[id="contents_layout3"] > .page_title > h3, [id="contents_layout3"] .menu_wrap > .tab_contents, '
+      + '[id="contents_layout3"] > .contents:not(:has(.tab_contents))',
+      name: '우체국 EMS' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
@@ -487,6 +523,24 @@
     return { boxes };
   }
 
+  // Readability 상자가 루트를 통째로 감싸면(상자 밖이 없어 아무것도 못 가림) 사이트가 직접 표시한 본문 칸
+  //   (schema.org itemprop="articleBody")이 루트 안에 딱 하나 있을 때 그 칸으로 바꾼다 (#53, 11-06 서현).
+  //   Gatsby 블로그(ppeper.github.io): Readability 가 #article-body(점수 69)를 고르고도 "부모 점수가 더 높으면 올라간다"
+  //   규칙으로 페이지 맨 바깥 div#___gatsby 까지 올라가 제목 줄 · 시리즈 목록 · 이전/다음 글 · 글쓴이 소개가 다 본문이 됐다.
+  //   articleBody 칸이 없으면 itemprop="text"(schema.org 글 CreativeWork 의 본문)를 본다 — Jekyll Minimal Mistakes 테마
+  //   (stg0123.github.io)는 본문 칸이 section.page__content[itemprop="text"]. text 는 댓글 · 답변에도 붙어(Stack Overflow 49개)
+  //   딱 하나일 때만 쓴다 (#53 청크 6, 11-09 서현).
+  //   상자가 루트 안에 있으면(대부분의 사이트) 안 건드린다 — 늘 itemprop 을 쓰면 매경 · 이데일리 판정이 바뀐다.
+  //   돌려주는 것: { el, prop } | null.
+  function itempropBox(boxes) {
+    if (!boxes.some(b => b !== contentRoot && b.contains(contentRoot))) return null;
+    for (const prop of ['articleBody', 'text']) {
+      const els = Array.from(contentRoot.querySelectorAll(`[itemprop="${prop}"]`)).filter(el => textLen(el));
+      if (els.length) return els.length === 1 ? { el: els[0], prop } : null;
+    }
+    return null;
+  }
+
   // 판정을 최신으로 맞춘다 (필요할 때만 다시 돈다). 2-units 가 조각을 만들 때 inArticle 을 통해 부른다.
   function judge() {
     if (!contentRoot) { art = null; return art; }
@@ -525,6 +579,8 @@
         art = { status: 'fail', why: r.why, boxes: [], ratio: null };
       } else {
         art = { status: 'ok', why: '', boxes: r.boxes, ratio: ratioOf(r.boxes) };
+        const alt = itempropBox(r.boxes);
+        if (alt) art = { status: 'ok', why: '', boxes: [alt.el], ratio: ratioOf([alt.el]), alt: alt.prop, altFrom: r.boxes.map(describe) };
       }
     }
     art.ms = Math.round(performance.now() - t0);
@@ -552,7 +608,7 @@
     // 뺄 칸은 나중에 채워질 수 있어 읽을 때마다 찾는다(상자 안만, 글 있는 것만)
     const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
     return {
-      status: a.status, by: a.by || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
+      status: a.status, by: a.by || null, alt: a.alt || null, altFrom: a.altFrom || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
       boxes: a.boxes.map(describe), boxEls: a.boxes, skips: skipEls.map(describe), skipEls,
     };
   }
@@ -806,7 +862,7 @@
     attrs,                              // el → [tag, id, class, role]
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
-    adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 광고 위젯 칸 (#51, 오버레이용)
+    adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
     noiseMin: () => noiseMin,
     setNoiseMin: (v) => { noiseMin = v; },   // 기록 중 차단은 6-frames(chunk 명령) · 9-panel
   };
