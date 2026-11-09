@@ -623,6 +623,10 @@
     //   번역 안내 띠 · 설문 자리 · 맨 아래 피드백 칸("Help improve MDN" · GitHub 링크)은 뺀다. 목차는 상자 밖 = noise.
     { host: /(^|\.)developer\.mozilla\.org$/, sel: 'main#content > .layout__header, main#content > .layout__body',
       skip: '.translation-banner, mdn-survey, .article-footer', name: 'MDN' },
+    // 동아일보(#70): 기사 칸 section.news_view(부제 · 사진 설명 · 본문)를 감싼 div.main_view · div.view_body 에 기자 줄 ·
+    //   키워드 · 구독 안내 · 트렌드뉴스 · 좋아요/댓글 칸이 같이 있다. Readability 가 기사마다 이 셋 중 하나를 골라
+    //   "좋아요 0개" · 많이 본 기사 목록까지 본문이 되기도 했다(jsdom 5개 중 3개 view_body · 1개 main_view). 늘 기사 칸만.
+    { host: /(^|\.)donga\.com$/, sel: 'section.news_view', name: '동아일보' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
   const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
