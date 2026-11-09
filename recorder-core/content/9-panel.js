@@ -282,7 +282,10 @@
   function tableLine(t) {
     if (!t || (!t.data.length && !t.layout.length)) return '';
     const list = t.data.map(d => `${d.rows}×${d.cols} ${esc(d.why)} ${d.chars}자`).join(' · ');
-    return `<br><b style="color:#15803d">표 ${t.data.length + t.layout.length}개</b> (자료 ${t.data.length} · 배치 ${t.layout.length})` +
+    // 가장 큰 표 비율: 페이지 대부분이 표 유닛 하나면 배치용 표를 자료 표로 잘못 본 것일 수 있다 — 문턱 없이 숫자만 보인다
+    return `<br><b style="color:#15803d">표 유닛 ${t.units || 0}개</b>` +
+      (t.units ? ` · 가장 큰 표 = 유닛 글자의 <b>${Math.round(t.maxPct * 100)}%</b>` : '') +
+      ` · 표 ${t.data.length + t.layout.length}개 (자료 ${t.data.length} · 배치 ${t.layout.length})` +
       (list ? ` · <span style="color:#15803d">${list}</span>` : '') +
       (t.layout.length ? ` · <span style="color:#666">배치 ${esc(t.layout.join(', '))}</span>` : '');
   }

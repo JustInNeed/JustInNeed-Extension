@@ -237,7 +237,7 @@
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
     lastVisN = s.vis.length;
-    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis });
+    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis, cx, cy });   // cx · cy = 오버레이 커서 칸 표시용 (#54)
     if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
   }
 
@@ -544,6 +544,16 @@
       boxes: a.boxes, skips: a.skips, pieces, units, allUnits, none };
   }
 
+  // 패널용 표 요약 (#54). 표 판정(1-stream) + 표 유닛 수 · 가장 큰 표 유닛이 유닛 글자 전체에서 차지하는 비율.
+  //   비율이 크면(페이지 대부분이 표 유닛 하나) 배치용 표를 자료 표로 잘못 본 것일 수 있다 — 서현이 눈으로 본다.
+  function tableStat() {
+    const all = RBC.units.all();
+    const tu = all.filter(u => u.kind === 'table');
+    const total = all.reduce((a, u) => a + u.charLen, 0);
+    const max = tu.reduce((a, u) => Math.max(a, u.charLen), 0);
+    return Object.assign(RBC.stream.tableStat(), { units: tu.length, maxPct: total ? max / total : 0 });
+  }
+
   function emitStat() {
     const u = RBC.units.byPid(lastCenterPid);
     bus.emit('stat', {
@@ -558,7 +568,7 @@
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
       noise: noiseStat(),
-      tables: RBC.units.count() ? RBC.stream.tableStat() : null,   // 표 판정 (#54) — 패널용, 기록 데이터에는 안 나감
+      tables: RBC.units.count() ? tableStat() : null,   // 표 판정 · 표 유닛 (#54) — 패널용, 기록 데이터에는 안 나감
       // 제목 (#43): 기록 중 = 이 구간 meta 에 들어간 값, 아니면 지금 구간을 열면 들어갈 값
       title: recording && segMeta ? { text: segMeta.title, from: 'seg' } : pageTitle(),
       unfold: RBC.stream.unfoldState(),                // 노션 펼침 (#37) — 노션이 아니면 null
