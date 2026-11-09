@@ -22,7 +22,7 @@
  *   조각 = 유닛 중 DOM 블록 하나에 속하는 부분. 짧은 문단은 다음 문단과 합쳐지므로
  *   유닛 하나가 조각 여럿일 수 있다 ("본문 마지막 문장 + 관련기사 제목").
  *
- *   u.pieces = [{ off, chars, linkChars, path, pathCut, noise? }, …]   배열 순서 = 조각 번호 k
+ *   u.pieces = [{ off, chars, linkChars, path, pathCut, cell?, noise? }, …]   배열 순서 = 조각 번호 k
  *     noise      = 조각 글이 본문 상자 밖에 걸치나 (#11, 1-stream 헤더 "본문 상자 판정"). 미판정이면 필드 없음.
  *                  조각을 처음 만들 때 한 번 정한다 — 기록 중 이미 있는 조각은 다시 판정하지 않는다.
  *     off, chars = 유닛 text(clean 뒤, UTF-16) 안 위치. 빈틈 · 겹침 없이 text 를 나눈다.
@@ -30,6 +30,7 @@
  *     path       = 조각 첫 텍스트 노드의 DOM 블록부터 위로 최대 6단계, 루트 직전에서 멈춤.
  *                  DOM 블록이 루트 자신이거나 루트 밖이면 [].
  *     pathCut    = 6단계에서 잘려 루트에 못 닿았다.
+ *     cell       = 표 유닛 안 칸 조각만 [줄, 칸] (0부터, 1-stream 헤더 "표"). 칸 밖(표 제목) · 일반 유닛 조각은 없음.
  *   u.spans  = 조각마다 원문 구간 [a, b) (pieces 와 같은 순서). 내부용 — 3-hittest 가 조각
  *              Range(vis 사각형)를 만들 때 쓴다. paragraphs() 가 필드를 골라 내보내므로 JSON 에 안 나감.
  *   계산 시점 = 청킹할 때. 이미 계산된 유닛은 끝(end)이 그대로면 다시 계산하지 않는다
@@ -42,6 +43,19 @@
  *
  *   2026-09-19 의 "rect / DOM 경로 수집 안 함" 결정은 2026-10-01 폐기됐다 (감사 §8).
  *   유닛 전체가 아니라 조각 단위로 남기므로 "유닛은 글자 오프셋 기준"과 충돌하지 않는다.
+ *
+ * --- 표 유닛 (#54, 2026-11-09 서현) ---------------------------------------------
+ *   자료 표(1-stream tables) 구간은 통째로 유닛 하나, u.kind = 'table'. 길이 제한 없음(아주 큰 표도 하나) · 벽 무시 ·
+ *   짧아도 앞 유닛에 안 붙이고, 표 바로 뒤 짧은 글도 표에 안 붙인다. 표 밖 청킹은 표 시작을 벽처럼 보고 끊는다.
+ *   표가 없는 페이지는 예전과 완전히 같다(§6 "청킹 200 고정"의 예외는 표 유닛만).
+ *   기록 중: 표 끝에 줄이 덧붙으면(append) 표 유닛을 늘린다(pid = 글 앞 160자 해시라 그대로).
+ *     표 안에 새 글이 생기면 splice 가 새 표 구간에 걸친 옛 유닛을 전부 다시 자른다 — 줄이 붙어 배치용 → 자료 표로
+ *     바뀐 표(옛 줄글 유닛 여러 개)도 표 유닛 하나가 된다. append 인데 옛 끝에 걸친 표의 앞부분이 표 유닛이 아니면 splice 로.
+ *     옛 pid 이어받기는 종류(표 · 줄글)가 같을 때만. 단 pid = 글 앞 160자 해시라, 표로 바뀐 유닛이 같은 글로 시작하면
+ *     같은 pid 가 kind 만 바뀌어 나올 수 있다(그 pid 의 마지막 paragraphs 값이 맞음).
+ *     알려진 한계: 글은 그대로이고 표 구조만 바뀌면('same' 재스캔 — 빈 머리 줄 추가 · 속성 변경) 유닛 kind · 조각 cell 은
+ *     옛 값 그대로다(조각 noise 처럼 처음 만들 때 정함). 칸 번호가 실제와 한 줄 어긋날 수 있다(예상, 재현 안 함). 표 안이 바뀌면 splice 가
+ *   표 유닛을 다시 만든다 — 앞부분이 같으면 옛 pid 를 이어받고, 아니면 새 pid · 옛 것은 retired(지금 규칙 그대로).
  *
  * --- 기록 중 본문이 바뀌면: splice (0-B, 2026-10-08) -----------------------------
  *   전: 기록 중 재스캔에서 새 스트림이 옛 스트림의 단순 연장(append)이 아니면 아무것도 안 바꾸고
@@ -118,11 +132,13 @@
   let raw = '', sig = new Int32Array(1), breaks = new Set(), walls = [];
   let siteWalls = [];             // 1-stream 이 준 벽 (노션 토글 둘레)
   let dynWalls = [];              // 기록 중 끼어든 글 둘레에 세운 벽 (splice, 전체 재스캔 때 비움)
+  let tblRanges = [];             // 자료 표 원문 구간 [start, end) 오름차순 (1-stream tables, #54)
   function syncStream() {
     raw = RBC.stream.raw();
     sig = RBC.stream.sig();
     breaks = RBC.stream.breaks();
     siteWalls = RBC.stream.walls ? RBC.stream.walls() : [];
+    tblRanges = RBC.stream.tables().filter(t => t.start >= 0).map(t => [t.start, t.end]);
     mergeWalls();
   }
 
@@ -160,6 +176,11 @@
     return lo < walls.length && walls[lo] < N ? walls[lo] : N;
   }
 
+  // 표 (#54): 자료 표 구간은 통째로 유닛 하나(kind: 'table') — 길이 · 벽과 무관, 짧아도 앞 유닛에 안 붙인다.
+  //   표 시작에서 반드시 끊는다(표 밖 청킹은 표 시작을 벽처럼 본다). 표가 없는 페이지는 예전과 완전히 같다.
+  const tableAt = (p) => tblRanges.find(r => r[0] <= p && p < r[1]) || null;
+  const nextTable = (p, N) => { const r = tblRanges.find(x => x[0] > p); return r && r[0] < N ? r[0] : N; };
+
   // toRaw: 여기서 끊는다(splice 의 E). 생략하면 끝까지.
   function chunkFrom(fromRaw, existing, toRaw) {
     const out = existing ? existing.slice() : [];
@@ -172,23 +193,47 @@
       if (!t) return;
       if (t.length < chunkOpts.minUnit) {
         const prev = out.length ? out[out.length - 1] : null;
+        const afterTable = !!prev && prev.kind === 'table';   // 표 유닛에는 안 붙이고, 버리지도 않는다 (#54)
         // 벽이 없는 페이지(일반 사이트)는 예전 그대로: 앞 유닛에 흡수, 앞 유닛이 없으면 버림.
         // 벽이 있는 페이지(노션)는 같은 벽 구간 안에서만 흡수하고, 아니면 짧아도 그대로 유닛.
-        if (prev && (!walls.length || prev.start >= segStart)) {
+        if (prev && !afterTable && (!walls.length || prev.start >= segStart)) {
           prev.end = b;
           prev.text = clean(raw.slice(prev.start, prev.end));
           prev.charLen = prev.text.length;
           return;
         }
-        if (!walls.length) return;
+        if (!walls.length && !afterTable) return;
       }
       out.push({ start: a, end: b, text: t, charLen: t.length });
+    };
+
+    // 표 유닛. 앞 유닛이 같은 표의 앞부분이면(기록 중 표 끝에 줄이 덧붙은 append) 그 유닛을 늘린다 — pid 그대로.
+    const pushTable = (r, a, b) => {
+      const t = clean(raw.slice(a, b));
+      if (!t) return;
+      const prev = out.length ? out[out.length - 1] : null;
+      if (prev && prev.kind === 'table' && prev.start >= r[0]) {
+        prev.end = b;
+        prev.text = clean(raw.slice(prev.start, prev.end));
+        prev.charLen = prev.text.length;
+        prev.pieces = null;
+        prev.piecesEnd = -1;
+        return;
+      }
+      out.push({ start: a, end: b, text: t, charLen: t.length, kind: 'table' });
     };
 
     while (pos < N) {
       while (pos < N && isWs(raw[pos])) pos++;
       if (pos >= N) break;
-      const W = nextWall(pos, N);                // 이 벽 구간의 끝
+      const T = tableAt(pos);
+      if (T) {
+        const b = Math.min(T[1], N);
+        pushTable(T, pos, b);
+        pos = b;
+        continue;
+      }
+      const W = Math.min(nextWall(pos, N), nextTable(pos, N));   // 이 벽 구간의 끝 (표 시작도 끊는 자리)
       segStart = pos;
       while (pos < W) {
         const base = sig[pos];
@@ -278,7 +323,7 @@
       const oa = textOff(u, ra);
       const ob = textOff(u, rb);
       if (!cur || s.blk !== cur.blk) {
-        cur = { blk: s.blk, off: oa, end: ob, link: 0, ra, rb, out: false, und: false };
+        cur = { blk: s.blk, off: oa, end: ob, link: 0, ra, rb, out: false, und: false, cell: s.cell || null };
         runs.push(cur);
       } else {
         cur.end = ob;
@@ -294,6 +339,8 @@
       pieces: kept.map((r) => {
         const { path, cut } = pathOf(r.blk, root);
         const p = { off: r.off, chars: r.end - r.off, linkChars: r.link, path, pathCut: cut };
+        // cell: 표 유닛 안 칸 조각만 [줄, 칸] (#54). 표 제목 등 칸 밖 조각 · 일반 유닛 조각은 필드 없음.
+        if (u.kind === 'table' && r.cell) p.cell = r.cell.slice();
         // noise: 조각 글 일부라도 본문 상자 밖이면 true (정의 "섞인 것"). 미판정이면 필드 없음.
         if (!r.und) p.noise = r.out;
         return p;
@@ -436,6 +483,7 @@
     // (A) 문단 안쪽 변경 (hunk 마다): 블록 경계 변경이 아니고 옛 유닛 하나 안에서 끝나면 그 유닛을 제자리에서 고친다.
     //   광고 span 이 문장 안에 끼거나 글자 · 숫자가 바뀐 경우. pid · 경계 그대로, 글만 바뀜.
     const nL = built.raw.length;
+    const newTbl = (built.tables || []).filter(t => t.start >= 0).map(t => [t.start, t.end]);
     for (const h of hunks) {
       const pureIns = h.oa === h.ob, pureDel = h.na === h.nb;
       const block = (pureIns && isBlockChange(h.na, h.nb - h.na, built.breaks, nL))
@@ -446,6 +494,14 @@
       while (i < old.length && old[i].end <= h.oa) i++;
       let j = i;
       while (j < old.length && old[j].start < h.ob) j++;
+      // 표 (#54): 새 글이 표 안이면 그 표 구간(새 위치)에 걸치는 옛 유닛을 전부 같이 다시 자른다 — 표 끝 · 첫 줄 앞에
+      //   줄이 붙은 옛 표 유닛, 줄이 붙어 배치용 → 자료 표로 바뀐 표의 옛 줄글 유닛들. 안 그러면 표 하나가 여러 유닛으로
+      //   갈린다(reviewer 재현). 표 밖 글(표 앞뒤에 끼어든 문단)이면 표 유닛은 건드리지 않는다.
+      for (const r of newTbl) {
+        if (!(r[0] < h.nb && h.na < r[1])) continue;
+        while (i > 0 && mapEnd(old[i - 1].end) > r[0]) i--;
+        while (j < old.length && mapStart(old[j].start) < r[1]) j++;
+      }
       h.i = i; h.j = j;
     }
 
@@ -495,10 +551,15 @@
         const E = g.j < old.length ? mapStart(old[g.j].start) : raw.length;
         const fresh = E > a ? chunkFrom(a, null, E) : [];
         const lo = wallOf.get(firstH);
+        // 종류가 다르면(표 ↔ 줄글, 표가 배치용 · 자료 표로 바뀜) 안 이어받는다 — 한 pid 의 kind 가 바뀌지 않게 (#54)
         const inherit = mid.length && fresh.length && fresh[0].start === mapStart(mid[0].start) && mapStart(mid[0].start) < lo
+          && fresh[0].kind === mid[0].kind
           ? mid[0].pid : null;
         for (const u of fresh) {
           if (inherit && u === fresh[0] && !taken.has(inherit)) { u.pid = inherit; taken.add(inherit); continue; }
+          // 표 (#54): 같은 자리에서 시작하는 옛 표 유닛의 pid 를 이어받는다 (줄이 늘거나 칸 값이 바뀐 같은 표)
+          const was = u.kind === 'table' && mid.find(m => m.kind === 'table' && mapStart(m.start) === u.start && !taken.has(m.pid));
+          if (was) { u.pid = was.pid; taken.add(was.pid); continue; }
           const base = 'u' + hash(u.text.slice(0, 160));
           let pid = base, c = 1;
           while (taken.has(pid)) pid = base + '_' + (++c);
@@ -576,6 +637,14 @@
     return [bad, uncover];
   }
 
+  // 덧붙은 글이 옛 끝에 걸친 표의 뒷부분인데, 그 표 앞부분이 표 유닛이 아니면(줄이 붙어 배치용 → 자료 표) append 로
+  //   이으면 표가 갈린다 → splice 로 보낸다 (#54, reviewer 재현). 옛 표 유닛 끝에 줄이 붙은 경우는 append 가 늘린다.
+  function tableSplits(built) {
+    const L = RBC.stream.len();
+    return (built.tables || []).some(t => t.start >= 0 && t.start < L && L < t.end
+      && !units.some(u => u.kind === 'table' && u.start <= t.start && t.start < u.end));
+  }
+
   function rescan(opts) {
     const t0 = performance.now();                  // 재스캔 비용 측정 (이벤트 ms, 패널 · [6] 표시)
     const preserve = opts && opts.preserve;
@@ -594,12 +663,17 @@
         syncStream();
         bus.emit('units:rescanned', { mode: 'same', count: units.length, root: rootTo,
           ms: Math.round(performance.now() - t0) });
-      } else if (built.raw.startsWith(RBC.stream.raw())) {
+      } else if (built.raw.startsWith(RBC.stream.raw()) && !tableSplits(built)) {
         const tailFrom = RBC.stream.len();
         RBC.stream.commit(built);
         syncStream();
         const kept = units.map(u => ({ ...u }));
-        units = fillPieces(assignIds(chunkFrom(tailFrom, kept)));
+        // 있던 표 유닛은 pid 를 그대로 둔다 (#54) — 전부 글 해시로 다시 매기면, 앞서 splice 로 줄이 늘거나 칸 값이
+        //   바뀌고도 pid 를 이어받은 표 유닛이 여기서 새 pid 를 받는다. 일반 유닛은 예전 그대로(다시 매김).
+        const oldPid = units.map(u => u.pid);
+        const next = assignIds(chunkFrom(tailFrom, kept));
+        next.forEach((u, q) => { if (q < oldPid.length && u.kind === 'table') u.pid = oldPid[q]; });
+        units = fillPieces(next);
         bus.emit('units:rescanned', { mode: 'append', count: units.length, root: rootTo,
           ms: Math.round(performance.now() - t0) });
       } else {

@@ -3,7 +3,7 @@
 """
 extract_features.py  (v3)
 =========================
-세션 bundle(rbc-session, schemaVersion 3) → 유닛별 feature 테이블(CSV).
+세션 bundle(rbc-session, schemaVersion 3 · 4) → 유닛별 feature 테이블(CSV). v4 = 표 유닛(is_table).
 계산 정의의 기준 문서 = 피처_계산_논리.md. 이 파일과 문서가 어긋나면 문서를 먼저 고칠 것.
 
 원칙: 수집은 원자료만, 판정·가공은 여기서. 정의/문턱을 바꾸면 재수집 없이 다시 돌린다.
@@ -570,6 +570,7 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
             "paragraph_id": pid,
             "unit_order": para.get("order", -1),
             "char_len": charlen,
+            "is_table": para.get("kind") == "table",   # v4 표 유닛 (#54)
             "text": (para.get("text") or "")[:120],
             "highlight_text": " || ".join(hl.get(pid, []))[:500],
             "copy_text": " || ".join(cp.get(pid, []))[:500],

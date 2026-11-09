@@ -237,7 +237,7 @@
 
     lastCenterPid = centerPid; lastCursorPid = cursorPid; lastScrollSpeed = scrollSpeed;
     lastVisN = s.vis.length;
-    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis });
+    bus.emit('tick:done', { centerU, cursorPid, vis: s.vis, cx, cy });   // cx · cy = 오버레이 커서 칸 표시용 (#54)
     if (++tickCount % CFG.STAT_EVERY === 0) emitStat();
   }
 
@@ -259,7 +259,10 @@
   function paragraphs() {
     const alive = RBC.units.all();
     const one = (u, order, gone) => {
-      const p = { pid: u.pid, order, charLen: u.charLen, text: u.text.slice(0, 1000), pieces: u.pieces || [] };
+      // 표 유닛(#54)은 글을 자르지 않는다 — 조각 off 가 1,000자 뒤를 가리켜서. 보통 유닛은 340자 이하라 원래 안 잘림.
+      const p = { pid: u.pid, order, charLen: u.charLen,
+        text: u.kind === 'table' ? u.text : u.text.slice(0, 1000), pieces: u.pieces || [] };
+      if (u.kind) p.kind = u.kind;
       if (gone) { p.retired = true; p.after = u.after || null; }   // 사라질 때 바로 앞 유닛 pid (글 순서 복원용)
       return p;
     };
@@ -304,7 +307,7 @@
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
       // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체, L = + 라벨. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-T',
+      collector: 'rbc-v4-T',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,
@@ -331,7 +334,9 @@
       notes: [
         '원본 값만 수집. 정규화·z-score·개인화 보정은 전부 오프라인/BE 담당.',
         '유닛 = 본문 텍스트 스트림의 글자 오프셋 구간. DOM 문단이 아님.',
-        'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid.',
+        'pid = 유닛 텍스트 해시. 재스캔해도 같은 글이면 같은 pid. 기록 중 글이 바뀐 유닛은 옛 pid 를 이어받을 수 있다(splice).',
+        'v4: kind = "table" 이면 자료 표 하나 통째인 표 유닛(길이 제한 없음, text 안 자름, 칸 사이 띄어쓰기 없음). ' +
+        'pieces[].cell = 표 유닛 안 칸 조각만 [줄, 칸](0부터, 합친 칸 = 시작 칸, 표 안의 표 = 바깥 칸). 표 제목 등 칸 밖 조각은 없음.',
         'pieces = 유닛을 DOM 블록 경계로 나눈 조각. 배열 순서 = 조각 번호 k. off/chars 는 ' +
         '유닛 text(공백 정리 뒤, UTF-16) 기준이며 빈틈·겹침 없이 text 를 나눈다. linkChars = <a> 안 글자 수.',
         'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
@@ -541,6 +546,16 @@
       boxes: a.boxes, skips: a.skips, pieces, units, allUnits, none };
   }
 
+  // 패널용 표 요약 (#54). 표 판정(1-stream) + 표 유닛 수 · 가장 큰 표 유닛이 유닛 글자 전체에서 차지하는 비율.
+  //   비율이 크면(페이지 대부분이 표 유닛 하나) 배치용 표를 자료 표로 잘못 본 것일 수 있다 — 서현이 눈으로 본다.
+  function tableStat() {
+    const all = RBC.units.all();
+    const tu = all.filter(u => u.kind === 'table');
+    const total = all.reduce((a, u) => a + u.charLen, 0);
+    const max = tu.reduce((a, u) => Math.max(a, u.charLen), 0);
+    return Object.assign(RBC.stream.tableStat(), { units: tu.length, maxPct: total ? max / total : 0 });
+  }
+
   function emitStat() {
     const u = RBC.units.byPid(lastCenterPid);
     bus.emit('stat', {
@@ -555,6 +570,7 @@
       focusSec: Math.round(segTicks * CFG.TICK_MS / 1000),
       href: location.href,
       noise: noiseStat(),
+      tables: RBC.units.count() ? tableStat() : null,   // 표 판정 · 표 유닛 (#54) — 패널용, 기록 데이터에는 안 나감
       // 제목 (#43): 기록 중 = 이 구간 meta 에 들어간 값, 아니면 지금 구간을 열면 들어갈 값
       title: recording && segMeta ? { text: segMeta.title, from: 'seg' } : pageTitle(),
       unfold: RBC.stream.unfoldState(),                // 노션 펼침 (#37) — 노션이 아니면 null

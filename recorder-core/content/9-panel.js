@@ -28,6 +28,7 @@
  *   선출 전에는 자기 프레임 것만, 선출 뒤에는 primary 것만 받는다.
  *
  * --- noise 줄 · 본문 문턱 (#11) ----------------------------------------------
+ *   stat.tables 로 표 줄(#54): "표 N개 (자료 a · 배치 b)" + 자료 표마다 줄×칸 · 판정 이유 · 글자 수.
  *   stat.noise 로 noise 조각 · 유닛 개수, 판정 방식(Readability / 플랫폼 생략 / 실패 원문), 되찾은 상자 이름,
  *   상자 안 비율과 문턱, 걸린 ms 를 보여 준다. "전부 noise" 유닛 수 = 테스트 모드 평정에서 빠지는 수(#13). 문턱 슬라이더는 청크 명령에 실려 가고 기록 중 잠긴다.
  *
@@ -277,6 +278,18 @@
     return s;
   }
 
+  // 표 판정 줄 (#54). 자료 표 = 표 유닛이 될 표(줄×칸 · 판정 이유 · 글자 수), 배치용 = 지금처럼 줄글로.
+  function tableLine(t) {
+    if (!t || (!t.data.length && !t.layout.length)) return '';
+    const list = t.data.map(d => `${d.rows}×${d.cols} ${esc(d.why)} ${d.chars}자`).join(' · ');
+    // 가장 큰 표 비율: 페이지 대부분이 표 유닛 하나면 배치용 표를 자료 표로 잘못 본 것일 수 있다 — 문턱 없이 숫자만 보인다
+    return `<br><b style="color:#15803d">표 유닛 ${t.units || 0}개</b>` +
+      (t.units ? ` · 가장 큰 표 = 유닛 글자의 <b>${Math.round(t.maxPct * 100)}%</b>` : '') +
+      ` · 표 ${t.data.length + t.layout.length}개 (자료 ${t.data.length} · 배치 ${t.layout.length})` +
+      (list ? ` · <span style="color:#15803d">${list}</span>` : '') +
+      (t.layout.length ? ` · <span style="color:#666">배치 ${esc(t.layout.join(', '))}</span>` : '');
+  }
+
   // ==========================================================================
   // 상태줄
   // ==========================================================================
@@ -299,7 +312,7 @@
     if (!panelEl || !s) return;
     const primary = RBC.frames.primaryTag();
     if (primary ? s.tag !== primary : s.tag !== TAG) return;   // 광고 iframe 등은 무시
-    noiseHtml = noiseLine(s.noise);
+    noiseHtml = noiseLine(s.noise) + tableLine(s.tables);
     const nEl = panelEl.querySelector('#rbc-noise');
     if (nEl) nEl.innerHTML = noiseHtml;
     if (s.noise && s.noise.min != null) {

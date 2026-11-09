@@ -23,6 +23,10 @@
  *   Readability 가 고른 본문 상자(1-stream article().boxEls)는 보라 굵은 테두리 + "본문 상자" 라벨.
  *   테두리가 기사 본문을 감싸면 상자를 제대로 되찾은 것이고, 사이드바 · 댓글 · 페이지 전체면 잘못 찾은 것.
  *   스트림에서 통째로 뺀 본문 아닌 위젯(1-stream AD_WIDGETS — 광고 · 추천 상자, #51 · #53)은 회색 점선 + "본문 아닌 위젯" 라벨 — 그 안엔 조각이 없어야 맞다.
+ *   표(#54): 자료 표(1-stream tables — 표 유닛이 될 표)는 초록 점선 + "자료 표 줄×칸 (판정 이유)", 배치용 표(layouts — 지금처럼
+ *   줄글로)는 회색 점점선. 이름표는 오른쪽 위. 페이지 대부분이 초록 상자 하나로 덮이면 배치용 표를 자료 표로 잘못 본 것.
+ *   표 유닛(u.kind 'table')은 파랑 · 주황 번갈이 대신 초록으로 칠하고, 표 상자 이름표에 "표 유닛 #order · 줄×칸 · 칸 조각 N".
+ *   vis 상자 라벨에 칸 [줄,칸], 커서가 표 유닛 칸 위면 커서 옆에 "줄 r · 칸 c" (tick:done 의 cx · cy, 서버 귀속과 같은 방식).
  *   상자 위치는 틱마다 다시 잰다(상자는 몇 개뿐). Highlight 미지원 폴백에는 noise 칠하기를 안 넣었다(크롬은 지원).
  *
  * --- 판정 기준 --------------------------------------------------------------
@@ -47,7 +51,8 @@
 
   // --- 이 파일이 소유하는 상태 ---
   let overlayOn = false;
-  let hlA = null, hlB = null, hlC = null, hlU = null, hlN = null;
+  let hlA = null, hlB = null, hlC = null, hlU = null, hlN = null, hlT = null;
+  let cellEl = null;                     // 커서 칸 이름표 (#54)
   let fallbackLayer = null, centerLineEl = null;
   let fbRaf = 0;
   let visLayer = null;
@@ -64,6 +69,7 @@
     s.textContent = `
       ::highlight(rbc-unit-a){ background-color: rgba(59,130,246,.13); }
       ::highlight(rbc-unit-b){ background-color: rgba(245,158,11,.17); }
+      ::highlight(rbc-unit-t){ background-color: rgba(34,197,94,.20); }
       ::highlight(rbc-center){ background-color: rgba(34,197,94,.38); }
       ::highlight(rbc-cursor){ text-decoration: underline 2px solid rgba(37,99,235,.95); }
       #rbc-centerline{ position:fixed; left:0; right:0; height:0;
@@ -96,6 +102,12 @@
       .rbc-art-box.skip > span{ background:rgba(220,38,38,.95); }
       .rbc-art-box.ad{ border:3px dashed rgba(107,114,128,.95); }
       .rbc-art-box.ad > span{ background:rgba(107,114,128,.95); }
+      .rbc-art-box.tbl{ border:3px dashed rgba(22,163,74,.95); }
+      .rbc-art-box.tbl > span{ background:rgba(22,163,74,.95); left:auto; right:-4px; }
+      .rbc-art-box.lay{ border:2px dotted rgba(107,114,128,.95); }
+      .rbc-art-box.lay > span{ background:rgba(107,114,128,.8); left:auto; right:-4px; }
+      #rbc-cell{ position:fixed; z-index:2147483646; pointer-events:none; font:12px/18px monospace; padding:0 6px;
+        color:#fff; background:rgba(22,163,74,.95); border-radius:3px; white-space:nowrap; display:none; }
     `;
     document.documentElement.appendChild(s);
   }
@@ -126,19 +138,20 @@
     if (HL_OK) {
       if (!hlA) {
         hlA = new Highlight(); hlB = new Highlight();
-        hlC = new Highlight(); hlU = new Highlight(); hlN = new Highlight();
-        hlA.priority = 1; hlB.priority = 1; hlN.priority = 3; hlC.priority = 5; hlU.priority = 9;
+        hlC = new Highlight(); hlU = new Highlight(); hlN = new Highlight(); hlT = new Highlight();
+        hlA.priority = 1; hlB.priority = 1; hlT.priority = 1; hlN.priority = 3; hlC.priority = 5; hlU.priority = 9;
         CSS.highlights.set('rbc-unit-a', hlA);
         CSS.highlights.set('rbc-unit-b', hlB);
+        CSS.highlights.set('rbc-unit-t', hlT);   // 표 유닛 (#54) 초록
         CSS.highlights.set('rbc-noise', hlN);
         CSS.highlights.set('rbc-center', hlC);
         CSS.highlights.set('rbc-cursor', hlU);
       }
-      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear(); hlN.clear();
+      hlA.clear(); hlB.clear(); hlC.clear(); hlU.clear(); hlN.clear(); hlT.clear();
       if (on) {
         RBC.units.all().forEach((u, i) => {
           const r = rangeForUnit(u);
-          if (r) (i % 2 ? hlB : hlA).add(r);
+          if (r) (u.kind === 'table' ? hlT : i % 2 ? hlB : hlA).add(r);
           (u.pieces || []).forEach((p, k) => {
             const sp = u.spans && u.spans[k];
             if (p.noise !== true || !sp) return;
@@ -203,11 +216,31 @@
       d.className = 'rbc-vis-box' + (typeof order === 'number' && order % 2 ? ' b' : '') + (noise ? ' n' : '');
       d.style.cssText = `display:block;left:${left}px;top:${top}px;` +
         `width:${right - left}px;height:${bottom - top}px;`;
-      d.firstChild.textContent = '#' + order + '·' + k + (noise ? ' noise' : '');
+      const cell = u && u.pieces && u.pieces[k] && u.pieces[k].cell;
+      d.firstChild.textContent = '#' + order + '·' + k + (cell ? ' [' + cell + ']' : '') + (noise ? ' noise' : '');
     }
   }
 
-  function hideVis() { if (visLayer) visLayer.style.display = 'none'; }
+  function hideVis() { if (visLayer) visLayer.style.display = 'none'; hideCell(); }
+
+  // 커서 칸 (#54): 커서 좌표가 든 vis 조각 상자의 cell 을 커서 옆에 띄운다 — 서버가 cx · cy 와 vis 로 칸을 찾는 방식 그대로.
+  //   표 유닛 안인데 칸 밖(표 제목)이면 "칸 없음". 표 밖이면 숨김.
+  function drawCell(vis, cx, cy) {
+    if (cx == null || cy == null) { hideCell(); return; }
+    const v = (vis || []).find(([, , top, bottom, left, right]) => left <= cx && cx < right && top <= cy && cy < bottom);
+    const u = v && RBC.units.byPid(v[0]);
+    if (!u || u.kind !== 'table') { hideCell(); return; }
+    const p = u.pieces && u.pieces[v[1]];
+    if (!cellEl) {
+      cellEl = document.createElement('div');
+      cellEl.id = 'rbc-cell';
+      document.documentElement.appendChild(cellEl);
+    }
+    cellEl.textContent = `표 유닛 #${u.order} · ` + (p && p.cell ? `줄 ${p.cell[0]} · 칸 ${p.cell[1]}` : '칸 없음');
+    cellEl.style.cssText = `display:block;left:${cx + 14}px;top:${cy + 14}px;`;
+  }
+
+  function hideCell() { if (cellEl) cellEl.style.display = 'none'; }
 
   // 본문 상자 테두리 — 뷰포트 기준으로 틱마다 다시 잰다.
   function drawBoxes() {
@@ -217,7 +250,12 @@
     const nBox = ok ? a.boxEls.length : 0;
     const nSkip = ok ? a.skipEls.length : 0;
     // 그 뒤에 스트림에서 통째로 뺀 본문 아닌 위젯(#51 · #53)을 회색 점선으로 — 판정과 무관하게 늘 그린다
-    const els = (ok ? a.boxEls.concat(a.skipEls) : []).concat(RBC.stream.adWidgets());
+    const nAd = RBC.stream.adWidgets().length;
+    // 그 뒤에 표 (#54): 자료 표(= 표 유닛이 될 표) 초록 점선 · 배치용 표 회색 점점선. 이름표는 오른쪽 위(본문 상자 이름표와 안 겹치게)
+    const tbls = RBC.stream.tables(), lays = RBC.stream.layouts();
+    const els = (ok ? a.boxEls.concat(a.skipEls) : []).concat(RBC.stream.adWidgets(),
+      tbls.map(t => t.el), lays.map(l => l.el));
+    const nT = nBox + nSkip + nAd;
     if (!boxLayer) {
       boxLayer = document.createElement('div');
       boxLayer.id = 'rbc-box';
@@ -236,6 +274,15 @@
       if (!el || !el.isConnected) { d.style.display = 'none'; continue; }
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
+      if (i >= nT) {
+        const t = tbls[i - nT];
+        d.className = t ? 'rbc-art-box tbl' : 'rbc-art-box lay';
+        const tu = t && RBC.units.all().find(x => x.kind === 'table' && x.start <= t.start && t.start < x.end);
+        d.firstChild.textContent = !t ? `배치용 표 (${lays[i - nT - tbls.length].why}) = 줄글로`
+          : tu ? `표 유닛 #${tu.order} · ${t.rows}×${t.cols} · 칸 조각 ${tu.pieces.filter(p => p.cell).length} (${t.why})`
+            : `자료 표 ${t.rows}×${t.cols} (${t.why}) · 표 유닛 없음`;
+        continue;
+      }
       d.className = i < nBox ? 'rbc-art-box' : i < nBox + nSkip ? 'rbc-art-box skip' : 'rbc-art-box ad';
       d.firstChild.textContent = i < nBox
         ? `본문 상자 (${a.by ? a.by + ' 지정' : a.alt ? `itemprop="${a.alt}" 칸` : 'Readability'}) ${a.boxes[i]}` + (a.decided ? '' : ' · 미판정')
@@ -316,6 +363,7 @@
     if (!overlayOn || labelHide || !d) return;
     markCurrent(d.centerU, d.cursorPid);
     drawVis(d.vis);
+    drawCell(d.vis, d.cx, d.cy);
     drawBoxes();
   });
 
