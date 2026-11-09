@@ -38,11 +38,13 @@
  *   Range 객체는 units:changed 때 만들고 재사용한다 (live Range 라 DOM 변화를 따라간다).
  *   크기 0 인 조각(숨김 · DOM 에서 빠짐)은 bottom > 0 조건에서 자동으로 빠진다.
  *   그런데 접혀 숨은 칸(hidden="until-found" — 위키백과 둘러보기 상자 · 닫힌 <details>)은 그려지지 않는데도
- *   사각형이 남아 화면과 겹친다. 그래서 겹친 조각만 첫 글자 칸에 checkVisibility() 를 물어 false 면 뺀다
- *   (#53, 11-09 서현). display:none 은 원래 사각형 0, content-visibility:auto(화면 밖이라 미룬 칸)는 기본값에서 true 라 안 건드림.
+ *   사각형이 남아 화면과 겹친다. 그래서 겹친 조각만 글자 칸에 checkVisibility() 를 물어
+ *   조각의 모든 글자 칸이 false 면 뺀다 (#53, 11-09 서현). 첫 글자 칸이 true 면 거기서 끝(대부분),
+ *   false 일 때만 나머지 칸을 차례로 묻는다 — 위키백과 각주 첫 글자 "↑" 처럼 앞에만 숨은 글자(display:none)가
+ *   있는 조각을 통째로 빼지 않기 위해 (#58). display:none 은 원래 사각형 0, content-visibility:auto(화면 밖이라 미룬 칸)는 기본값에서 true 라 안 건드림.
  *   display:contents 칸은 상자가 없어 늘 false 라, 그때는 상자 있는 조상에게 다시 묻는다.
  *   data-collect 12-label 의 pidAt 도 visPieces 를 써서, 라벨 클릭으로 접힌 조각은 못 고른다(의도와 같음).
- *   조각 · pid 는 그대로 — 펼치면 그 틱부터 vis 에 나온다. 한 조각이 접힌 칸과 펼친 칸에 걸치면 첫 글자 쪽을 따른다.
+ *   조각 · pid 는 그대로 — 펼치면 그 틱부터 vis 에 나온다. 한 조각이 접힌 칸과 펼친 칸에 걸치면 보이는 쪽을 따른다(vis 에 남음).
  *   sample() 전체 시간을 최근 SAMPLE_WINDOW 틱 보관 → 패널 p95 (> 10ms 면 캐시 방식 검토).
  *
  * --- 성능 주의 (PERF-1) ------------------------------------------------------
@@ -64,11 +66,12 @@
   // 틱마다 강제 레이아웃이 수십 번 일어나므로 캐시한다.
   // 스크롤·리사이즈·재청킹 때 무효화된다.
   let rootBox = null;
-  let pieceRanges = null;          // [{ pid, k, r: Range }] — units:changed 때 버림
+  let pieceRanges = null;          // [{ pid, k, r: Range, a, b }] (a, b = 조각 스트림 구간) — units:changed 때 버림
   const SAMPLE_WINDOW = 200;
   const sampleMs = [];
   const visMs = [];                // 그중 vis(조각 사각형) 몫 — 탐침이 먼저 레이아웃을 확정하므로 순수 측정 비용
   let foldedN = 0;                 // 마지막 틱에 화면과 겹쳤지만 접혀 숨어 vis 에서 뺀 조각 수 (패널 표시, #53)
+  let rescuedN = 0;                // 마지막 틱에 첫 글자 칸만 숨어 vis 에 남긴 조각 수 (패널 표시, #58)
 
   // ==========================================================================
   // 기본 조회
@@ -192,39 +195,70 @@
         if (!a || !b) continue;
         const r = document.createRange();
         try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); } catch (e) { continue; }
-        out.push({ pid: u.pid, k, r });
+        out.push({ pid: u.pid, k, r, a: spans[k][0], b: spans[k][1] });
       }
     }
     return out;
+  }
+
+  // 글자가 든 칸이 그려지는가. display:contents 칸은 자기 상자가 없어 늘 false —
+  // 상자 있는 조상에게 다시 묻는다 (브라우저 실측, #53).
+  function shown(el) {
+    if (!el || !el.checkVisibility || el.checkVisibility()) return true;
+    if (getComputedStyle(el).display !== 'contents') return false;
+    while (el && getComputedStyle(el).display === 'contents') el = el.parentElement;
+    return !!(el && el.checkVisibility());
+  }
+
+  // 조각 [a, b) 안에 그려지는 칸에 든 글자가 하나라도 있는가.
+  // 첫 글자 칸이 안 그려질 때만 부른다 — 위키백과 각주 첫 글자 "↑" 는 숨은 글자(display:none)인데
+  // 각주 내용은 보인다(#58). 접힌 상자 · 닫힌 <details> 안 조각은 모든 칸이 안 그려져 그대로 빠진다.
+  // first = 이미 안 그려진다고 나온 첫 글자 칸 (다시 묻지 않음).
+  function anyShown(a, b, first) {
+    const segs = RBC.stream.segs();
+    let lo = 0, hi = segs.length - 1, i = 0;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (segs[m].start <= a) { i = m; lo = m + 1; } else hi = m - 1;
+    }
+    const asked = new Set([first]);       // 같은 칸은 한 번만 묻는다 (칸이 번갈아 나와도)
+    for (; i < segs.length && segs[i].start < b; i++) {
+      const el = segs[i].node.parentElement;
+      if (asked.has(el)) continue;
+      asked.add(el);
+      if (shown(el)) return true;
+    }
+    return false;
   }
 
   function visPieces() {
     if (!pieceRanges) pieceRanges = buildPieceRanges();
     const vw = window.innerWidth, vh = window.innerHeight;
     const out = [];
-    let folded = 0;
+    let folded = 0, rescued = 0;
     for (const p of pieceRanges) {
       const b = p.r.getBoundingClientRect();
       if (b.bottom > 0 && b.top < vh && b.right > 0 && b.left < vw) {
         const n = p.r.startContainer;
-        let el = n.nodeType === 1 ? n : n.parentElement;
-        if (el && el.checkVisibility && !el.checkVisibility()) {   // 접혀 숨은 칸 (#53)
-          // display:contents 칸은 자기 상자가 없어 늘 false — 상자 있는 조상에게 다시 묻는다 (브라우저 실측)
-          while (el && getComputedStyle(el).display === 'contents') el = el.parentElement;
-          if (!el || !el.checkVisibility()) { folded++; continue; }
+        const el = n.nodeType === 1 ? n : n.parentElement;
+        // 접혀 숨은 칸 (#53): 첫 글자 칸이 안 그려지면, 조각의 다른 글자 칸도 다 안 그려질 때만 뺀다 (#58)
+        if (!shown(el)) {
+          if (!anyShown(p.a, p.b, el)) { folded++; continue; }
+          rescued++;
         }
         out.push([p.pid, p.k, Math.round(b.top), Math.round(b.bottom),
           Math.round(b.left), Math.round(b.right)]);
       }
     }
     foldedN = folded;
+    rescuedN = rescued;
     return out;
   }
 
   // 최근 SAMPLE_WINDOW 틱의 sample() 시간. 패널 표시용.
   function stats() {
     const n = sampleMs.length;
-    if (!n) return { p95: 0, max: 0, n: 0, visP95: 0, pieces: 0, folded: foldedN };
+    if (!n) return { p95: 0, max: 0, n: 0, visP95: 0, pieces: 0, folded: foldedN, rescued: rescuedN };
     const r1 = v => Math.round(v * 10) / 10;
     const p95 = (arr) => {
       const a = arr.slice().sort((x, y) => x - y);
@@ -235,6 +269,7 @@
       visP95: r1(p95(visMs)),                       // vis 몫만
       pieces: pieceRanges ? pieceRanges.length : 0, // 매 틱 재는 조각 수
       folded: foldedN,                              // 마지막 틱 접혀 숨어 vis 에서 뺀 조각 수
+      rescued: rescuedN,                            // 마지막 틱 첫 글자만 숨어 vis 에 남긴 조각 수 (#58)
     };
   }
 
@@ -338,7 +373,7 @@
     streamPosOf,
     locate,                 // 8-overlay 의 rangeForUnit 이 쓴다
     invalidate,
-    stats,                  // { p95, max, n, visP95, pieces, folded } — sample() ms · 조각 수, 패널 표시
+    stats,                  // { p95, max, n, visP95, pieces, folded, rescued } — sample() ms · 조각 수, 패널 표시
     visPieces,
     // 개별 조회 — 디버깅·추후 사용
     atCenterLine,
