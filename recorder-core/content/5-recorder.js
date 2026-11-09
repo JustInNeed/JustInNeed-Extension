@@ -307,7 +307,7 @@
     return {
       schemaVersion: CFG.SCHEMA_VERSION,              // [C9]
       // v3 구현 단계 표시. A = 조각만, B = + vis, C = + 입력 · 스크롤 주체, L = + 라벨. 세트가 끝날 때마다 올린다.
-      collector: 'rbc-v3-T',
+      collector: 'rbc-v4-T',
 
       // --- 페이지 [C7] — 구간을 연 순간의 값. export 시점의 location 이 아니다 ---
       url: location.href,

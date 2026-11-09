@@ -26,7 +26,7 @@
   //   2-units 의 chunkOpts(target · min · max)를 바꾸고 여기는 안 바뀐다.
   // ==========================================================================
   const CFG = {
-    SCHEMA_VERSION: 3,        // [C9] v3 = 감사 §8. 3 미만은 check_session · extract_features 가 거부
+    SCHEMA_VERSION: 4,        // [C9] v3 = 감사 §8, v4 = 표 유닛(유닛 kind 'table' · 조각 cell, #54). 3 미만은 check_session · extract_features 가 거부
     TICK_MS: 150,             // 마스터 클럭
     CENTER_RATIO: 0.49,       // GVAM 중앙선 (뷰포트 세로 비율)
 

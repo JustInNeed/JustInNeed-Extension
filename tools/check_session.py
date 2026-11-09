@@ -36,6 +36,8 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          유닛마다 pieces 가 text 를 빈틈 · 겹침 없이 나누는가. 첫 off = 0,
          다음 off = 앞 off + chars, 마지막 끝 = charLen, 0 < chars, 0 <= linkChars <= chars,
          path 칸 4개 · 최대 6단계, pathCut 이면 정확히 6단계.
+         v4 표 유닛(#54): 유닛 kind 는 없거나 "table", 조각 cell 은 표 유닛에만 · 0 이상 정수 두 개 [줄, 칸],
+         표 유닛 text 는 안 잘림(UTF-16 길이 = charLen).
          + 모든 틱에 vis 키, vis 칸 6개, pid 가 paragraphs 에 있고 k < pieces 개수, top ≤ bottom, left ≤ right.
     [14] vis 교차검사 (감사 §8 검증 장치)
          caret 탐침(centerPid · visTop/visBot)과 Range 사각형(vis)은 따로 잰 값이다.
@@ -604,6 +606,11 @@ def piece_problem(p):
     n = p.get("charLen")
     if not isinstance(pcs, list) or not pcs:
         return "pieces 없음"
+    kind = p.get("kind")
+    if kind not in (None, "table"):
+        return f"kind {kind!r}"
+    if kind == "table" and len((p.get("text") or "").encode("utf-16-le")) // 2 != n:
+        return f"표 유닛 text 잘림 ({len(p.get('text') or '')}자 / charLen {n})"
     end = 0
     for k, c in enumerate(pcs):
         off, ch, lk = c.get("off"), c.get("chars"), c.get("linkChars")
@@ -619,6 +626,13 @@ def piece_problem(p):
             return f"k{k} path 형식"
         if not isinstance(cut, bool) or (cut and len(path) != PATH_MAX):
             return f"k{k} pathCut {cut} · path {len(path)}단계"
+        if "cell" in c:
+            cell = c["cell"]
+            if kind != "table":
+                return f"k{k} 표 유닛 아닌데 cell {cell!r}"
+            if (not isinstance(cell, list) or len(cell) != 2
+                    or any(not isinstance(x, int) or isinstance(x, bool) or x < 0 for x in cell)):
+                return f"k{k} cell 형식 {cell!r}"
         end = off + ch
     if end != n:
         return f"조각 끝 {end} ≠ charLen {n}"
@@ -684,7 +698,10 @@ def check_pieces(rep, meta, ticks, timeline=None):
             parts.append(f"vis 틱 {vbad}/{len(ticks)} (" + "; ".join(vex) + ")")
         rep.add(FAIL, "조각 연결", " · ".join(parts))
     else:
-        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결 · vis 틱 {len(ticks)}개 전부 정합"
+        tu = [p for p in paras if p.get("kind") == "table"]
+        tbl = (f" · 표 유닛 {len(tu)}개 (칸 조각 {sum(1 for p in tu for c in p['pieces'] if 'cell' in c)})"
+               if tu else "")
+        rep.add(OK, "조각 연결", f"유닛 {len(paras)}개 전부 연결{tbl} · vis 틱 {len(ticks)}개 전부 정합"
                 + (f" (마지막 splice 전 {pre}틱은 조각 번호 범위 제외)" if pre else ""))
 
 
