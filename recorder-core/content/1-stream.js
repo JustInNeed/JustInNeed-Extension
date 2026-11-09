@@ -22,7 +22,9 @@
  *     칸 안의 뺄 칸(art.skip, 광고 자리, #45)은 상자 밖처럼 noise. 뺄 칸은 기록 중에도 조각마다 조상으로 다시 본다 —
  *     광고가 나중에 채워지면 그 뒤 조각부터 noise(앞 조각 · 비율은 처음 그대로). 아래 "기록 중" 의 또 다른 예외.
  *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
- *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
+ *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로).
+ *     칸이 하나라도 잡히면 Readability 는 안 돌린다 — 칸 여럿을 따로 잡는 규칙은 그중 일부만 있는 페이지에서
+ *     그 칸만 상자가 된다(#53 우체국 EMS 탭 없는 페이지에서 제목만 상자 → 미판정, 그 페이지용 칸을 더함). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
  *     앞 조각은 noise 있음 · 뒤 조각은 미판정처럼 섞일 수 있다(블로터는 칸이 늘면 비율이 오르는 쪽이라 드물 것, 예상).
  *   - Readability 상자가 루트를 통째로 감싸면(상자 밖이 없음) 루트 안에 하나뿐인 itemprop="articleBody" 칸으로 바꾼다
  *     (art.alt, #53). 없으면 하나뿐인 itemprop="text" 칸. 칸이 없거나 여럿이면 Readability 상자 그대로.
@@ -458,8 +460,9 @@
     { host: /(^|\.)korean\.go\.kr$/, sel: '.boardView > .head, .boardView > .body', name: '국립국어원' },
     // 우체국 EMS(#53): 요금표 페이지는 글이 거의 다 표라 Readability 가 버튼 칸(div.btn_wrap)을 골라 비율 0% → 미판정,
     //   왼쪽 메뉴까지 noise 표시 없이 들어간다. 제목과 탭 안 내용(요금표 · 아래 안내문)만 상자로 — 탭 이름 · 요금계산기 ·
-    //   인쇄 버튼은 밖.
-    { host: /(^|\.)ems\.epost\.go\.kr$/, sel: '[id="contents_layout3"] > .page_title > h3, [id="contents_layout3"] .menu_wrap > .tab_contents',
+    //   인쇄 버튼은 밖. 탭이 없는 페이지(통관 수수료 안내 등)는 본문 칸 .contents 통째로 — 안 그러면 제목만 상자가 돼 미판정.
+    { host: /(^|\.)ems\.epost\.go\.kr$/, sel: '[id="contents_layout3"] > .page_title > h3, [id="contents_layout3"] .menu_wrap > .tab_contents, '
+      + '[id="contents_layout3"] > .contents:not(:has(.tab_contents))',
       name: '우체국 EMS' },
   ];
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
