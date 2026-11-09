@@ -69,7 +69,7 @@
  *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
  *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
  *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
- *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` 은 아래 AD_WIDGETS 에서 뺀다).
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` · 인천공항 `.hidden2` 는 아래 AD_WIDGETS 에서 뺀다).
  *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
  *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다.
@@ -183,8 +183,13 @@
   //   sc-shared-material-rich-tooltip = 구글 고객센터 피드백 말풍선("피드백을 보낼 섹션을 선택하세요."). 본문 루트(article) 끝에
   //     붙고 평소엔 안 보이게 숨겨지는데 자리가 남아, 화면 오른쪽에 유닛 하나로 매 틱 vis 에 들어갔다(#70, 서현 기록 83틱 중 57틱).
   //     vis 검사를 넓히는 일반 처방 대신 이 칸만 뺀다(11-10 서현 — 지난 기록 vis 기준이 갈리지 않게).
+  //   .hidden2 = 인천공항(airport.kr) 스크린리더 전용 글. 제한물품 표 "기내휴대 ✕" 옆 "불가" · "가능", 앱 다운로드 안내 등
+  //     (페이지에 16개). top · left -9999px 에 놓아 숨겨, 같은 조각("기내휴대 불가 단, 개별 용기당 …")의 외곽 사각형이
+  //     페이지 위 바깥부터 표까지 세로로 늘어났다(#72, 브라우저 확인). "불가/가능" 은 화면에선 ✕/○ 그림으로만 보이므로
+  //     기록에서 빠진다(11-10 서현 승인). 이 목록은 모든 사이트에 걸린다 — 다른 사이트의 .hidden2 도 빠진다(있는지 미확인,
+  //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
-    '.cite-accessibility-label, sc-shared-material-rich-tooltip';
+    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2';
 
   // 안을 읽는 shadow DOM 칸 (#70, 11-10 서현) — 페이지 안에 따로 숨긴 작은 문서(shadow root)는 TreeWalker 가
   //   들어가지 않아 화면에 보이는 글이 스트림에 없었다. 사이트마다 사람이 확인한 칸만 안을 읽는다(열린 shadow 만).
