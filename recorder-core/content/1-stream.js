@@ -208,6 +208,11 @@
     // tutorialspoint(#72): 제목 밑 "Table of content" 목차가 접혀 있을 때 .table-of-content 높이 0 · overflow:hidden
     //   (브라우저 확인) — 안 보이는 목차 글이 vis 에 들어갔다. 목차 버튼으로 펼치면 칸이 커져 그대로 나온다(예상).
     { host: /(^|\.)tutorialspoint\.com$/, sel: '.table-of-content', name: 'tutorialspoint 접힌 목차' },
+    // geeksforgeeks(#72): 글 아래 "Explore" 칸의 접힌 목록(Python Fundamentals · Data Structures …)이 높이 0 · max-height 0 ·
+    //   overflow:hidden(브라우저 확인, 7칸) — 안 보이는 목록 글이 vis 에 겹겹이 찍혔다(서현 패널). 펼치면 칸이 커져(524px) 그대로.
+    //   CSS 모듈 이름 끝의 뒤섞인 글자(__DLY4g)는 바뀔 수 있어 앞부분으로 잡는다.
+    { host: /(^|\.)geeksforgeeks\.org$/, sel: '[class*="LeftbarDropDown_linksWithDropDownContainer__dropdownContent"]',
+      name: 'geeksforgeeks 접힌 목록' },
   ];
   // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
   function visClipOf(node) {
@@ -669,6 +674,10 @@
     //   div#belowtopnav 를 골라 루트를 통째로 감싸(비율 100%) 목차까지 본문이 됐다(css_grid, 11-10 서현 패널).
     //   늘 가운데 글 칸만 상자로. 칸이 없는 페이지는 Readability 그대로.
     { host: /(^|\.)w3schools\.com$/, sel: '[id="main"]', name: 'w3schools' },
+    // geeksforgeeks(#72): 본문 칸 div.article--viewer_content 옆에 퀴즈(ArticleQuiz) · 댓글 줄 · 아래 "Explore" 목록 칸이 형제로
+    //   붙어 있다. python-string-strip 은 Readability 가 본문 칸만 골랐는데 css-grid-layout-module 은 바깥 칸까지 골라 Explore
+    //   목록이 본문이 됐다(서현 패널, 11-10). 제목 h1 + 본문 칸만 상자로 — 퀴즈 · 댓글 · Explore 는 밖 = noise.
+    { host: /(^|\.)geeksforgeeks\.org$/, sel: 'h1, .article--viewer_content', name: 'geeksforgeeks' },
     // react.dev(#72): article 안 본문 칸에 설명 문단 칸(div.max-w-4xl)과 코드 예제(div.sandpack)가 형제로 번갈아 놓여
     //   Readability 가 코드 예제 하나(div.sp-editor)만 골라 설명 전부가 noise 였다(ko.react.dev/learn/state-a-components-memory,
     //   영어판도 같음). 제목 h1 + 본문 칸(설명 · 코드 · 챌린지)을 상자로 — 위 경로 줄 · 페이지 복사 · 아래 이전/다음 링크는 밖.
