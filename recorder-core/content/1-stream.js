@@ -191,6 +191,21 @@
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2';
 
+  // vis 를 칸 테두리로 자를 칸 (#72, 11-10 서현) — 높이가 정해지고 넘친 글을 잘라 숨기는 칸(overflow) 안 글자는 사각형이
+  //   칸 밖까지 이어져, 사람 눈엔 안 보이는 잘린 부분도 vis 에 들어갔다. 사이트마다 사람이 확인한 칸만 자른다
+  //   (모든 사이트 vis 검사를 넓히지 않음 — 지난 기록 vis 기준 유지, 11-10 서현). 3-hittest visPieces 가 쓴다.
+  //   react.dev: 코드 예제 편집기(.sp-code-editor)가 높이 406px(1440px 화면, 브라우저 확인) · overflow:auto 로 긴 코드를
+  //   잘라 둔다("Show more" 로 펼침). 펼치면 높이 제한이 풀려 그대로 다 나온다. ko.react.dev 등 언어판도 같은 이름(예상).
+  const VIS_CLIP = [
+    { host: /(^|\.)react\.dev$/, sel: '.sp-code-editor', name: 'react.dev 코드 상자' },
+  ];
+  // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
+  function visClipOf(node) {
+    const rule = VIS_CLIP.find(c => c.host.test(location.hostname));
+    const el = rule && node && (node.nodeType === 1 ? node : node.parentElement);
+    return el && el.closest ? el.closest(rule.sel) : null;
+  }
+
   // 안을 읽는 shadow DOM 칸 (#70, 11-10 서현) — 페이지 안에 따로 숨긴 작은 문서(shadow root)는 TreeWalker 가
   //   들어가지 않아 화면에 보이는 글이 스트림에 없었다. 사이트마다 사람이 확인한 칸만 안을 읽는다(열린 shadow 만).
   //   MDN: 코드 예제(mdn-code-example)가 shadow 안에 그려진다 — 서버 HTML 엔 light DOM 에 있던 코드를 페이지 스크립트가
@@ -1073,6 +1088,7 @@
     shadowHosts: () => shadowHosts,     // 안을 읽은 shadow 칸 (#70) — 3-hittest 커서
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
+    visClipOf,                          // 노드 → vis 를 자를 칸 | null (#72, 3-hittest)
     adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
     tables: () => tables,               // 자료 표 (#54) [{ el, start, end, rows, cols, why }]
     layouts: () => layouts,             // 글자가 든 배치용 표 (#54) [{ el, why }] — 오버레이용
