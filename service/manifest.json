@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JustInNeed",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0XRyQ/bIymz/Zz68mClhS5GrpuWxJlsUjOZnxDRpU/aklCk2hv/4R+XCv+AZLuVLaPpUHCvSBe8YgaNJTdkUu2XBrLj6WqyVLMAc+mIBtRmkBdQZZLcfLWnuu8yRx7wgWPB3B+O7lHBkkjAR9gN3EwZTZEM0vuP28/YAD25TXCfv19VBdEr0lt/l03rwJMbZccwbJvCceIF1uAWmuCiARGsFMI4Czu38mevsA8jbWugIT4ccveZ57I5A1+APAhDKcF/1y4Yyomi93khrXrfJK/ezabXZSs1SLW9+IXd03sO5Hgz7o+INjABeQ3I2kLetRzYpJDhfCCCyDEEL1R7iKwIDAQAB",
   "description": "읽기 행동 기록 — 글을 읽는 동안 화면 · 스크롤 · 커서 기록을 모은다. 실사용 버전.",
   "icons": {
