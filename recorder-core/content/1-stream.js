@@ -653,6 +653,12 @@
     //   (div#wrap · section#entry · .entry-content)을 골라 태그 · 공감 · 관련 글까지 본문이 됐다(jsdom 44개 중 7개).
     //   jsdom 44개(블로그 25곳) 모두 이 칸이 1개 · 나머지 37개는 그대로. 자기 도메인 티스토리는 안 걸림.
     { host: /(^|\.)tistory\.com$/, sel: '.tt_article_useless_p_margin, .contents_style', name: '티스토리' },
+    // programiz(#72): 맨 밑 공유 · 평가 칸(section.vote-share-wrapper — "Share on:" · "Did you find this article helpful?" ·
+    //   숨은 피드백 창)이 본문 칸 .editor-contents__body 안에 있다. 짧은 글(strip)은 Readability 가 본문 칸 통째로 골라 이 칸까지
+    //   본문, 긴 글은 안쪽 칸만 골라 noise — 글 길이 따라 달랐다. 첫 소개 줄 + 본문 칸을 상자로, 공유 · 평가 칸은 뺀다(11-10 서현).
+    //   "Also Read" 관련 글 목록은 본문 그대로. 이 칸들이 없는 페이지는 Readability 그대로(그런 글은 아직 못 봄).
+    { host: /(^|\.)programiz\.com$/, sel: '.editor-contents__short-description, .editor-contents__body',
+      name: 'programiz', skip: '.vote-share-wrapper' },
     // w3schools(#72): 루트(fallback div.contentcontainer)에 왼쪽 목차 #sidenav 와 가운데 글 칸 #main 이 같이 있다.
     //   저장한 HTML 로는 Readability 가 #main 을 골라 목차가 noise 인데, 실제 페이지(스크립트가 돈 뒤)에서는 바깥
     //   div#belowtopnav 를 골라 루트를 통째로 감싸(비율 100%) 목차까지 본문이 됐다(css_grid, 11-10 서현 패널).
