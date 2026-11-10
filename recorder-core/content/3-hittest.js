@@ -74,7 +74,7 @@
   // 틱마다 강제 레이아웃이 수십 번 일어나므로 캐시한다.
   // 스크롤·리사이즈·재청킹 때 무효화된다.
   let rootBox = null;
-  let pieceRanges = null;          // [{ pid, k, r: Range, a, b }] (a, b = 조각 스트림 구간) — units:changed 때 버림
+  let pieceRanges = null;          // [{ pid, k, r: Range, a, b, clip }] (a, b = 조각 스트림 구간, clip = 자르는 칸 | null, #72) — units:changed 때 버림
   const SAMPLE_WINDOW = 200;
   const sampleMs = [];
   const visMs = [];                // 그중 vis(조각 사각형) 몫 — 탐침이 먼저 레이아웃을 확정하므로 순수 측정 비용
