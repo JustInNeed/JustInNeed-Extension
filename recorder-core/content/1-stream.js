@@ -648,6 +648,11 @@
     //   (div#wrap · section#entry · .entry-content)을 골라 태그 · 공감 · 관련 글까지 본문이 됐다(jsdom 44개 중 7개).
     //   jsdom 44개(블로그 25곳) 모두 이 칸이 1개 · 나머지 37개는 그대로. 자기 도메인 티스토리는 안 걸림.
     { host: /(^|\.)tistory\.com$/, sel: '.tt_article_useless_p_margin, .contents_style', name: '티스토리' },
+    // w3schools(#72): 루트(fallback div.contentcontainer)에 왼쪽 목차 #sidenav 와 가운데 글 칸 #main 이 같이 있다.
+    //   저장한 HTML 로는 Readability 가 #main 을 골라 목차가 noise 인데, 실제 페이지(스크립트가 돈 뒤)에서는 바깥
+    //   div#belowtopnav 를 골라 루트를 통째로 감싸(비율 100%) 목차까지 본문이 됐다(css_grid, 11-10 서현 패널).
+    //   늘 가운데 글 칸만 상자로. 칸이 없는 페이지는 Readability 그대로.
+    { host: /(^|\.)w3schools\.com$/, sel: '[id="main"]', name: 'w3schools' },
     // 향토문화전자대전(#53): Readability 상자는 본문 칸(.info_div)만 — 위 정보 표(항목 ID · 별칭 · 지역 · 집필자 …) ·
     //   [상세정보] · 아래 [참고문헌] 이 noise 가 된다. 위키백과 정보 상자처럼 본문으로 넣는다(11-09 서현).
     //   네 칸이 형제라 전부 상자로(표 밑 안내문 "※ 본 항목의 내용은 …" 도 본문, 11-09 서현).
