@@ -275,6 +275,9 @@
       const b = el.getBoundingClientRect();
       d.style.cssText = `display:block;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
       if (i >= nT) {
+        // 접혀 안 그려지는 표(닫힌 <details> 속 — 나무위키 [ 목록 ] 등)는 크롬이 펼친 자리 사각형을 줘서 화면 아래까지
+        //   긴 점선이 됐다(#72). vis 는 3-hittest 가 이미 checkVisibility 로 뺀다 — 테두리도 같은 기준으로 숨긴다.
+        if (el.checkVisibility && !el.checkVisibility()) { d.style.display = 'none'; continue; }
         const t = tbls[i - nT];
         d.className = t ? 'rbc-art-box tbl' : 'rbc-art-box lay';
         const tu = t && RBC.units.all().find(x => x.kind === 'table' && x.start <= t.start && t.start < x.end);

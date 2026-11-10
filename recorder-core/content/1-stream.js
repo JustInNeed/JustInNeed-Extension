@@ -694,15 +694,54 @@
     //   키워드 · 구독 안내 · 트렌드뉴스 · 좋아요/댓글 칸이 같이 있다. Readability 가 기사마다 이 셋 중 하나를 골라
     //   "좋아요 0개" · 많이 본 기사 목록까지 본문이 되기도 했다(jsdom 5개 중 3개 view_body · 1개 main_view). 늘 기사 칸만.
     { host: /(^|\.)donga\.com$/, sel: 'section.news_view', name: '동아일보' },
+    // 나무위키(#72): 문단 칸(.VLWIvPDB 같은 뒤섞인 클래스 이름 — 바뀔 수 있음, 예상)과 문단 제목 칸이 한 칸 아래 형제로 번갈아
+    //   놓여 Readability 가 문단 몇 개만 골라 본문 77~94% 가 noise 였다(jsdom 31개 문서). 클래스로는 못 잡아서 pick = namuBox()
+    //   + 문서 제목 h1. 그 칸 안 틀(둘러보기 표 · 정보 상자) · 목차 · 각주는 본문.
+    //   skipPick = 광고 칸: 본문 칸의 마지막 div(광고 · 각주 칸) 안에서 표가 있고 각주(span#fn-…) · 위키 링크(/w/…)가 없는 칸.
+    //   광고(파워링크)는 그림 이름 "Python" · 링크 #s-15 처럼 위키 문단으로 꾸며 표지로는 못 거르고 자리로 고른다(11-10 서현).
+    //   jsdom 33개(틀 문서 2개 포함) 모두 이 자리에 광고 칸 1개 · 그 칸만 골림. 본문 표 745개 중 124개는 /w/ 링크가 없어
+    //   링크 조건만으로는 안 되고 자리 조건과 같이 써야 한다.
+    { host: /(^|\.)namu\.wiki$/, name: '나무위키', pick: () => {
+        const box = namuBox();
+        if (!box) return [];
+        const h1 = document.querySelector('h1');
+        return h1 && !box.contains(h1) ? [h1, box] : [box];
+      }, skipPick: (boxes) => {
+        const box = boxes[boxes.length - 1];
+        const divs = Array.from(box.children).filter(c => c.tagName === 'DIV');
+        const w = divs[divs.length - 1];
+        return w ? Array.from(w.children).filter(c => textLen(c) && c.querySelector('table')
+          && !c.querySelector('[id^="fn-"]') && !c.querySelector('a[href^="/w/"]')) : [];
+      } },
   ];
+  // 나무위키 본문 칸 (#72) — 문단 번호 표지(h2~h6 > a#s-1 · a#s-2.1 …)를 전부 품는 가장 안쪽 칸. 제목 → 그 칸까지 깊이가
+  //   문서마다 달라(3~7) 선택자 한 줄로는 안 된다. 문단 제목이 없는 문서(틀:… 등)는 분류 줄(글자가 "분류"로 시작하는 칸) 다음
+  //   형제 중 가장 큰 칸 — jsdom 31개에서 두 방법이 같은 칸이었다. 둘 다 없으면(없는 문서) null = Readability 그대로.
+  function namuBox() {
+    const hs = Array.from(document.querySelectorAll(':is(h2,h3,h4,h5,h6) > a[id^="s-"]'));
+    if (hs.length) {
+      let box = hs[0].parentElement;
+      while (box && !hs.every(h => box.contains(h))) box = box.parentElement;
+      return box;
+    }
+    let bar = document.querySelector('a[href^="/w/%EB%B6%84%EB%A5%98:"], a[href^="/w/분류:"]');
+    while (bar && !squash(bar.textContent).startsWith('분류')) bar = bar.parentElement;
+    let best = null;
+    for (let x = bar && bar.nextElementSibling; x; x = x.nextElementSibling) if (!best || textLen(x) > textLen(best)) best = x;
+    return best;
+  }
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
-  const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
+  // pick = 선택자로 못 잡는 사이트(나무위키)의 칸 찾기 함수 — 있으면 sel 대신.
+  //   skipPick(boxes) = 뺄 칸을 선택자 대신 함수로(나무위키 광고) — 판정 때 목록을 저장하고, 글이 바뀐 스캔마다 다시 찾는다.
+  const siteBoxes = (rule) => (rule.pick ? rule.pick() : Array.from(document.querySelectorAll(rule.sel))).filter(el => textLen(el));
   // 노드가 상자 안의 뺄 칸 안인가 (뺄 칸이 상자 밖 조상이면 아님)
   //   shadow 안 노드(#70)는 바깥 칸(lightOf)으로 본다 — contains · closest 가 shadow 경계를 못 넘는다.
   const inSkip = (a, box, node) => {
     const ln = lightOf(node);
-    const el = a.skip && (ln.nodeType === 1 ? ln : ln.parentElement);
-    const s = el && el.closest(a.skip);
+    const el = (a.skip || a.skipList) && (ln.nodeType === 1 ? ln : ln.parentElement);
+    if (!el) return false;
+    if (a.skipList && a.skipList.some(s => s !== box && box.contains(s) && s.contains(el))) return true;
+    const s = a.skip && el.closest(a.skip);
     return !!s && s !== box && box.contains(s);
   };
   const inBox = (a, node) => { const ln = lightOf(node); return a.boxes.some(b => b.contains(ln) && !inSkip(a, b, ln)); };
@@ -794,13 +833,17 @@
         if (!art.by || art.raw === raw) return art;
         // 기록 중 본문 글이 바뀜 + 사이트 지정 칸: 칸이 그대로면 유지, 늘었으면(붙은 기사) 다시 판정.
         //   앞 조각은 그대로고 새 조각만 새 칸 목록으로 본다. 확인은 글이 바뀐 스캔마다 한 번(조각마다 아님).
-        if (sameEls(art.boxes, siteBoxes(rule))) { art.raw = raw; return art; }
+        if (sameEls(art.boxes, siteBoxes(rule))) {
+          art.raw = raw;
+          if (rule.skipPick) art.skipList = rule.skipPick(art.boxes);
+          return art;
+        }
       }
     }
     const t0 = performance.now();
     // 루트 글자(공백 빼고) 중 상자 안 비율
-    const ratioOf = (boxes, skip) => {
-      const a = { boxes, skip };
+    const ratioOf = (boxes, skip, skipList) => {
+      const a = { boxes, skip, skipList };
       let inside = 0, total = 0;
       for (const s of segs) {
         const c = sig[s.start + s.len] - sig[s.start];
@@ -814,7 +857,8 @@
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
     } else if (ruleEls.length) {
       const skip = rule.skip || null;
-      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, skip, ratio: ratioOf(ruleEls, skip) };
+      const skipList = rule.skipPick ? rule.skipPick(ruleEls) : null;
+      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, skip, skipList, ratio: ratioOf(ruleEls, skip, skipList) };
     } else {
       // 사이트 지정 칸이 없으면(그 사이트의 다른 모양 페이지) Readability 로 간다
       const r = findBoxes();
@@ -850,7 +894,8 @@
     const a = art;
     if (!a) return null;
     // 뺄 칸은 나중에 채워질 수 있어 읽을 때마다 찾는다(상자 안만, 글 있는 것만)
-    const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
+    const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el))
+      : (a.skipList || []).filter(el => el.isConnected && textLen(el));
     return {
       status: a.status, by: a.by || null, alt: a.alt || null, altFrom: a.altFrom || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
       onAttrs: a.onAttrs == null ? null : a.onAttrs,
