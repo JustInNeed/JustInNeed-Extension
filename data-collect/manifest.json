@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JustInNeed 데이터 수집",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "읽기 행동 수집 테스트 — 글을 읽는 동안 화면 · 스크롤 · 커서 기록을 모으고, 다 읽은 뒤 문단별 평가를 받는다.",
   "icons": {
     "16": "icons/icon16.png",
