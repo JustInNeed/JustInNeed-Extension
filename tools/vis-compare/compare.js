@@ -6,7 +6,7 @@
  *     기록 JSON 의 vis 가 그대로인지(불일치 0)와 걸린 시간을 본다.
  *
  * 쓰는 법 (Claude 가 앱 안 브라우저에서):
- *   1. python3 tools/vis-compare/serve.py  (launch.json "vis-compare")
+ *   1. python3 tools/vis-compare/serve.py  (서현 맥에서는 git 밖 .claude/launch.json 의 "vis-compare" 로 띄움)
  *   2. 글을 localhost 로 연다 (진짜 사이트는 localhost 로 가는 fetch 를 막아서 — 나무위키 11-10 확인):
  *        http://localhost:8761/page/<저장한 HTML>?url=<원래 주소>   또는   /page/-?url=<주소> (서버가 받아 옴)
  *      서버가 사이트 스크립트를 빼고 <base> 로 원래 CSS 를 쓰게 한 뒤 이 파일을 붙인다. 페이지 콘솔에서:

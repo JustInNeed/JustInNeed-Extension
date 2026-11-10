@@ -10,6 +10,7 @@ python -m http.server 는 다른 출처 요청을 허락하는 헤더(CORS)를 �
 
 쓰는 법: python3 tools/vis-compare/serve.py [포트=8761]
 """
+import html as html_lib
 import http.server
 import re
 import subprocess
@@ -20,37 +21,39 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8761
+REF_OK = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_./-]*$')
+
+
+def inside(base, rel):
+    """base 안의 파일이면 그 경로, 아니면 None (심볼릭 링크로 밖을 가리켜도 None)."""
+    b = base.resolve()
+    f = (b / rel).resolve()
+    return f if f.is_file() and f.is_relative_to(b) else None
 
 
 class H(http.server.BaseHTTPRequestHandler):
     def _send(self, code, body, ctype='text/plain; charset=utf-8'):
+        # 다른 출처 허락 헤더(CORS)는 안 붙인다 — 글을 /page 로 같은 localhost 에서 열므로 필요 없고,
+        #   붙이면 크롬으로 연 아무 사이트나 이 서버 응답을 읽을 수 있다(#73 검토)
         self.send_response(code)
-        self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Content-Type', ctype)
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 
-    # 크롬 사설망 접근 검사(https 사이트 → localhost): 미리 묻는 요청에 허락 헤더를 준다
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Private-Network', 'true')
-        self.send_header('Access-Control-Allow-Methods', 'GET')
-        self.send_header('Access-Control-Allow-Headers', '*')
-        self.end_headers()
-
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         parts = u.path.lstrip('/').split('/', 1)
-        if len(parts) != 2 or '..' in parts[1]:
+        if len(parts) != 2:
             return self._send(404, b'not found')
         kind, rel = parts[0], urllib.parse.unquote(parts[1])
+        if '..' in Path(rel).parts or rel.startswith('/'):   # % 를 푼 뒤에 본다 (%2e%2e 막기, #73 검토)
+            return self._send(404, b'not found')
         ctype = 'text/javascript; charset=utf-8' if rel.endswith('.js') else 'text/plain; charset=utf-8'
         if kind == 'cur':
-            f = ROOT / rel
-            if not f.is_file():
+            f = inside(ROOT, rel)
+            if not f:
                 return self._send(404, ('없음: ' + rel).encode())
             return self._send(200, f.read_bytes(), ctype)
         if kind == 'page':
@@ -67,24 +70,25 @@ class H(http.server.BaseHTTPRequestHandler):
                 except Exception as e:   # 실패 원문을 그대로 페이지에
                     return self._send(502, f'받아 오기 실패: {url}\n{e!r}'.encode())
             else:
-                f = ROOT / rel
-                if not f.is_file():
-                    f = ROOT.parent / 'JustInNeed-Extension' / rel     # docs/ 는 git 밖이라 원래 폴더에만 있다
-                if not f.is_file():
+                # docs/ 는 git 밖이라 원래 폴더에만 있다
+                f = inside(ROOT, rel) or inside(ROOT.parent / 'JustInNeed-Extension', rel)
+                if not f:
                     return self._send(404, ('없음: ' + rel).encode())
                 html = f.read_text('utf-8', 'replace')
             html = re.sub(r'<script\b[^>]*>.*?</script>', '', html, flags=re.S | re.I)
             html = re.sub(r'<meta[^>]+http-equiv=["\']?content-security-policy[^>]*>', '', html, flags=re.I)
             # crossorigin 붙은 <link rel=stylesheet> 는 사이트가 localhost 를 허락하지 않으면 안 실린다(나무위키) → 뗀다
             html = re.sub(r'(<link\b[^>]*?)\s+crossorigin(=["\'][^"\']*["\'])?', r'\1', html, flags=re.I)
-            base = f'<base href="{url}">'
+            base = f'<base href="{html_lib.escape(url, quote=True)}">'
             html = re.sub(r'(<head[^>]*>)', r'\1' + base, html, count=1, flags=re.I) if re.search(r'<head', html, re.I) else base + html
             tag = f'<script src="http://localhost:{PORT}/cur/tools/vis-compare/compare.js"></script>'
             html = html.replace('</body>', tag + '</body>') if '</body>' in html else html + tag
             return self._send(200, html.encode('utf-8'), 'text/html; charset=utf-8')
         if kind == 'old':
             ref = q.get('ref', ['origin/main'])[0]
-            r = subprocess.run(['git', '-C', str(ROOT), 'show', f'{ref}:{rel}'], capture_output=True)
+            if not REF_OK.match(ref):                          # '-' 로 시작하면 git 옵션으로 읽힌다 (#73 검토)
+                return self._send(400, ('ref 모양이 아님: ' + ref).encode())
+            r = subprocess.run(['git', '-C', str(ROOT), 'show', '--end-of-options', f'{ref}:{rel}'], capture_output=True)
             if r.returncode:
                 return self._send(404, r.stderr)
             return self._send(200, r.stdout, ctype)
