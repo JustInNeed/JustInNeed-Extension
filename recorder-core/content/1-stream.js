@@ -189,7 +189,12 @@
   //     기록에서 빠진다(11-10 서현 승인). 이 목록은 모든 사이트에 걸린다 — 다른 사이트의 .hidden2 도 빠진다(있는지 미확인,
   //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
-    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"]';
+    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
+    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="])';
+  // 나무위키(#72): 옆 칸 "최근 변경" 목록(머리 링크 /RecentChanges + 문서 링크 /w/… + "N초 전")과 "실시간 검색어" 목록
+  //   (/Go?q=… 링크)이 10초쯤마다 바뀌어 유닛이 계속 갈렸다(서현 기록 data/namu1.json: 유닛 245~248 · splice 6회 · 기록 시간
+  //   6.6%, 11-10 서현 "광고처럼 아예 스트림에서 빼기"). 클래스 이름이 뒤섞인 글자라 링크 모양으로 잡는다(브라우저 확인: 각 1칸).
+  //   위 메뉴 "최근 변경 · 최근 토론"(/RecentChanges 링크는 있지만 /w/ 문서 링크 없음)은 안 걸림.
   // [id^="ps-video-slot-"](#72): 광고 업체 play-stream 의 동영상 광고 재생기. 페이지가 열린 뒤 본문 칸 안(tutorialspoint
   //   div.inserted-div)에 끼워져 "Advertisement · 00:16 · Ad will close in: · click to close" 가 본문 유닛이 됐다(브라우저 확인).
 
