@@ -664,6 +664,12 @@
     //   div#belowtopnav 를 골라 루트를 통째로 감싸(비율 100%) 목차까지 본문이 됐다(css_grid, 11-10 서현 패널).
     //   늘 가운데 글 칸만 상자로. 칸이 없는 페이지는 Readability 그대로.
     { host: /(^|\.)w3schools\.com$/, sel: '[id="main"]', name: 'w3schools' },
+    // react.dev(#72): article 안 본문 칸에 설명 문단 칸(div.max-w-4xl)과 코드 예제(div.sandpack)가 형제로 번갈아 놓여
+    //   Readability 가 코드 예제 하나(div.sp-editor)만 골라 설명 전부가 noise 였다(ko.react.dev/learn/state-a-components-memory,
+    //   영어판도 같음). 제목 h1 + 본문 칸(설명 · 코드 · 챌린지)을 상자로 — 위 경로 줄 · 페이지 복사 · 아래 이전/다음 링크는 밖.
+    //   코드 예제의 파일 탭 · 새로고침/초기화/포크 막대와 버튼(자세히 보기 · 정답 보기 · 다음 챌린지)은 뺀다. 코드는 본문.
+    { host: /(^|\.)react\.dev$/, sel: 'article h1, article > div > div > .max-w-7xl:first-child',
+      skip: 'button, .sp-wrapper > div > div:has(.sp-tabs)', name: 'react.dev' },
     // 향토문화전자대전(#53): Readability 상자는 본문 칸(.info_div)만 — 위 정보 표(항목 ID · 별칭 · 지역 · 집필자 …) ·
     //   [상세정보] · 아래 [참고문헌] 이 noise 가 된다. 위키백과 정보 상자처럼 본문으로 넣는다(11-09 서현).
     //   네 칸이 형제라 전부 상자로(표 밑 안내문 "※ 본 항목의 내용은 …" 도 본문, 11-09 서현).
