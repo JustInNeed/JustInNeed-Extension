@@ -106,7 +106,8 @@
         position:fixed; right:12px; bottom:12px; z-index:2147483647;
         width:272px; font:12px/1.45 system-ui,-apple-system,sans-serif; color:#111;
         background:#fff; border:1px solid #ddd; border-radius:10px;
-        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px; }
+        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px;
+        max-height:calc(100vh - 24px); overflow:auto; box-sizing:border-box; }  /* 표 많은 글(나무위키)에서 위 버튼 줄이 화면 밖으로 나가던 것 (#73) */
       #${CFG.PANEL_ID} h4{ margin:0 0 6px; font-size:12px; }
       #${CFG.PANEL_ID} button{
         font:11px system-ui; padding:5px 7px; margin:2px 2px 0 0;
@@ -339,8 +340,8 @@
       ${s.query ? `· 검색어 "${esc(s.query)}"` : '· <span style="color:#c00">검색어 없음</span>'}
       ${s.sampleMs ? `<br><span style="color:${s.sampleMs.p95 > 10 ? '#c00' : '#333'}">` +
         `sample p95 ${s.sampleMs.p95}ms (그중 vis ${s.sampleMs.visP95}ms) · max ${s.sampleMs.max}ms` +
-        ` (최근 ${s.sampleMs.n}틱)</span> · 측정 조각 ${s.sampleMs.pieces} · 화면 조각 ${s.visN}` +
-        (s.sampleMs.folded ? ` · <span style="color:#c2410c">접혀 숨은 조각 ${s.sampleMs.folded} (vis 제외)</span>` : '') +
+        ` (최근 ${s.sampleMs.n}틱)</span> · 전체 조각 ${s.sampleMs.pieces} · 화면 조각 ${s.visN}` +
+        (s.sampleMs.folded ? ` · <span style="color:#c2410c">안 그려져 안 잰 조각 ${s.sampleMs.folded} (접힘 · 숨김, vis 제외, 화면 밖 포함)</span>` : '') +
         (s.sampleMs.rescued ? ` · <span style="color:#15803d">첫 글자만 숨은 조각 ${s.sampleMs.rescued} (vis 포함)</span>` : '') : ''}
       ${s.title ? `<br><span style="color:#555">제목: ${esc(s.title.text.slice(0, 40))}</span>` +
         ` <span style="color:#999">(${s.title.from === 'seg' ? '이 구간에 기록됨' : esc(s.title.from)})</span>` : ''}
