@@ -294,7 +294,11 @@
   //   골라 본문 전체를 noise 로 만들던 것(jsdom 30개 중 5개)도 같이 풀린다. 보통 기사도 이미 비율 1 · noise 0 이었다.
   //   속보 본문(11자)은 유닛 최소 글자(MIN_UNIT_CHARS)보다 짧아 유닛 0개 — 주소 칸을 기록하던 것보다 낫다(11-10).
   const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' },
-    { host: /(^|\.)newsis\.com$/, sel: '.viewer > article' }];
+    { host: /(^|\.)newsis\.com$/, sel: '.viewer > article' },
+    // javascript.info(#72, 11-10 서현): 본문 설명(article.formatted)과 과제 · 해답(div.tasks)이 main > .content 안의 형제라
+    //   1) 시맨틱 첫 article 만 루트가 돼 과제가 기록 밖이었다. 사람은 과제 · 해답까지 본문으로 본다(서현) → 둘을 감싼 칸을 루트로.
+    //   제목(header) · 댓글(#comments)은 밖. jsdom: 본문 유닛 pid 그대로(본문 끝 유닛 1개는 과제 첫머리와 합쳐져 바뀔 수 있음).
+    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
