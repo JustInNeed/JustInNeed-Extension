@@ -189,7 +189,9 @@
   //     기록에서 빠진다(11-10 서현 승인). 이 목록은 모든 사이트에 걸린다 — 다른 사이트의 .hidden2 도 빠진다(있는지 미확인,
   //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
-    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2';
+    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"]';
+  // [id^="ps-video-slot-"](#72): 광고 업체 play-stream 의 동영상 광고 재생기. 페이지가 열린 뒤 본문 칸 안(tutorialspoint
+  //   div.inserted-div)에 끼워져 "Advertisement · 00:16 · Ad will close in: · click to close" 가 본문 유닛이 됐다(브라우저 확인).
 
   // vis 를 칸 테두리로 자를 칸 (#72, 11-10 서현) — 높이가 정해지고 넘친 글을 잘라 숨기는 칸(overflow) 안 글자는 사각형이
   //   칸 밖까지 이어져, 사람 눈엔 안 보이는 잘린 부분도 vis 에 들어갔다. 사이트마다 사람이 확인한 칸만 자른다
@@ -198,6 +200,9 @@
   //   잘라 둔다("Show more" 로 펼침). 펼치면 높이 제한이 풀려 그대로 다 나온다. ko.react.dev 등 언어판도 같은 이름(예상).
   const VIS_CLIP = [
     { host: /(^|\.)react\.dev$/, sel: '.sp-code-editor', name: 'react.dev 코드 상자' },
+    // tutorialspoint(#72): 제목 밑 "Table of content" 목차가 접혀 있을 때 .table-of-content 높이 0 · overflow:hidden
+    //   (브라우저 확인) — 안 보이는 목차 글이 vis 에 들어갔다. 목차 버튼으로 펼치면 칸이 커져 그대로 나온다(예상).
+    { host: /(^|\.)tutorialspoint\.com$/, sel: '.table-of-content', name: 'tutorialspoint 접힌 목차' },
   ];
   // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
   function visClipOf(node) {
