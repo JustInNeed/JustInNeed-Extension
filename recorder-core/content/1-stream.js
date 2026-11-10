@@ -23,6 +23,8 @@
  *     광고가 나중에 채워지면 그 뒤 조각부터 noise(앞 조각 · 비율은 처음 그대로). 아래 "기록 중" 의 또 다른 예외.
  *     기록 중에도 칸이 늘면(이어 붙는 기사) 새 조각부터 늘어난 칸으로 본다 — 아래 "기록 중" 의 예외.
  *     칸이 줄거나 0개가 돼도 다시 판정한다(0개면 Readability 로).
+ *     선택자로 못 잡는 사이트(나무위키, #72)는 pick(칸 찾기 함수) · skipPick(뺄 칸 찾기 함수 → art.skipList, 글이 바뀐
+ *     스캔마다 다시 찾음)을 sel · skip 대신 쓴다.
  *     칸이 하나라도 잡히면 Readability 는 안 돌린다 — 칸 여럿을 따로 잡는 규칙은 그중 일부만 있는 페이지에서
  *     그 칸만 상자가 된다(#53 우체국 EMS 탭 없는 페이지에서 제목만 상자 → 미판정, 그 페이지용 칸을 더함). 다시 판정한 비율이 문턱을 넘나들면 같은 구간 안에서
  *     앞 조각은 noise 있음 · 뒤 조각은 미판정처럼 섞일 수 있다(블로터는 칸이 늘면 비율이 오르는 쪽이라 드물 것, 예상).
@@ -69,7 +71,7 @@
  *   DOM 과 elementFilter 만으로 정해지고 화면 배치와 무관하다.
  *   - 숨은 글이 실제로 보였는지는 매 틱 tick.vis 가 말한다. 숨은 조각은 사각형이 0 이라
  *     3-hittest 의 vis 조건(bottom > 0)에서 빠지고, 드러나면(광고 닫기 · "더보기") 그 틱부터 나온다.
- *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` 은 아래 AD_WIDGETS 에서 뺀다).
+ *   - 본문 아닌 숨은 글(접힌 메뉴 · 모바일 전용 중복 · 스크린리더 전용 글)은 noise 판정 몫(예외: 위키백과 `.cite-accessibility-label` · 인천공항 `.hidden2` 는 아래 AD_WIDGETS 에서 뺀다).
  *   - 가려진 글(광고 · sticky 에 덮임)은 크기가 0 이 아니라 원래도 이 규칙과 무관했다.
  *   - aria-hidden="true" 제외는 유지 (DOM 속성이라 화면 배치와 무관).
  *   - 본문 아님이 확실한 위젯(AD_WIDGETS — 광고 · 떠다니는 추천 상자 · 공유 상자, #51 · #53)은 통째로 뺀다.
@@ -183,8 +185,43 @@
   //   sc-shared-material-rich-tooltip = 구글 고객센터 피드백 말풍선("피드백을 보낼 섹션을 선택하세요."). 본문 루트(article) 끝에
   //     붙고 평소엔 안 보이게 숨겨지는데 자리가 남아, 화면 오른쪽에 유닛 하나로 매 틱 vis 에 들어갔다(#70, 서현 기록 83틱 중 57틱).
   //     vis 검사를 넓히는 일반 처방 대신 이 칸만 뺀다(11-10 서현 — 지난 기록 vis 기준이 갈리지 않게).
+  //   .hidden2 = 인천공항(airport.kr) 스크린리더 전용 글. 제한물품 표 "기내휴대 ✕" 옆 "불가" · "가능", 앱 다운로드 안내 등
+  //     (페이지에 16개). top · left -9999px 에 놓아 숨겨, 같은 조각("기내휴대 불가 단, 개별 용기당 …")의 외곽 사각형이
+  //     페이지 위 바깥부터 표까지 세로로 늘어났다(#72, 브라우저 확인). "불가/가능" 은 화면에선 ✕/○ 그림으로만 보이므로
+  //     기록에서 빠진다(11-10 서현 승인). 이 목록은 모든 사이트에 걸린다 — 다른 사이트의 .hidden2 도 빠진다(있는지 미확인,
+  //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
-    '.cite-accessibility-label, sc-shared-material-rich-tooltip';
+    '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
+    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="])';
+  // 나무위키(#72): 옆 칸 "최근 변경" 목록(머리 링크 /RecentChanges + 문서 링크 /w/… + "N초 전")과 "실시간 검색어" 목록
+  //   (/Go?q=… 링크)이 10초쯤마다 바뀌어 유닛이 계속 갈렸다(서현 기록 data/namu1.json: 유닛 245~248 · splice 6회 · 기록 시간
+  //   6.6%, 11-10 서현 "광고처럼 아예 스트림에서 빼기"). 클래스 이름이 뒤섞인 글자라 링크 모양으로 잡는다(브라우저 확인: 각 1칸).
+  //   위 메뉴 "최근 변경 · 최근 토론"(/RecentChanges 링크는 있지만 /w/ 문서 링크 없음)은 안 걸림.
+  // [id^="ps-video-slot-"](#72): 광고 업체 play-stream 의 동영상 광고 재생기. 페이지가 열린 뒤 본문 칸 안(tutorialspoint
+  //   div.inserted-div)에 끼워져 "Advertisement · 00:16 · Ad will close in: · click to close" 가 본문 유닛이 됐다(브라우저 확인).
+
+  // vis 를 칸 테두리로 자를 칸 (#72, 11-10 서현) — 높이가 정해지고 넘친 글을 잘라 숨기는 칸(overflow) 안 글자는 사각형이
+  //   칸 밖까지 이어져, 사람 눈엔 안 보이는 잘린 부분도 vis 에 들어갔다. 사이트마다 사람이 확인한 칸만 자른다
+  //   (모든 사이트 vis 검사를 넓히지 않음 — 지난 기록 vis 기준 유지, 11-10 서현). 3-hittest visPieces 가 쓴다.
+  //   react.dev: 코드 예제 편집기(.sp-code-editor)가 높이 406px(1440px 화면, 브라우저 확인) · overflow:auto 로 긴 코드를
+  //   잘라 둔다("Show more" 로 펼침). 펼치면 높이 제한이 풀려 그대로 다 나온다. ko.react.dev 등 언어판도 같은 이름(예상).
+  const VIS_CLIP = [
+    { host: /(^|\.)react\.dev$/, sel: '.sp-code-editor', name: 'react.dev 코드 상자' },
+    // tutorialspoint(#72): 제목 밑 "Table of content" 목차가 접혀 있을 때 .table-of-content 높이 0 · overflow:hidden
+    //   (브라우저 확인) — 안 보이는 목차 글이 vis 에 들어갔다. 목차 버튼으로 펼치면 칸이 커져 그대로 나온다(예상).
+    { host: /(^|\.)tutorialspoint\.com$/, sel: '.table-of-content', name: 'tutorialspoint 접힌 목차' },
+    // geeksforgeeks(#72): 글 아래 "Explore" 칸의 접힌 목록(Python Fundamentals · Data Structures …)이 높이 0 · max-height 0 ·
+    //   overflow:hidden(브라우저 확인, 7칸) — 안 보이는 목록 글이 vis 에 겹겹이 찍혔다(서현 패널). 펼치면 칸이 커져(524px) 그대로.
+    //   CSS 모듈 이름 끝의 뒤섞인 글자(__DLY4g)는 바뀔 수 있어 앞부분으로 잡는다.
+    { host: /(^|\.)geeksforgeeks\.org$/, sel: '[class*="LeftbarDropDown_linksWithDropDownContainer__dropdownContent"]',
+      name: 'geeksforgeeks 접힌 목록' },
+  ];
+  // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
+  function visClipOf(node) {
+    const rule = VIS_CLIP.find(c => c.host.test(location.hostname));
+    const el = rule && node && (node.nodeType === 1 ? node : node.parentElement);
+    return el && el.closest ? el.closest(rule.sel) : null;
+  }
 
   // 안을 읽는 shadow DOM 칸 (#70, 11-10 서현) — 페이지 안에 따로 숨긴 작은 문서(shadow root)는 TreeWalker 가
   //   들어가지 않아 화면에 보이는 글이 스트림에 없었다. 사이트마다 사람이 확인한 칸만 안을 읽는다(열린 shadow 만).
@@ -281,7 +318,19 @@
   //   글 아래 카드 목록까지 든 div#ct(모바일)를 골라 프로필 · 카테고리 · 다른 글 제목이 유닛이 됐다 → 참가자가 평정까지 해야 했음
   //   (stepL_iframe: 유닛 25 · 링크 글자 조각 119/345). 벽 없음(일반 사이트와 같은 청킹).
   //   실제 DOM 으로 확인 안 한 선택자 — 패널 루트 줄이 "div.se-main-container (site)" 인지로 확인. 옛 에디터 글은 이 상자가 없어 폴백 그대로.
-  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' }];
+  //   host(선택) = 그 사이트에서만 본다 — 선택자가 흔한 이름일 때.
+  //   뉴시스(#72, 11-10 서현): 기사 칸은 .viewer > article (지금도 1) 시맨틱 첫 article 로 같은 칸). [속보] 기사는 본문이
+  //   "후속기사가 이어집니다" 한 줄이라 문턱(MIN_ROOT_TEXT)에서 떨어져 2) 폴백이 맨 아래 회사 주소 칸(div#footer)을 골랐다(jsdom).
+  //   문턱 없이 이 칸을 루트로 — 보통 기사는 루트 · 유닛 그대로. 지정 루트라 본문 판정(Readability)은 건너뛰고 루트 전체가
+  //   본문이 된다 — 본문이 <p> 없이 맨 글자 + <br> 라 Readability 가 짧고 사진 있는 기사에서 사진 설명 칸(div.thumCont)만
+  //   골라 본문 전체를 noise 로 만들던 것(jsdom 30개 중 5개)도 같이 풀린다. 보통 기사도 이미 비율 1 · noise 0 이었다.
+  //   속보 본문(11자)은 유닛 최소 글자(MIN_UNIT_CHARS)보다 짧아 유닛 0개 — 주소 칸을 기록하던 것보다 낫다(11-10).
+  const SITE_ROOTS = [{ sel: '.notion-page-content', walls: 'toggle' }, { sel: '.se-main-container' },
+    { host: /(^|\.)newsis\.com$/, sel: '.viewer > article' },
+    // javascript.info(#72, 11-10 서현): 본문 설명(article.formatted)과 과제 · 해답(div.tasks)이 main > .content 안의 형제라
+    //   1) 시맨틱 첫 article 만 루트가 돼 과제가 기록 밖이었다. 사람은 과제 · 해답까지 본문으로 본다(서현) → 둘을 감싼 칸을 루트로.
+    //   제목(header) · 댓글(#comments)은 밖. jsdom: 본문 유닛 pid 그대로(본문 끝 유닛 1개는 과제 첫머리와 합쳐져 바뀔 수 있음).
+    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
@@ -289,6 +338,7 @@
     // 0) 알려진 플랫폼
     useWalls = false;
     for (const site of SITE_ROOTS) {
+      if (site.host && !site.host.test(location.hostname)) continue;
       const el = document.querySelector(site.sel);
       if (!el || !textLen(el)) continue;
       const m = measure(el);
@@ -606,6 +656,36 @@
     //   한 단계 바깥 div.article_news(제목 · 등록 시각 · 기자 이름 · 랭킹뉴스 · 주요뉴스 · 저작권 줄까지)를 고르기도 한다.
     //   늘 본문 칸만 상자로. 제목 · 부제는 noise 그대로(예전 기록과 같게, 11-09 서현).
     { host: /(^|\.)edaily\.co\.kr$/, sel: '.news_body', name: '이데일리' },
+    // 헤럴드경제(#72): 보통 기사는 Readability 가 본문 칸 article#articleText 를 잘 고른다(jsdom 30개 중 27개). 본문이 짧은
+    //   기사(10860974, 385자)는 그 칸을 버리고 루트 main.div_layout 통째로 골라 기자 줄 · 구독 · 아래 관련 기사까지 본문이 됐다.
+    //   늘 본문 칸만 상자로 — 칸 끝 "구글뉴스 구독" 줄은 지금 보통 기사처럼 본문 그대로. 영문판은 루트가 이 칸이라 그대로.
+    { host: /(^|\.)heraldcorp\.com$/, sel: '[id="articleText"]', name: '헤럴드경제' },
+    // 티스토리(#72): 스킨마다 바깥 틀은 달라도 편집기 본문은 .tt_article_useless_p_margin(없는 스킨은 .contents_style) 한 칸.
+    //   짧은 글(코드 · 그림 위주)에서 Readability 가 흩어진 문단만 골라 본문이 noise(rk1993/113)거나, 반대로 바깥 칸
+    //   (div#wrap · section#entry · .entry-content)을 골라 태그 · 공감 · 관련 글까지 본문이 됐다(jsdom 44개 중 7개).
+    //   jsdom 44개(블로그 25곳) 모두 이 칸이 1개 · 나머지 37개는 그대로. 자기 도메인 티스토리는 안 걸림.
+    { host: /(^|\.)tistory\.com$/, sel: '.tt_article_useless_p_margin, .contents_style', name: '티스토리' },
+    // programiz(#72): 맨 밑 공유 · 평가 칸(section.vote-share-wrapper — "Share on:" · "Did you find this article helpful?" ·
+    //   숨은 피드백 창)이 본문 칸 .editor-contents__body 안에 있다. 짧은 글(strip)은 Readability 가 본문 칸 통째로 골라 이 칸까지
+    //   본문, 긴 글은 안쪽 칸만 골라 noise — 글 길이 따라 달랐다. 첫 소개 줄 + 본문 칸을 상자로, 공유 · 평가 칸은 뺀다(11-10 서현).
+    //   "Also Read" 관련 글 목록은 본문 그대로. 이 칸들이 없는 페이지는 Readability 그대로(그런 글은 아직 못 봄).
+    { host: /(^|\.)programiz\.com$/, sel: '.editor-contents__short-description, .editor-contents__body',
+      name: 'programiz', skip: '.vote-share-wrapper' },
+    // w3schools(#72): 루트(fallback div.contentcontainer)에 왼쪽 목차 #sidenav 와 가운데 글 칸 #main 이 같이 있다.
+    //   저장한 HTML 로는 Readability 가 #main 을 골라 목차가 noise 인데, 실제 페이지(스크립트가 돈 뒤)에서는 바깥
+    //   div#belowtopnav 를 골라 루트를 통째로 감싸(비율 100%) 목차까지 본문이 됐다(css_grid, 11-10 서현 패널).
+    //   늘 가운데 글 칸만 상자로. 칸이 없는 페이지는 Readability 그대로.
+    { host: /(^|\.)w3schools\.com$/, sel: '[id="main"]', name: 'w3schools' },
+    // geeksforgeeks(#72): 본문 칸 div.article--viewer_content 옆에 퀴즈(ArticleQuiz) · 댓글 줄 · 아래 "Explore" 목록 칸이 형제로
+    //   붙어 있다. python-string-strip 은 Readability 가 본문 칸만 골랐는데 css-grid-layout-module 은 바깥 칸까지 골라 Explore
+    //   목록이 본문이 됐다(서현 패널, 11-10). 제목 h1 + 본문 칸만 상자로 — 퀴즈 · 댓글 · Explore 는 밖 = noise.
+    { host: /(^|\.)geeksforgeeks\.org$/, sel: 'h1, .article--viewer_content', name: 'geeksforgeeks' },
+    // react.dev(#72): article 안 본문 칸에 설명 문단 칸(div.max-w-4xl)과 코드 예제(div.sandpack)가 형제로 번갈아 놓여
+    //   Readability 가 코드 예제 하나(div.sp-editor)만 골라 설명 전부가 noise 였다(ko.react.dev/learn/state-a-components-memory,
+    //   영어판도 같음). 제목 h1 + 본문 칸(설명 · 코드 · 챌린지)을 상자로 — 위 경로 줄 · 페이지 복사 · 아래 이전/다음 링크는 밖.
+    //   코드 예제의 파일 탭 · 새로고침/초기화/포크 막대와 버튼(자세히 보기 · 정답 보기 · 다음 챌린지)은 뺀다. 코드는 본문.
+    { host: /(^|\.)react\.dev$/, sel: 'article h1, article > div > div > .max-w-7xl:first-child',
+      skip: 'button, .sp-wrapper > div > div:has(.sp-tabs)', name: 'react.dev' },
     // 향토문화전자대전(#53): Readability 상자는 본문 칸(.info_div)만 — 위 정보 표(항목 ID · 별칭 · 지역 · 집필자 …) ·
     //   [상세정보] · 아래 [참고문헌] 이 noise 가 된다. 위키백과 정보 상자처럼 본문으로 넣는다(11-09 서현).
     //   네 칸이 형제라 전부 상자로(표 밑 안내문 "※ 본 항목의 내용은 …" 도 본문, 11-09 서현).
@@ -630,15 +710,54 @@
     //   키워드 · 구독 안내 · 트렌드뉴스 · 좋아요/댓글 칸이 같이 있다. Readability 가 기사마다 이 셋 중 하나를 골라
     //   "좋아요 0개" · 많이 본 기사 목록까지 본문이 되기도 했다(jsdom 5개 중 3개 view_body · 1개 main_view). 늘 기사 칸만.
     { host: /(^|\.)donga\.com$/, sel: 'section.news_view', name: '동아일보' },
+    // 나무위키(#72): 문단 칸(.VLWIvPDB 같은 뒤섞인 클래스 이름 — 바뀔 수 있음, 예상)과 문단 제목 칸이 한 칸 아래 형제로 번갈아
+    //   놓여 Readability 가 문단 몇 개만 골라 본문 77~94% 가 noise 였다(jsdom 31개 문서). 클래스로는 못 잡아서 pick = namuBox()
+    //   + 문서 제목 h1. 그 칸 안 틀(둘러보기 표 · 정보 상자) · 목차 · 각주는 본문.
+    //   skipPick = 광고 칸: 본문 칸의 마지막 div(광고 · 각주 칸) 안에서 표가 있고 각주(span#fn-…) · 위키 링크(/w/…)가 없는 칸.
+    //   광고(파워링크)는 그림 이름 "Python" · 링크 #s-15 처럼 위키 문단으로 꾸며 표지로는 못 거르고 자리로 고른다(11-10 서현).
+    //   jsdom 33개(틀 문서 2개 포함) 모두 이 자리에 광고 칸 1개 · 그 칸만 골림. 본문 표 745개 중 124개는 /w/ 링크가 없어
+    //   링크 조건만으로는 안 되고 자리 조건과 같이 써야 한다.
+    { host: /(^|\.)namu\.wiki$/, name: '나무위키', pick: () => {
+        const box = namuBox();
+        if (!box) return [];
+        const h1 = document.querySelector('h1');
+        return h1 && !box.contains(h1) ? [h1, box] : [box];
+      }, skipPick: (boxes) => {
+        const box = boxes[boxes.length - 1];
+        const divs = Array.from(box.children).filter(c => c.tagName === 'DIV');
+        const w = divs[divs.length - 1];
+        return w ? Array.from(w.children).filter(c => textLen(c) && c.querySelector('table')
+          && !c.querySelector('[id^="fn-"]') && !c.querySelector('a[href^="/w/"]')) : [];
+      } },
   ];
+  // 나무위키 본문 칸 (#72) — 문단 번호 표지(h2~h6 > a#s-1 · a#s-2.1 …)를 전부 품는 가장 안쪽 칸. 제목 → 그 칸까지 깊이가
+  //   문서마다 달라(3~7) 선택자 한 줄로는 안 된다. 문단 제목이 없는 문서(틀:… 등)는 분류 줄(글자가 "분류"로 시작하는 칸) 다음
+  //   형제 중 가장 큰 칸 — jsdom 31개에서 두 방법이 같은 칸이었다. 둘 다 없으면(없는 문서) null = Readability 그대로.
+  function namuBox() {
+    const hs = Array.from(document.querySelectorAll(':is(h2,h3,h4,h5,h6) > a[id^="s-"]'));
+    if (hs.length) {
+      let box = hs[0].parentElement;
+      while (box && !hs.every(h => box.contains(h))) box = box.parentElement;
+      return box;
+    }
+    let bar = document.querySelector('a[href^="/w/%EB%B6%84%EB%A5%98:"], a[href^="/w/분류:"]');
+    while (bar && !squash(bar.textContent).startsWith('분류')) bar = bar.parentElement;
+    let best = null;
+    for (let x = bar && bar.nextElementSibling; x; x = x.nextElementSibling) if (!best || textLen(x) > textLen(best)) best = x;
+    return best;
+  }
   const siteBoxRule = () => SITE_BOXES.find(r => r.host.test(location.hostname)) || null;
-  const siteBoxes = (rule) => Array.from(document.querySelectorAll(rule.sel)).filter(el => textLen(el));
+  // pick = 선택자로 못 잡는 사이트(나무위키)의 칸 찾기 함수 — 있으면 sel 대신.
+  //   skipPick(boxes) = 뺄 칸을 선택자 대신 함수로(나무위키 광고) — 판정 때 목록을 저장하고, 글이 바뀐 스캔마다 다시 찾는다.
+  const siteBoxes = (rule) => (rule.pick ? rule.pick() : Array.from(document.querySelectorAll(rule.sel))).filter(el => textLen(el));
   // 노드가 상자 안의 뺄 칸 안인가 (뺄 칸이 상자 밖 조상이면 아님)
   //   shadow 안 노드(#70)는 바깥 칸(lightOf)으로 본다 — contains · closest 가 shadow 경계를 못 넘는다.
   const inSkip = (a, box, node) => {
     const ln = lightOf(node);
-    const el = a.skip && (ln.nodeType === 1 ? ln : ln.parentElement);
-    const s = el && el.closest(a.skip);
+    const el = (a.skip || a.skipList) && (ln.nodeType === 1 ? ln : ln.parentElement);
+    if (!el) return false;
+    if (a.skipList && a.skipList.some(s => s !== box && box.contains(s) && s.contains(el))) return true;
+    const s = a.skip && el.closest(a.skip);
     return !!s && s !== box && box.contains(s);
   };
   const inBox = (a, node) => { const ln = lightOf(node); return a.boxes.some(b => b.contains(ln) && !inSkip(a, b, ln)); };
@@ -730,13 +849,17 @@
         if (!art.by || art.raw === raw) return art;
         // 기록 중 본문 글이 바뀜 + 사이트 지정 칸: 칸이 그대로면 유지, 늘었으면(붙은 기사) 다시 판정.
         //   앞 조각은 그대로고 새 조각만 새 칸 목록으로 본다. 확인은 글이 바뀐 스캔마다 한 번(조각마다 아님).
-        if (sameEls(art.boxes, siteBoxes(rule))) { art.raw = raw; return art; }
+        if (sameEls(art.boxes, siteBoxes(rule))) {
+          art.raw = raw;
+          if (rule.skipPick) art.skipList = rule.skipPick(art.boxes);
+          return art;
+        }
       }
     }
     const t0 = performance.now();
     // 루트 글자(공백 빼고) 중 상자 안 비율
-    const ratioOf = (boxes, skip) => {
-      const a = { boxes, skip };
+    const ratioOf = (boxes, skip, skipList) => {
+      const a = { boxes, skip, skipList };
       let inside = 0, total = 0;
       for (const s of segs) {
         const c = sig[s.start + s.len] - sig[s.start];
@@ -750,7 +873,8 @@
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
     } else if (ruleEls.length) {
       const skip = rule.skip || null;
-      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, skip, ratio: ratioOf(ruleEls, skip) };
+      const skipList = rule.skipPick ? rule.skipPick(ruleEls) : null;
+      art = { status: 'ok', by: rule.name, why: '', boxes: ruleEls, skip, skipList, ratio: ratioOf(ruleEls, skip, skipList) };
     } else {
       // 사이트 지정 칸이 없으면(그 사이트의 다른 모양 페이지) Readability 로 간다
       const r = findBoxes();
@@ -786,7 +910,8 @@
     const a = art;
     if (!a) return null;
     // 뺄 칸은 나중에 채워질 수 있어 읽을 때마다 찾는다(상자 안만, 글 있는 것만)
-    const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el)) : [];
+    const skipEls = a.skip ? a.boxes.flatMap(b => Array.from(b.querySelectorAll(a.skip))).filter(el => textLen(el))
+      : (a.skipList || []).filter(el => el.isConnected && textLen(el));
     return {
       status: a.status, by: a.by || null, alt: a.alt || null, altFrom: a.altFrom || null, why: a.why, ratio: a.ratio, min: noiseMin, decided: decided(a), ms: a.ms,
       onAttrs: a.onAttrs == null ? null : a.onAttrs,
@@ -1046,6 +1171,7 @@
     shadowHosts: () => shadowHosts,     // 안을 읽은 shadow 칸 (#70) — 3-hittest 커서
     inArticle,                          // 텍스트 노드 → true(본문) | false(noise) | null(미판정)
     article,                            // 판정 요약 { status, why, ratio, min, decided, ms, boxes, boxEls }
+    visClipOf,                          // 노드 → vis 를 자를 칸 | null (#72, 3-hittest)
     adWidgets: () => Array.from(document.querySelectorAll(AD_WIDGETS)),   // 스트림에서 뺀 본문 아닌 위젯 칸 (#51 · #53, 오버레이용)
     tables: () => tables,               // 자료 표 (#54) [{ el, start, end, rows, cols, why }]
     layouts: () => layouts,             // 글자가 든 배치용 표 (#54) [{ el, why }] — 오버레이용

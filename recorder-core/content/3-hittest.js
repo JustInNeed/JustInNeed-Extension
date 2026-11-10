@@ -50,6 +50,9 @@
  *   사각형을 물을 때마다 숨은 내용을 따로 배치해 보이는 글자의 약 50배가 걸린다(나무위키 방탄소년단 접힌 표, 11-10 실측).
  *   그래서 패널 "안 그려져 안 잰 조각" = 이 글에서 모든 글자 칸이 안 그려지는 조각 전부 — 접힘 · display:none · DOM 에서
  *   빠진 노드 포함, 화면 자리인지 모름(예전엔 이 중 화면과 겹친 접힌 것만 셌다). "첫 글자만 숨은 조각"은 화면과 겹친 것만.
+ *   예외 — 자르는 칸(1-stream VIS_CLIP, #72): 높이가 정해지고 넘친 글을 잘라 숨기는 칸(react.dev 코드 편집기) 안 조각은
+ *   칸 사각형과 겹친 부분만 vis 에 넣고, 다 잘렸으면 뺀다. 사이트마다 지정한 칸만(모든 사이트 vis 는 안 넓힘, 11-10 서현).
+ *   자르기는 접힘 검사 뒤 · 화면 겹침 앞(#73 과 합칠 때 순서). 조각의 시작 · 끝 글자가 같은 칸 안일 때만 자른다. 패널에 "잘려 안 보인 조각 N (vis 제외)".
  *   sample() 전체 시간을 최근 SAMPLE_WINDOW 틱 보관 → 패널 p95 (> 10ms 면 캐시 방식 검토).
  *
  * --- 성능 주의 (PERF-1) ------------------------------------------------------
@@ -71,12 +74,13 @@
   // 틱마다 강제 레이아웃이 수십 번 일어나므로 캐시한다.
   // 스크롤·리사이즈·재청킹 때 무효화된다.
   let rootBox = null;
-  let pieceRanges = null;          // [{ pid, k, r: Range, a, b }] (a, b = 조각 스트림 구간) — units:changed 때 버림
+  let pieceRanges = null;          // [{ pid, k, r: Range, a, b, clip }] (a, b = 조각 스트림 구간, clip = 자르는 칸 | null, #72) — units:changed 때 버림
   const SAMPLE_WINDOW = 200;
   const sampleMs = [];
   const visMs = [];                // 그중 vis(조각 사각형) 몫 — 탐침이 먼저 레이아웃을 확정하므로 순수 측정 비용
   let foldedN = 0;                 // 마지막 틱에 안 그려져(접힘 · display:none · DOM 밖) 사각형을 안 잰 조각 수 — 화면 밖 포함 (패널, #53 · #73)
   let rescuedN = 0;                // 마지막 틱에 첫 글자 칸만 숨어 vis 에 남긴 조각 수 (패널 표시, #58)
+  let clippedN = 0;                // 마지막 틱에 화면과 겹쳤지만 자르는 칸 밖이라 vis 에서 뺀 조각 수 (패널 표시, #72)
 
   // ==========================================================================
   // 기본 조회
@@ -211,7 +215,10 @@
         if (!a || !b) continue;
         const r = document.createRange();
         try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); } catch (e) { continue; }
-        out.push({ pid: u.pid, k, r, a: spans[k][0], b: spans[k][1] });
+        // 시작 · 끝 글자가 같은 자르는 칸 안일 때만 자른다 (#72) — 칸에 걸친 조각은 칸 밖 글자를 잃지 않게 그대로
+        const ca = RBC.stream.visClipOf(a.node);
+        const clip = ca && ca === RBC.stream.visClipOf(b.node) ? ca : null;
+        out.push({ pid: u.pid, k, r, a: spans[k][0], b: spans[k][1], clip });
       }
     }
     return out;
@@ -251,7 +258,7 @@
     if (!pieceRanges) pieceRanges = buildPieceRanges();
     const vw = window.innerWidth, vh = window.innerHeight;
     const out = [];
-    let folded = 0, rescued = 0;
+    let folded = 0, rescued = 0, clipped = 0;
     for (const p of pieceRanges) {
       // 접혀 숨은 칸 (#53): 첫 글자 칸이 안 그려지면, 조각의 다른 글자 칸도 다 안 그려질 때만 뺀다 (#58).
       //   사각형보다 먼저 본다 — 접힌 조각은 어차피 vis 밖이라 비싼 사각형을 재지 않는다 (#73)
@@ -262,7 +269,15 @@
         if (!anyShown(p.a, p.b, el)) { folded++; continue; }
         firstHidden = true;
       }
-      const b = p.r.getBoundingClientRect();
+      let b = p.r.getBoundingClientRect();
+      if (p.clip && p.clip.isConnected && b.bottom > 0 && b.top < vh && b.right > 0 && b.left < vw) {
+        // 자르는 칸(#72): 칸 테두리와 겹친 부분만 — 다 잘렸으면 뺀다
+        const c = p.clip.getBoundingClientRect();
+        const top = Math.max(b.top, c.top), bottom = Math.min(b.bottom, c.bottom);
+        const left = Math.max(b.left, c.left), right = Math.min(b.right, c.right);
+        if (bottom <= top || right <= left) { clipped++; continue; }
+        b = { top, bottom, left, right };
+      }
       if (b.bottom > 0 && b.top < vh && b.right > 0 && b.left < vw) {
         if (firstHidden) rescued++;
         out.push([p.pid, p.k, Math.round(b.top), Math.round(b.bottom),
@@ -271,13 +286,14 @@
     }
     foldedN = folded;
     rescuedN = rescued;
+    clippedN = clipped;
     return out;
   }
 
   // 최근 SAMPLE_WINDOW 틱의 sample() 시간. 패널 표시용.
   function stats() {
     const n = sampleMs.length;
-    if (!n) return { p95: 0, max: 0, n: 0, visP95: 0, pieces: 0, folded: foldedN, rescued: rescuedN };
+    if (!n) return { p95: 0, max: 0, n: 0, visP95: 0, pieces: 0, folded: foldedN, rescued: rescuedN, clipped: clippedN };
     const r1 = v => Math.round(v * 10) / 10;
     const p95 = (arr) => {
       const a = arr.slice().sort((x, y) => x - y);
@@ -289,6 +305,7 @@
       pieces: pieceRanges ? pieceRanges.length : 0, // 이 글의 조각 수 (접힌 것은 사각형을 안 잼, #73)
       folded: foldedN,                              // 마지막 틱 안 그려져 사각형을 안 잰 조각 수 (화면 밖 포함, #73)
       rescued: rescuedN,                            // 마지막 틱 첫 글자만 숨어 vis 에 남긴 조각 수 (#58)
+      clipped: clippedN,                            // 마지막 틱 자르는 칸 밖이라 vis 에서 뺀 조각 수 (#72)
     };
   }
 
@@ -392,7 +409,7 @@
     streamPosOf,
     locate,                 // 8-overlay 의 rangeForUnit 이 쓴다
     invalidate,
-    stats,                  // { p95, max, n, visP95, pieces, folded, rescued } — sample() ms · 조각 수, 패널 표시
+    stats,                  // { p95, max, n, visP95, pieces, folded, rescued, clipped } — sample() ms · 조각 수, 패널 표시
     visPieces,
     // 개별 조회 — 디버깅·추후 사용
     atCenterLine,
