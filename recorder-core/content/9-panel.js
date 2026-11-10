@@ -106,7 +106,8 @@
         position:fixed; right:12px; bottom:12px; z-index:2147483647;
         width:272px; font:12px/1.45 system-ui,-apple-system,sans-serif; color:#111;
         background:#fff; border:1px solid #ddd; border-radius:10px;
-        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px; }
+        box-shadow:0 4px 16px rgba(0,0,0,.16); padding:10px;
+        max-height:calc(100vh - 24px); overflow:auto; box-sizing:border-box; }  /* 표 많은 글(나무위키)에서 위 버튼 줄이 화면 밖으로 나가던 것 (#73) */
       #${CFG.PANEL_ID} h4{ margin:0 0 6px; font-size:12px; }
       #${CFG.PANEL_ID} button{
         font:11px system-ui; padding:5px 7px; margin:2px 2px 0 0;
