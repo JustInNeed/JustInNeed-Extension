@@ -222,7 +222,8 @@
     if (toastEl) { toastEl.remove(); toastEl = null; }
   }
   function skipToast(r) {
-    if (r.quiet) return;                                     // 검색 결과 화면 등 — 알림 없이 아이콘 · 팝업으로만 (#80, bg-core SKIP_TEXT)
+    if (r.quiet) { skipToastOff(); return; }                 // 검색 결과 화면 등 — 알림 없이 아이콘 · 팝업으로만 (#80, bg-core SKIP_TEXT).
+                                                             //   앞 규칙의 알림 · 기다리던 알림도 거둔다(검토)
     if (document.hidden) { toastWant = r; return; }          // 보일 때 (visibilitychange)
     toastWant = null;
     if (toastEl) toastEl.remove();
