@@ -649,6 +649,13 @@
     // 경향신문(#45): Readability 상자(section.art_cont)가 사실상 #articleBody 하나라 본문은 잘 잡는다. 칸 안 광고 자리
     //   (사진 아래 텍스트 광고 #articleImageTxtAd · 본문 배너)가 전부 .ad-wrapper 로 감싸져 있어 그것만 뺀다.
     { host: /(^|\.)khan\.co\.kr$/, sel: '[id="articleBody"]', name: '경향신문', skip: '.ad-wrapper' },
+    // 아이뉴스24(#80): 본문 칸 article#articleBody 안, 기사 글 아래에 기자 줄(address — "/정유림 기자(이메일)") · 기자 칸
+    //   (div.namecard — 기자 이름 · 좋아요 · 응원수 · 소개 · 기자의 다른 기사 2개) · "주요뉴스" 목록(div.topnews — 기사 10개 ·
+    //   새로고침)이 같이 들어 있다. Readability 가 이 칸을 통째로 골라(비율 100%) 전부 본문이었다(view/2025952, 11-13 서현 패널).
+    //   기자 칸 · 주요뉴스는 페이지가 열린 뒤 스크립트가 채운다 → skip 은 조각마다 조상으로 보므로 나중에 채워져도 noise.
+    //   기자 줄도 noise — 이 사이트만(11-13 서현. 전자신문 기자 줄은 본문, 11-06).
+    { host: /(^|\.)inews24\.com$/, sel: '[id="articleBody"]', name: '아이뉴스24',
+      skip: 'address, div.namecard, div.topnews' },
     // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
     //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
     { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
