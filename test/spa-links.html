@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  spa-links.html — 정상 SPA 이동 시험 글 (#78 무한 스크롤 의심의 반대 경우, 2026-11-13)
+  띄우기: cd test && python3 -m http.server 8000  →  http://localhost:8000/spa-links.html
+  위 링크를 누르면 본문을 통째로 갈아끼우고 주소(?id=N)를 history.pushState 로 바꾼다(새로고침 없음).
+  [1초 뒤 바꾸기]는 클릭하고 1초 기다렸다 주소를 바꾼다(데이터를 받느라 늦는 SPA 흉내).
+
+  정상: 글을 아래로 스크롤하다 링크 · [1초 뒤 바꾸기] 를 눌러 이동 → 패널에 "무한 스크롤 의심" 줄이 안 뜬다.
+        뒤로가기(브라우저 ←)로 돌아가도 안 뜬다.
+  이상: 위 이동에서 주황 · 빨간 "무한 스크롤 의심" 줄이 뜸.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>SPA 이동 시험 1</title>
+<style>
+  body { font: 17px/1.75 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 0; color: #222; }
+  nav { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; padding: 10px 20px; z-index: 1; }
+  nav a, nav button { margin-right: 12px; font-size: 14px; }
+  main { max-width: 640px; margin: 30px auto 400px; padding: 0 20px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="?id=1" data-id="1">글 1</a>
+  <a href="?id=2" data-id="2">글 2</a>
+  <a href="?id=3" data-id="3">글 3</a>
+  <button id="late">1초 뒤 바꾸기 (다음 글)</button>
+</nav>
+<main id="main"></main>
+<script>
+  const TOPICS = ['등대', '우체국', '정원'];
+
+  function render(id) {
+    const t = TOPICS[(id - 1) % TOPICS.length];
+    document.getElementById('main').innerHTML = `<article><h1>글 ${id}: ${t} 이야기</h1>` +
+      Array.from({ length: 10 }, (_, i) => `<p>[글 ${id} · 문단 ${i + 1}] ${t}을 지키는 사람은 ${i + 3}년째 같은 시간에 불을 켠다. ` +
+        `${id}번째 글의 이 문단은 ${t} 주변의 ${i + 1}번째 풍경을 적었다. 바람이 세게 부는 날에도 ${t}의 하루는 똑같이 시작되고, ` +
+        `그 반복이 마을 사람들에게 이상한 안도감을 준다. 기록자는 그 장면을 ${id * 10 + i}장의 사진으로 남겼다.</p>`).join('') +
+      '</article>';
+    document.title = 'SPA 이동 시험 ' + id;
+    window.scrollTo(0, 0);
+  }
+
+  let cur = 1;
+  function go(id, push) {
+    cur = id;
+    if (push) history.pushState({ id }, '', '?id=' + id);
+    render(id);
+  }
+
+  document.querySelectorAll('nav a').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    go(+a.dataset.id, true);
+  }));
+  document.getElementById('late').addEventListener('click', () => {
+    setTimeout(() => go(cur % 3 + 1, true), 1000);
+  });
+  window.addEventListener('popstate', (e) => go((e.state && e.state.id) || 1, false));
+
+  const first = +(new URLSearchParams(location.search).get('id') || 1);
+  history.replaceState({ id: first }, '', '?id=' + first);
+  render(first);
+</script>
+</body>
+</html>

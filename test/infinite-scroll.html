@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<!--
+  infinite-scroll.html — 무한 스크롤 흉내 시험 글 (#78, 2026-11-13)
+  띄우기: cd test && python3 -m http.server 8000  →  http://localhost:8000/infinite-scroll.html
+  zdnet 처럼: 아래 끝 가까이 스크롤하면 다음 기사를 <main> 끝에 이어 붙이고(앞 기사는 그대로 남김),
+  화면 가운데를 지나는 기사가 바뀌면 주소(?id=N)와 제목을 바꾼다(history.replaceState — 클릭 없음).
+
+  정상: 디버그 패널을 켜고 아래로 계속 스크롤 → 기사가 바뀔 때마다 패널에 빨간
+        "무한 스크롤 강한 의심 N회 (앞 글 남음 N회) … 마지막: /infinite-scroll.html?id=1 → …?id=2 · 앞 글 남음".
+  이상: 아무 줄도 안 뜸 · 주황(앞 글 남음 0회)만 뜸.
+  위로 다시 올라가도 주소가 바뀌므로 횟수는 계속 늘어난다(정상).
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>무한 스크롤 시험 1</title>
+<style>
+  body { font: 17px/1.75 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 0; color: #222; }
+  main { max-width: 640px; margin: 40px auto 200px; padding: 0 20px; }
+  article { padding-bottom: 60px; border-bottom: 3px dashed #bbb; margin-bottom: 60px; }
+  h1 { font-size: 26px; }
+  #more { text-align: center; color: #888; }
+</style>
+</head>
+<body>
+<main id="list"></main>
+<p id="more">다음 기사 불러오는 중…</p>
+<script>
+  // 기사 글은 번호마다 달라야 유닛 · pid 가 갈린다
+  const TOPICS = ['도서관', '시장', '기차역', '공원', '박물관', '항구', '산길', '학교', '극장', '빵집'];
+  const MAX = 10;
+  let count = 0;
+
+  function para(n, k) {
+    const t = TOPICS[(n - 1) % TOPICS.length];
+    return `[기사 ${n} · 문단 ${k}] ${n}번째 기사의 ${t} 이야기다. 아침마다 ${t}에 모이는 사람들은 저마다 다른 이유를 가지고 온다. ` +
+      `누군가는 ${k}년째 같은 자리에 앉고, 누군가는 오늘 처음 문을 연다. 기자는 ${t} 앞에서 ${k * 7}분 동안 사람들의 발걸음을 셌다. ` +
+      `그 숫자는 ${n * 100 + k}명이었고, 그중 절반은 아무 말 없이 지나갔다.`;
+  }
+
+  function addArticle() {
+    if (count >= MAX) { document.getElementById('more').textContent = '마지막 기사입니다.'; return; }
+    count++;
+    const a = document.createElement('article');
+    a.dataset.id = count;
+    a.innerHTML = `<h1>기사 ${count}: ${TOPICS[(count - 1) % TOPICS.length]}의 하루</h1>` +
+      Array.from({ length: 8 }, (_, i) => `<p>${para(count, i + 1)}</p>`).join('');
+    document.getElementById('list').appendChild(a);
+  }
+
+  // 화면 가운데에 걸친 기사로 주소 · 제목 바꾸기 — 클릭 없이 스크롤만으로
+  let shown = 1;
+  function onScroll() {
+    if (window.innerHeight + window.scrollY > document.body.scrollHeight - 600) addArticle();
+    const mid = window.innerHeight / 2;
+    for (const a of document.querySelectorAll('article')) {
+      const r = a.getBoundingClientRect();
+      if (r.top <= mid && r.bottom > mid) {
+        const id = +a.dataset.id;
+        if (id !== shown) {
+          shown = id;
+          history.replaceState(null, '', '?id=' + id);
+          document.title = '무한 스크롤 시험 ' + id;
+        }
+        break;
+      }
+    }
+  }
+
+  addArticle();
+  history.replaceState(null, '', '?id=1');
+  window.addEventListener('scroll', onScroll, { passive: true });
+</script>
+</body>
+</html>

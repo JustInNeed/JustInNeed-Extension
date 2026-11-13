@@ -5,7 +5,8 @@
  * 의존(직접 호출): 0-core, RBC.stream(펼치기 실패 시험 #37), RBC.frames, RBC.recorder, RBC.units   ← 전부 자기보다 낮은 번호
  * 발행: cmd:* (스캔·오버레이·목록·청크·검색어), ui:rec, ui:export, ui:query, ui:idletest, ui:overlay
  * 구독: stat, units:list, session:changed, session:link,
- *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock, skip:page(#49), popup:perf(#66)
+ *       scan:progress, scan:failed, scan:done, ui:panel, overlay:pref, units:rescanned, idle:clock, skip:page(#49), popup:perf(#66),
+ *       nav:hint(#78 무한 스크롤 의심 줄 — 판정은 11-session 헤더)
  *
  * --- 보이기 / 숨기기 (기본 숨김) ----------------------------------------------
  *   참가자 화면에 패널이 뜨면 읽기 행동을 오염시키고, 청크 슬라이더를 만질 수 있다.
@@ -94,6 +95,7 @@
   let idleClock = null;                  // background 무동작 시계 (#26). idle:clock 으로만 바뀐다
   let skipRule = null;                   // 이 주소가 걸린 기록 안 할 주소 규칙 { url, why, label } (#49). skip:page 로만 바뀐다
   let skipInfo = null;                   // 버전 파일 규칙 목록 상태 (실사용 = 수집 제외 URL, #49). session:changed 로
+  let navHint = null;                    // 무한 스크롤 의심 { n, strong, last } (#78). nav:hint 로만 바뀐다
 
   // ==========================================================================
   // 스타일 — 원본 injectStyle() 에서 패널 몫만.
@@ -193,6 +195,7 @@
         `<b>기록 안 함: ${esc(skipRule.label || skipRule.why)}</b> (규칙 ${esc(skipRule.url)}) — 읽기는 그대로, 구간을 안 엶` +
         (skipRule.closed ? '<br><b style="color:#dc2626">규칙이 늦게 와서 기록 중이던 구간을 닫음 (segend excluded)</b>' : '') + '</div>' : ''}
       ${skipInfoLine()}
+      ${navHintLine()}
       ${popPerfLine()}
       ${linkMsg ? `<div class="rbc-link">${linkMsg}</div>` : ''}
       ${overlayErr ? `<div class="rbc-link">${esc(overlayErr)}</div>` : ''}
@@ -483,6 +486,22 @@
   });
 
   bus.on('skip:page', (d) => { skipRule = d || null; render(); });
+
+  // 무한 스크롤 의심 줄 (#78, 11-session 헤더). 막지 않는다 — 서현이 NO_RECORD_SITES 에 넣을지 보는 단서.
+  //   빨강 = 앞 글이 남은 채 주소가 바뀐 적 있음(강한 의심) · 주황 = 클릭 없이 스크롤 중 주소만 바뀜.
+  bus.on('nav:hint', (d) => { navHint = d || null; render(); });
+  function navHintLine() {
+    const h = navHint;
+    if (!h || !h.n) return '';
+    const L = h.last || {};
+    const left = L.left === true ? '앞 글 남음' : L.left === false ? '앞 글 사라짐' : '앞 글 모름(본문이 iframe · 표본 없음)';
+    const strong = h.strong > 0;
+    const style = strong ? 'color:#991b1b;background:#fef2f2;border-color:#fecaca'
+                         : 'color:#92400e;background:#fffbeb;border-color:#fde68a';
+    return `<div class="rbc-link" style="${style}">` +
+      `<b>${strong ? '무한 스크롤 강한 의심' : '무한 스크롤 의심'} ${h.n}회</b> (앞 글 남음 ${h.strong}회) — 클릭 없이 스크롤 중 주소 바뀜 · 막지 않음` +
+      `<br>마지막: ${esc(L.from || '')} → ${esc(L.to || '')} · ${left}</div>`;
+  }
 
   // 수집 제외 URL 목록 줄 (#49, 실사용만). 받은 개수 · 때 · 실패 원문
   function skipInfoLine() {

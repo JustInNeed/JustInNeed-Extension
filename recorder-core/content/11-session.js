@@ -2,8 +2,8 @@
  * 11-session.js — background 연결 · 세션 합류 · SPA 경계
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
- * 의존(직접 호출): 0-core, 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66)
+ * 의존(직접 호출): 0-core, 2-units(무한 스크롤 의심의 앞 글 표본, #78), 6-frames
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66), nav:hint(#78)
  * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
@@ -59,6 +59,17 @@
  *     아래 가운데 = 구글 스낵바 자리. 툴바 팝업(오른쪽 위)에 가리지 않고 디버그 패널(오른쪽 아래)과도 안 겹친다.
  *   무한 스크롤은 스크롤마다 주소가 바뀌어 SPA 경계 → 재스캔 → 합류를 다시 타지만, 규칙이 그대로면 다시 안 띄운다.
  *   판정은 최상위 주소로만(본문이 iframe 이어도 사이트는 최상위 주소). 패널에는 skip:page 로 알린다.
+ *
+ * --- 무한 스크롤 의심 (#78) ---------------------------------------------------
+ *   무한 스크롤 사이트(zdnet: 스크롤하면 다음 글을 이어 붙이고 주소를 바꿈)를 서현이 찾게 돕는 표시. **막지 않는다**
+ *   (11-06 서현 "자동 감지로 막지 않음, 목록으로만" — 막는 건 bg-core NO_RECORD_SITES). 기록 데이터에 아무것도 안 남긴다.
+ *   SPA 경계에서 주소가 바뀔 때(기록 여부와 상관없이):
+ *     의심      = 직전 3초 안에 손짓(클릭 · Enter · 뒤로/앞으로) 없음 + 직전 1.5초 안에 스크롤 있음
+ *     강한 의심 = 의심 + 앞 글이 문서에 그대로 남음 — FIRST_SCAN_DELAY 뒤(다시 스캔 전), 앞 글 본문 유닛 표본 3개의
+ *                 앞 40자 중 과반이 body 글자에 있음. 본문이 iframe 이면 최상위에 유닛이 없어 "모름"(null).
+ *   결과는 nav:hint { n, strong, last:{ from, to, left, t } } 로 패널에. 횟수는 이 문서가 뜬 동안 누적.
+ *   한계(예상): 스크롤 중 ?page=2 만 바꾸는 목록도 의심(찾고 싶은 쪽) · 주소를 안 바꾸고 글만 붙이면 못 잡음 ·
+ *     본문 iframe 안 스크롤은 최상위가 못 봄 · 3초 · 1.5초는 근거 없는 임시값.
  *
  * --- 무동작 시계 (#26) -------------------------------------------------------
  *   시계는 background 가 갖는다(bg-core 헤더). 여기서는 4-input 의 activity 를 background 로
@@ -423,10 +434,43 @@
   // ==========================================================================
   let lastKey = pageKey(location.href);
 
+  // --- 무한 스크롤 의심 (#78, 헤더) ---
+  //   손짓 = 클릭 · Enter · 뒤로/앞으로(popstate). 화살표 · 스페이스 · PageDown 은 스크롤 손짓이라 안 센다.
+  const HINT_GESTURE_MS = 3000;    // 이 안에 손짓이 있었으면 사용자가 옮긴 것 — SPA 는 클릭 뒤 데이터를 받느라 늦게 바뀔 수 있어 넉넉히
+  const HINT_SCROLL_MS = 1500;     // 이 안에 스크롤이 있었으면 스크롤 때문에 바뀐 것
+  let lastGesture = 0, lastScroll = 0;
+  const hint = { n: 0, strong: 0, last: null };
+  document.addEventListener('click', () => { lastGesture = Date.now(); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Enter') lastGesture = Date.now(); }, true);
+  document.addEventListener('scroll', () => { lastScroll = Date.now(); }, { capture: true, passive: true });
+  window.addEventListener('popstate', () => { lastGesture = Date.now(); });
+
+  // 앞 글 표본 = 이 프레임 유닛 중 noise 조각이 없는 것 3개(앞 · 가운데 · 끝)의 앞 40자.
+  //   메뉴 · 머리 같은 noise 유닛은 SPA 이동 뒤에도 남으니 빼야 "남음"이 뜻을 갖는다.
+  //   본문이 iframe 이면 최상위엔 유닛이 없다 → 표본 없음 = "모름".
+  function hintSamples() {
+    const body = RBC.units.all().filter((u) => u.pieces && !u.pieces.some((p) => p.noise) && u.charLen >= 40);
+    if (!body.length) return [];
+    const pick = [...new Set([0, body.length >> 1, body.length - 1])].map((i) => body[i]);
+    return pick.map((u) => u.text.slice(0, 40));
+  }
+  function hintLeft(samples) {
+    if (!samples.length) return null;
+    const txt = RBC.util.clean(document.body ? document.body.textContent : '');
+    const hit = samples.filter((s) => txt.includes(s)).length;
+    return hit * 2 > samples.length;           // 과반이 남아 있으면 "남음"
+  }
+
   function checkUrl() {
     const key = pageKey(location.href);
     if (key === lastKey) return;
+    const fromKey = lastKey;
     lastKey = key;
+
+    // 무한 스크롤 의심 (#78) — 막지 않고 패널에만. 기록 여부와 상관없이 본다.
+    const now = Date.now();
+    const suspect = now - lastGesture > HINT_GESTURE_MS && now - lastScroll <= HINT_SCROLL_MS;
+    const samples = suspect ? hintSamples() : [];
 
     // 지금 글의 구간만 닫는다. primary 가 iframe 이어도 6-frames 가 전달한다.
     if (session.recording) RBC.frames.send('stop', { reason: 'navigation' });
@@ -435,7 +479,18 @@
     if (session.recording) skipCheck(true);
 
     // 새 글의 본문이 붙기를 기다렸다가 다시 스캔 → scan:done → 합류.
-    setTimeout(() => RBC.frames.doScan(), CFG.FIRST_SCAN_DELAY);
+    //   앞 글이 남았나는 그 기다림 끝(다시 스캔 전, 유닛 목록이 아직 앞 글 것)에 본다 — SPA 는 주소를 먼저 바꾸고 화면을 나중에 갈아끼우기도 해서.
+    setTimeout(() => {
+      if (suspect) {
+        let left = null;
+        try { left = hintLeft(samples); } catch (e) { console.warn('[RBC] 무한 스크롤 의심 · 앞 글 확인 실패', e); }
+        hint.n++;
+        if (left) hint.strong++;
+        hint.last = { from: fromKey, to: key, left, t: now };
+        bus.emit('nav:hint', Object.assign({}, hint));
+      }
+      RBC.frames.doScan();
+    }, CFG.FIRST_SCAN_DELAY);
   }
 
   setInterval(checkUrl, CFG.URL_POLL_MS);
