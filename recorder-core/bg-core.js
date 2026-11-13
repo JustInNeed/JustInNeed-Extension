@@ -87,11 +87,21 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 // 기록할 수 없는 사이트 (#49). url = 0-core skipMatch 규칙(도메인[:포트][경로][?쿼리]), why = 탭 알림 · 패널의 이유 코드.
 //   infinite = 무한 스크롤: 읽다 스크롤하면 다음 글을 끝없이 붙이고 주소를 바꾼다. 앞 글이 DOM 에 남아 같은 글이
 //   여러 pageId 에 겹친다(예상). 자동 감지는 안 함 — 멀쩡한 사이트를 막을까 봐 목록으로만(11-06 서현).
+//   search = 검색 결과 화면(#80): 본문이 없는 링크 목록이라 기록하지 않는다(11-13 서현 — 구글 · 네이버 · 다음).
+//     검색어는 이 화면 기록에서 얻지 않는다: 글의 meta.searchQuery 는 referrer · 팝업 입력으로만 채워 왔고(구글은 referrer 에
+//     검색어를 안 남김, 예상) AI 는 그 칸만 읽는다. 검색 결과 주소를 파싱하는 건 tools/extract_features 뿐(옛 기록용).
+//     규칙 = 하위 도메인까지(m.search.naver.com 등) · 구글은 /search 경로만(google.com 통째는 지도 · 문서까지 걸림).
 const NO_RECORD_SITES = [
   { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
+  { url: 'google.com/search', why: 'search' },
+  { url: 'google.co.kr/search', why: 'search' },
+  { url: 'search.naver.com', why: 'search' },
+  { url: 'search.daum.net', why: 'search' },
 ];
 // 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
+//   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
+  search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
 };

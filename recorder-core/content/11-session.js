@@ -56,6 +56,7 @@
  *   그만두고, 기록 중이던 구간은 segend.reason 'excluded' 로 닫는다(11-06 서현). 걸림 · 풀림이 바뀔 때만 background 에 skip 으로
  *   알린다(툴바 아이콘을 그 탭만 회색으로). 알림은 화면 아래 가운데에 4.5초(팝업 스타일, 숨은 탭이면 보일 때) —
  *     그 사이트 페이지를 열 때 · 다른 사이트에서 넘어올 때 · 다른 탭에서 이 탭으로 돌아올 때마다(까먹지 않게, 11-06 서현).
+ *     단 규칙 문구에 quiet 가 있으면(검색 결과 화면, #80 — 하루 수십 번이라 방해) 알림 없이 아이콘 · 팝업 · 패널로만.
  *     아래 가운데 = 구글 스낵바 자리. 툴바 팝업(오른쪽 위)에 가리지 않고 디버그 패널(오른쪽 아래)과도 안 겹친다.
  *   무한 스크롤은 스크롤마다 주소가 바뀌어 SPA 경계 → 재스캔 → 합류를 다시 타지만, 규칙이 그대로면 다시 안 띄운다.
  *   판정은 최상위 주소로만(본문이 iframe 이어도 사이트는 최상위 주소). 패널에는 skip:page 로 알린다.
@@ -221,6 +222,7 @@
     if (toastEl) { toastEl.remove(); toastEl = null; }
   }
   function skipToast(r) {
+    if (r.quiet) return;                                     // 검색 결과 화면 등 — 알림 없이 아이콘 · 팝업으로만 (#80, bg-core SKIP_TEXT)
     if (document.hidden) { toastWant = r; return; }          // 보일 때 (visibilitychange)
     toastWant = null;
     if (toastEl) toastEl.remove();
