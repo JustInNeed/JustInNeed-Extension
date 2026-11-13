@@ -64,12 +64,14 @@
  *   무한 스크롤 사이트(zdnet: 스크롤하면 다음 글을 이어 붙이고 주소를 바꿈)를 서현이 찾게 돕는 표시. **막지 않는다**
  *   (11-06 서현 "자동 감지로 막지 않음, 목록으로만" — 막는 건 bg-core NO_RECORD_SITES). 기록 데이터에 아무것도 안 남긴다.
  *   SPA 경계에서 주소가 바뀔 때(기록 여부와 상관없이):
- *     의심      = 직전 3초 안에 손짓(클릭 · Enter · 뒤로/앞으로) 없음 + 직전 1.5초 안에 스크롤 있음
- *     강한 의심 = 의심 + 앞 글이 문서에 그대로 남음 — FIRST_SCAN_DELAY 뒤(다시 스캔 전), 앞 글 본문 유닛 표본 3개의
- *                 앞 40자 중 과반이 body 글자에 있음. 본문이 iframe 이면 최상위에 유닛이 없어 "모름"(null).
+ *     의심      = 직전 3초 안에 손짓(누름 · 클릭 · Enter · 뒤로/앞으로) 없음 + 직전 1.5초 안에 스크롤 있음
+ *     강한 의심 = 의심 + 앞 글이 문서에 그대로 남음 — FIRST_SCAN_DELAY 뒤(다시 스캔 전), 앞 글 본문다운 유닛 표본 3개의
+ *                 글 40자(공백 뺌) 중 과반이 body 글자(공백 뺌)에 있음. 본문이 iframe 이면 최상위에 유닛이 없어 "모름"(null).
  *   결과는 nav:hint { n, strong, last:{ from, to, left, t } } 로 패널에. 횟수는 이 문서가 뜬 동안 누적.
  *   한계(예상): 스크롤 중 ?page=2 만 바꾸는 목록도 의심(찾고 싶은 쪽) · 주소를 안 바꾸고 글만 붙이면 못 잡음 ·
- *     본문 iframe 안 스크롤은 최상위가 못 봄 · 3초 · 1.5초는 근거 없는 임시값.
+ *     본문 iframe 안 스크롤은 최상위가 못 봄 · 3초 · 1.5초는 근거 없는 임시값 ·
+ *     0.6초보다 늦게 화면을 갈아끼우는 SPA 는 앞 글이 아직 있어 "남음"이 될 수 있음(손짓 없이 바뀔 때만 해당) ·
+ *     누른 뒤 3초 안에 스크롤로 바뀐 주소는 놓침(요소 스크롤 막대를 끌 때 포함).
  *
  * --- 무동작 시계 (#26) -------------------------------------------------------
  *   시계는 background 가 갖는다(bg-core 헤더). 여기서는 4-input 의 activity 를 background 로
@@ -440,23 +442,31 @@
   const HINT_SCROLL_MS = 1500;     // 이 안에 스크롤이 있었으면 스크롤 때문에 바뀐 것
   let lastGesture = 0, lastScroll = 0;
   const hint = { n: 0, strong: 0, last: null };
+  //   pointerdown 도 센다 — 누르는 순간 주소를 바꾸는 라우터가 있어 click 보다 400ms 폴링이 먼저 돌 수 있다(검토).
+  document.addEventListener('pointerdown', () => { lastGesture = Date.now(); }, true);
   document.addEventListener('click', () => { lastGesture = Date.now(); }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Enter') lastGesture = Date.now(); }, true);
   document.addEventListener('scroll', () => { lastScroll = Date.now(); }, { capture: true, passive: true });
   window.addEventListener('popstate', () => { lastGesture = Date.now(); });
 
-  // 앞 글 표본 = 이 프레임 유닛 중 noise 조각이 없는 것 3개(앞 · 가운데 · 끝)의 앞 40자.
-  //   메뉴 · 머리 같은 noise 유닛은 SPA 이동 뒤에도 남으니 빼야 "남음"이 뜻을 갖는다.
+  // 앞 글 표본 = 이 프레임 유닛 중 본문다운 것 3개(1/4 · 1/2 · 3/4 자리)의 글 40자.
+  //   메뉴 · 머리 같은 유닛은 SPA 이동 뒤에도 남으니 빼야 "남음"이 뜻을 갖는다:
+  //   noise 조각이 있으면 뺌 + 판정이 안 나 noise 필드가 없는 페이지도 걸러지게 링크 글자 30% 이상이면 뺌 + 맨 앞 · 맨 끝 자리를 피함(검토).
+  //   표 유닛은 칸 경계 글자가 textContent 와 달라 뺀다.
   //   본문이 iframe 이면 최상위엔 유닛이 없다 → 표본 없음 = "모름".
+  const noWs = (s) => s.replace(/\s+/g, '');
   function hintSamples() {
-    const body = RBC.units.all().filter((u) => u.pieces && !u.pieces.some((p) => p.noise) && u.charLen >= 40);
+    const body = RBC.units.all().filter((u) => u.pieces && u.kind !== 'table' && u.charLen >= 40 &&
+      !u.pieces.some((p) => p.noise) && u.pieces.reduce((a, p) => a + (p.linkChars || 0), 0) < u.charLen * 0.3);
     if (!body.length) return [];
-    const pick = [...new Set([0, body.length >> 1, body.length - 1])].map((i) => body[i]);
-    return pick.map((u) => u.text.slice(0, 40));
+    const n = body.length;
+    const pick = [...new Set([n >> 2, n >> 1, (n * 3) >> 2])].map((i) => body[Math.min(i, n - 1)]);
+    return pick.map((u) => noWs(u.text).slice(0, 40));
   }
+  // 공백을 다 빼고 비교한다 — 유닛 글은 DOM 블록 경계에 공백이 들어가고 textContent 는 붙어 나온다(<h1>…</h1><p>…, <br>, 검토).
   function hintLeft(samples) {
     if (!samples.length) return null;
-    const txt = RBC.util.clean(document.body ? document.body.textContent : '');
+    const txt = noWs(document.body ? document.body.textContent : '');
     const hit = samples.filter((s) => txt.includes(s)).length;
     return hit * 2 > samples.length;           // 과반이 남아 있으면 "남음"
   }
