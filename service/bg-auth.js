@@ -16,9 +16,12 @@
  *   연결이 그 로그인 탭에서 왔으면: 잠깐 뒤 그 탭을 닫고 → 기억한 탭으로 돌아가고 → 팝업을 연다.
  *
  * --- 웹이 보내는 메시지 (onMessageExternal) -------------------------------------
- *   JIN_STATUS  → { loggedIn, memberId, version }
+ *   JIN_STATUS  → { loggedIn, memberId, version, recording, startedAt }
  *   JIN_CONNECT → { ok, memberId }       코드를 토큰으로 바꿔 저장
  *   JIN_LOGOUT  → { ok }                 토큰 삭제 + 서버에 로그아웃 알림(실패해도 지움)
+ *   JIN_START   → { ok, recording, startedAt }   엔진 start 명령 — 팝업 [기록 시작]과 같은 길(로그인 안 했으면 why 'no-login') (#81)
+ *   JIN_STOP    → { ok, recording, startedAt }   엔진 stop 명령, reason 'user' — 팝업 정지와 같은 값이라 기록 형식은 그대로 (#81)
+ *   recording · startedAt = 웹 사이드바 카드가 몇 초마다 읽는 기록 상태. startedAt 은 기록 시작 시각(ms, 엔진 S.epoch), 기록 중이 아니면 null.
  *   보낸 곳(sender.origin)이 WEB_ORIGINS 가 아니면 거절. manifest externally_connectable 과 같은 목록.
  *   실패하면 { ok: false, why: 원문 } 을 돌려주고 팝업에도 원문을 띄운다(조용히 삼키지 않는다).
  *
@@ -41,7 +44,7 @@
  * 네트워크를 기다리는 일은 엔진 serial 밖(authSerial)에서 한다 — 그동안 기록 조각(flush)이 막히면 안 된다.
  *   그래서 팝업의 whoami · logout 명령은 일을 걸어 두고 바로 답한다. 결과는 팝업이 1초마다 읽는 status 에 나온다.
  * ========================================================================== */
-/* global VERSION, handlers */
+/* global VERSION, handlers, S, ready, handle */
 'use strict';
 
 const PROD_API = 'https://api.justinneed.xyz';
@@ -296,9 +299,32 @@ Object.assign(handlers, {
   },
 });
 
+// 웹에 알리는 기록 상태 (#81). 엔진 저장본(S)을 읽은 뒤에 불러야 한다 — 서비스 워커가 막 깼으면 빈 상태라서
+function recState() {
+  return { recording: !!S.recording, startedAt: S.recording ? S.epoch || null : null };
+}
+// 엔진 명령(start · stop)을 보내고 기록 상태로 답한다. 거절(예: 'no-login')은 엔진의 why 그대로
+async function recCommand(m) {
+  const r = await handle(m, {});
+  if (r && r.ok === false) return { ok: false, why: r.why || `${m.rbc} 거절` };
+  return Object.assign({ ok: true }, recState());
+}
+
 const EXTERNAL = {
   async JIN_STATUS() {
-    return { loggedIn: !!A, memberId: A ? A.memberId : null, version: chrome.runtime.getManifest().version };
+    await ready;
+    return Object.assign(
+      { loggedIn: !!A, memberId: A ? A.memberId : null, version: chrome.runtime.getManifest().version },
+      recState(),
+    );
+  },
+  async JIN_START() {
+    await ready;
+    return recCommand({ rbc: 'start' });
+  },
+  async JIN_STOP() {
+    await ready;
+    return recCommand({ rbc: 'stop', reason: 'user' });
   },
   async JIN_CONNECT(m, gen) {
     return { ok: true, memberId: await connect(m.code, gen) };
@@ -322,6 +348,7 @@ chrome.runtime.onMessageExternal.addListener((m, sender, reply) => {
     return false;
   }
   // 연결만 줄에 선다(서버를 기다림). 상태 묻기 · 로그아웃은 저장된 값만 보고 바로 답한다
+  //   기록 시작 · 종료는 엔진 serial 줄에 선다(handle) — 로그인 줄과는 따로
   const gen = loginGen;                           // 도착 순서 — 뒤에 온 로그아웃이 앞서 온 연결을 이긴다
   const run = m.type === 'JIN_CONNECT' ? authSerial(() => fn(m, gen)) : authReady.then(() => fn(m, gen));
   run.then((r) => {
