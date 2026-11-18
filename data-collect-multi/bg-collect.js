@@ -23,14 +23,15 @@
  *   읽는 목적(scenario)은 기록 시작 전에 팝업에서 받아 start 기록에 싣는다 → session.scenario.
  *   라벨은 팝업 [평가 시작] → label 명령 → 모든 탭으로 전달(#83 — 기록 중인 탭마다 그 글의 평가가 켜진다). 라벨 데이터 자체는
  *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
- *   글마다 [이 글 평가 끝]은 정지하지 않는다(label:done keep, #83). 마지막 정지 → 내보내기는 청크 6 에서.
- *   (옛 경로: 라벨 [완료] → stop(reason 'labeled') → 정지 + 1.5초 뒤 내보내기 탭 — 코드는 남아 있다)
+ *   글마다 [이 글 평가 끝]은 정지하지 않는다(label:done keep, #83). 전부 끝낸 뒤 마지막 [완료 · 저장](답 칸 · 설문 뒤) →
+ *   그 탭이 stop(reason 'labeled', answer) 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 기록 = 한 테스트 세트).
  *
  * --- 테스트 번호 (#83, 옛 #24 의 링크 번호 자리) --------------------------------------
  *   조건 태그(Q1 · Q2)는 없다 — 질문을 통일했다(11-17 서현). tester.tag 는 키만 남기고 늘 null(형식 그대로).
  *   테스트 번호 = 이번에 푸는 테스트 세트 번호 'test000' ~ 'test199'. 팝업이 start 에 linkNo 로 싣는다(이름은 옛 것 그대로).
  *   없으면 시작 거절.
- *   정답 / 오답 = 평가의 설문 앞 팝업에서 참가자가 고른 값(O · X). 평가 [완료]의 stop(reason 'labeled')에 answer 로 온다.
+ *   답 = 마지막 답 칸에 참가자가 적은 채점(질문 순서대로, 예: OOX — 영문 대문자 · 숫자 1~10자, #83). 마지막 [완료]의
+ *   stop(reason 'labeled')에 answer 로 온다. 모양이 아니면 null → 파일 이름은 NOANS.
  *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
  *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
  *
@@ -61,7 +62,7 @@ const CONSENT_VERSION = 4;    // consent.html 고지문 버전과 같아야 한�
 
 const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
 const LINK_MAX = 199;         // 테스트 번호 test000 ~ test<LINK_MAX> (popup.js 의 목록과 같아야 한다)
-const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
+const ANSWER_RE = /^[A-Z0-9]{1,10}$/;   // 답 칸 (12-label, #83). 파일 이름에 들어가므로 이 글자만
 const K_EVAL = 'eval';        // 평가 목록 (#83, 맨 위 주석)
 
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, at } | null
@@ -120,6 +121,9 @@ Object.assign(VERSION, {
       // 이번 세션의 테스트 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
       linkNo: L && L.sessionId === S.sessionId ? L.linkNo : null,
       answer: L && L.sessionId === S.sessionId ? (L.answer || null) : null,
+      // 평가 중이면 { total, done } (#83) — 팝업이 "평가 중 · n개 중 m개 끝"을 보여 준다(앞 기록이 평가 중인 채 남은 것도 보이게)
+      evaluating: evOk() && EV.on
+        ? { total: EV.pages.length, done: EV.pages.filter((p) => EV.done[p.pageId]).length } : null,
       // 이 세션을 내보낸 뒤로 기록이 늘지 않았음 → 새로 시작해도 잃는 것이 없다 (#40)
       exported: !!(E && S.sessionId && E.sessionId === S.sessionId && E.seq === S.seq),
     };
@@ -161,7 +165,7 @@ handlers.stop = async (m, sender) => {
   const r = await coreStop(m, sender);
   if (was && EV && EV.on) { EV = Object.assign({}, EV, { on: false }); await chrome.storage.local.set({ [K_EVAL]: EV }); }
   if (was && m && m.reason === 'labeled' && L && L.sessionId === S.sessionId) {
-    L = Object.assign({}, L, { answer: ANSWERS.includes(m.answer) ? m.answer : null });
+    L = Object.assign({}, L, { answer: typeof m.answer === 'string' && ANSWER_RE.test(m.answer) ? m.answer : null });
     await chrome.storage.local.set({ [K_LINK]: L });
   }
   return r;
@@ -266,7 +270,8 @@ function listFor(tabId) {
     no: i + 1, pageId: p.pageId, title: p.title || p.url || p.pageId, done: !!EV.done[p.pageId],
     tabId: tabOf(p.pageId), here: p.pageId === here, diff: (EV.diff && EV.diff[p.pageId]) || 0,
   }));
-  return { items, allDone: items.length > 0 && items.every((x) => x.done) };
+  return { items, allDone: items.length > 0 && items.every((x) => x.done),
+           startedAt: S.epoch || null, testNo: L && L.sessionId === S.sessionId ? L.linkNo : null };   // "대상 아님" 바가 어느 기록인지 보여 준다
 }
 
 // 평가 중이면 글 탭마다 목록을 보낸다. 기다리지 않는다 — 실패(content 없음 · 고아)는 그 탭만 못 받는다.

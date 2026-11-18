@@ -122,6 +122,13 @@
     $('s-val').textContent = st.scenario || '';
     if (!rec && !sTouched) $('s').value = st.scenario || '';
     $('btn-label').hidden = !rec || !!sk;                    // 기록 안 하는 사이트는 평가할 글이 없다
+    // 평가 중 (#83): 상태 줄 · 글 수 · 버튼 글자를 바꾼다. 확장을 새로고침해도 세션은 이어지므로 앞 기록이 평가 중인 채 남을 수 있다
+    const ev = rec ? st.evaluating : null;
+    if (ev && !sk) {
+      $('state').textContent = '평가 중';
+      $('meta').textContent = `글 ${ev.total}개 중 ${ev.done}개 평가 끝`;
+    }
+    $('btn-label').textContent = ev ? '평가 이어 하기' : '다 풀었어요 · 평가 시작';
 
     const btn = $('btn-rec');
     if (!btn.classList.contains('armed')) {
@@ -137,6 +144,10 @@
     $('btn-export').title = rec ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
     $('hint').textContent = sk
       ? '[기록 정지]를 누르면 기록을 아예 멈춰요. 그냥 다른 탭으로 가면 기록이 저절로 다시 이어져요.'
+      : ev
+      ? (ev.total && ev.done >= ev.total
+        ? '모든 글 평가가 끝났어요. 평가 바의 [완료]를 눌러 답 · 설문을 적고 저장하세요. 그만두려면 [기록 정지].'
+        : '평가 중이에요. 글마다 평가 바에서 [이 글 평가 끝]을 누르세요. 다 끝나면 [완료]. 그만두려면 [기록 정지].')
       : rec
       ? '이 창을 닫고 글들을 오가며 읽으세요. 다 풀었으면 다시 열어 [평가 시작]을 누르세요. 평가가 끝날 때까지 글 탭을 닫지 마세요.'
       : !$('link').value ? '먼저 테스트 번호를 고르세요. 고르면 [기록 시작]을 누를 수 있어요.'

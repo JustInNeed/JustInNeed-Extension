@@ -16,7 +16,7 @@
  *   없으면 NOTEST · NOANS · NOID 로 채우고 배너로 알린다(조용히 빼지 않는다). 평가 없이 정지한 기록은 NOANS.
  *   디버그 패널 [내보내기](6-frames download())는 옛 이름 rbc_<참여 번호>_<세션>_<시각>.json 그대로.
  *
- * 주소가 #export 로 열리면(팝업의 내보내기 · 평가 [완료] 뒤 자동) 첫 status 뒤 한 번 바로 내보낸다.
+ * 주소가 #export 로 열리면(팝업의 내보내기 · 마지막 평가 [완료 · 저장] 뒤 자동) 첫 status 뒤 한 번 바로 내보낸다.
  *
  * 예외: '연구자용 설정'의 디버그 패널 보이기는 chrome.storage.local 'ui:panel' 에 직접 쓴다.
  *   세션 · 동의 데이터가 아닌 화면 설정이라 background 를 거치지 않는다. content 쪽은 11-session 이 읽는다.

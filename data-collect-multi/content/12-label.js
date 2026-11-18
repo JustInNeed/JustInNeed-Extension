@@ -5,7 +5,7 @@
  * 의존(직접 호출): 0-core, 2-units, 3-hittest, 4-input(scroller), 5-recorder(isRecording),
  *                 6-frames(isPrimary), 8-overlay(rangeForUnit)
  * 발행: label:mode({ on }), label:ask({ answer, shownMs }), label:done({ cancelled, trigger, ratings, ... }), eval:go({ tabId })
- * 구독: cmd:label, cmd:evallist, units:changed, record:started, record:stopped
+ * 구독: cmd:label, cmd:evallist, units:changed, record:started, record:stopped, stat
  *
  * 명세: 라벨_명세_v2.md. 단계(phase):
  *   null(읽기) → 'ask'(다 읽었나요?) → 'rate'(문단 평정) → 'mark'(중요 유닛) → 'survey'(설문) → [완료]
@@ -19,7 +19,13 @@
  *   'done' = 이 글 평가를 마친 상태. 라벨 모드(틱 정지)와 가림막을 그대로 둔다 — 평가가 시작되면 읽기 기록으로 돌아가지
  *     않는다(가림막을 걷으면 링크로 새 글이 열려 읽기로 잡힌다). 평정 색을 칠해 두고, [다시 고치기]는 rate 로 돌아가
  *     값을 고친 뒤 label 을 하나 더 남긴다(취소 아닌 마지막 것이 정답, 명세 §6).
- *   평가 중 [취소] · Esc 는 없다. 정답 / 오답 팝업 · 설문은 마지막에 한 번(청크 6 에서) — 지금은 글마다 띄우지 않는다.
+ *   평가 중 [취소] · Esc 는 없다. 정답 / 오답 팝업 · 설문은 글마다 띄우지 않고 마지막에 한 번(아래 "마지막").
+ *   마지막(청크 6): 전부 ✓ 면 done 바의 [완료] → 답 칸 → 설문 → [완료] = exit(false) — keep 없는 label:done 이라
+ *     11-session 이 정지(labeled, answer)를 요청하고 background 가 내보내기 탭을 연다. 이 label 은 이 탭 글의 평정 · 표시를
+ *     그대로 다시 싣고 survey 만 채운다(취소 아닌 마지막 것이 정답이라 평정은 같다). [완료]는 done 단계에만 있으므로
+ *     이 탭이 그 글의 평정을 들고 있다(새로고침한 탭은 done 이 아니라 [완료]가 안 보인다).
+ *     답 칸 = 질문 순서대로의 채점(예: OOX). 영문 대문자 · 숫자만(소문자는 대문자로), 1~10자. 파일 이름 끝에만 붙는다.
+ *     마지막 [완료] 뒤에는 라벨 모드를 켠 채로 둔다 — 정지 방송이 오기 전 틱이 끼지 않게. 구간이 닫히면(record:stopped) 끈다.
  *   기록 중이 아닌 탭은 cmd:label 을 조용히 무시한다(모든 탭에 오므로 안내를 띄우면 엉뚱한 탭에 뜬다).
  *   phaseMs 키는 형식 그대로(ask · rate · mark · survey). 'done' 시간은 어디에도 더하지 않는다.
  *   글 목록(청크 4): background 가 cmd:evallist{ items:[{no,title,done,tabId,here}], allDone } 를 보낸다(11-session · 6-frames 경유).
@@ -31,6 +37,10 @@
  *     있음 → rate (label:mode show:true — 첫 틱 전이면 5-recorder 가 글 정보를 지금 보낸다). 평가 중에 새로고침 · 다시 연 탭.
  *     없음 → 'off' = "이번 기록에 없는 글" 바만 띄우고 라벨 모드만 켠다(틱 정지 = 읽기로 안 잡힘, 가림막 없음, label 안 남김).
  *     record:started 안에서 바로 켜므로 첫 틱보다 먼저다(틱은 setInterval).
+ *   준비 표시: 평가를 기다리는 동안(pendingEval) 이 프레임이 본문 준비 중(5-recorder stat.settling)이면 화면 가운데에
+ *     "글 준비 중 · 잠시만 기다려 주세요" + 도는 표시. 브런치처럼 본문이 늦게 조용해지는 글은 최대 6초(노션 15초) 걸린다.
+ *     20초가 넘으면 "본문을 찾지 못하고 있어요 · 새로고침" 안내로 바꾼다. 평가가 켜지거나(off 포함) 구간이 닫히면 걷는다.
+ *     클릭을 막지 않는다(pointer-events none) — 아직 기록 전이라 막을 이유가 없다.
  *   닫힌 글 = 목록 단추 "(닫힘 · 다시 열기)" — eval:go{pageId} 로 background 가 그 주소를 새 탭으로 연다.
  *   diff = 이 글을 다시 연 뒤 기록 때 없던 문단 수(background 가 셈). 0 이 아니면 바에 알린다(그 문단은 읽은 기록이 없음).
  *
@@ -89,11 +99,11 @@
     ['unsure', '기억 안 남'],
   ];
   const SURVEY = [  // 명세 §5. 객관식만
-    ['gain', '이 글에서 원하던 정보를 얻었나요?',
+    ['gain', '이번에 읽은 글들에서 원하던 정보를 얻었나요?',   // #83: 설문은 테스트 끝에 한 번 — 주어 = 읽은 글들 (11-18 서현)
       [['yes', '얻었다'], ['partly', '일부만'], ['no', '못 얻었다']]],
-    ['interest', '이 글 주제에 얼마나 관심이 있나요?',
+    ['interest', '이번 글들의 주제에 얼마나 관심이 있나요?',
       [[1, '전혀 없음'], [2, '조금'], [3, '어느 정도'], [4, '많음']]],
-    ['familiarity', '이 주제를 읽기 전에 얼마나 알고 있었나요?',
+    ['familiarity', '이 주제를 글들을 읽기 전에 얼마나 알고 있었나요?',
       [[1, '처음 봄'], [2, '조금 앎'], [3, '어느 정도 앎'], [4, '잘 앎']]],
   ];
   const END_HOLD_MS = 1000;      // 마지막 유닛이 연속으로 보여야 하는 시간
@@ -120,6 +130,7 @@
   let hoverPid = null;
   let evList = null;             // #83 평가 글 목록 (cmd:evallist) | null
   let pendingEval = false;       // #83 평가를 켜라는 명령을 받았고 아직 못 켰다 (maybeBegin)
+  let waitHost = null;           // #83 글 준비 중 표시 (화면 가운데)
 
   // 끝 도달
   let lastPid = null, lastPidDirty = true, lastRange = null;
@@ -318,6 +329,8 @@
         button:disabled{ opacity:.45; cursor:default; }
         .r-skip.on{ background:#ececec; border-color:#888; } .r-skim.on{ background:#e3eefb; border-color:#428cdc; }
         .r-unsure.on{ background:#f0e6f8; border-color:#965ac8; }
+        input.ans{ font:600 18px ui-monospace,monospace; letter-spacing:3px; padding:8px 12px; width:200px;
+          border:1px solid #cfd8cb; border-radius:8px; text-transform:uppercase; }
         .ls{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #e4ece0; }
         .ls button{ max-width:220px; overflow:hidden; text-overflow:ellipsis; font-size:12.5px; padding:5px 9px; }
         .ls button span{ color:#5d6b58; margin-left:4px; }
@@ -327,6 +340,7 @@
       </style>
       <div class="bar" role="dialog" aria-label="읽기 평가"></div>`;
     root.querySelector('.bar').addEventListener('click', onBarClick);
+    root.querySelector('.bar').addEventListener('input', onBarInput);   // #83 답 칸
     document.documentElement.appendChild(host);
   }
 
@@ -369,27 +383,30 @@
           <button data-a="redo">다시 고치기</button>
           ${evList && evList.allDone ? '<button class="ok" data-a="finish">완료</button>' : ''}</div>`;
     } else if (pop) {
-      h = `<div class="hd"><b>질문의 답을 맞혔나요?</b><small>직접 골라 주세요 · 다시 누르면 선택 해제</small></div>
-        <div class="row pick">
-          <button class="${answer === 'O' ? 'on' : ''}" data-ans="O">정답</button>
-          <button class="${answer === 'X' ? 'on' : ''}" data-ans="X">오답</button></div>
+      // #83: 답 칸 — 질문 순서대로 맞으면 O, 틀리면 X (예: OOX). 입력할 때마다 다시 그리지 않는다(글자 칸 포커스 유지)
+      h = `<div class="hd"><b>질문의 답을 채점해 적어 주세요</b><small>질문 순서대로 · 맞으면 O, 틀리면 X (예: OOX)</small></div>
+        <div class="row"><input class="ans" type="text" maxlength="10" autocomplete="off" spellcheck="false"
+          value="${esc(answer || '')}" placeholder="예: OOX" aria-label="채점 결과"></div>
         <div class="row" style="margin-top:12px"><span class="sp"></span>
           <button data-a="back">이전 단계</button>
-          <button class="ok" data-a="answered"${answer ? '' : ' disabled'}>다음</button>
-          <button data-a="cancel">취소</button></div>`;
+          <button class="ok" data-a="answered"${answer ? '' : ' disabled'}>다음</button></div>`;
     } else if (phase === 'survey') {
       const all = SURVEY.every(([k]) => survey[k] != null);
-      h = `<div class="hd"><b>마지막으로 세 가지만 골라 주세요</b></div>
+      h = `<div class="hd"><b>마지막으로 세 가지만 골라 주세요</b><small>이번 테스트에서 읽은 글 전체를 두고 답해 주세요</small></div>
         ${SURVEY.map(([k, q, opts]) => `<div class="q">${esc(q)}</div><div class="row">${opts.map(([v, t]) =>
           `<button class="${survey[k] === v ? 'on' : ''}" data-k="${k}" data-v="${v}">${esc(t)}</button>`).join('')}</div>`).join('')}
         <div class="row" style="margin-top:10px"><span class="sp"></span>
           <button data-a="back">이전 단계</button>
-          <button class="ok" data-a="done"${all ? '' : ' disabled'}>완료</button>
-          <button data-a="cancel">취소</button></div>`;
+          <button class="ok" data-a="done"${all ? '' : ' disabled'}>완료 · 저장</button></div>`;
     }
     if (phase === 'off') {                           // #83: 이번 기록에 없는 글 — 평가 대상 아님
+      // 어느 기록이 평가 중인지 — 앞 기록이 평가 중인 채 남은 경우(확장 새로고침은 세션을 안 끝냄)를 알아보게
+      const at = evList && evList.startedAt ? new Date(evList.startedAt) : null;
+      const hm = at ? `${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : '';
+      const which = [evList && evList.testNo, hm ? hm + ' 시작' : ''].filter(Boolean).join(' · ');
       h = `<div class="hd"><b>이 글은 이번 기록에 없는 글이라 평가하지 않아요</b>
-          <small>평가 중에는 읽은 기록도 남지 않아요 · 위 목록에서 평가할 글로 가세요</small></div>`;
+          <small>평가 중에는 읽은 기록도 남지 않아요 · 위 목록에서 평가할 글로 가세요</small></div>
+        ${which ? `<div class="warn">지금 평가 중인 기록: ${esc(which)} — 이 기록이 아니면 팝업에서 [기록 정지] 뒤 새로 시작하세요</div>` : ''}`;
     }
     const me = evList && evList.items ? evList.items.find((x) => x.here) : null;
     const diff = (phase === 'rate' || phase === 'mark') && me && me.diff
@@ -406,6 +423,17 @@
       return `<button class="${x.done ? 'dn' : ''}${x.here ? ' here' : ''}" data-go="${esc(x.pageId)}"` +
         `${off ? ' disabled' : ''} title="${esc(x.title)}">글 ${x.no}${x.done ? ' ✓' : ''}${tag}<span>${esc(x.title)}</span></button>`;
     }).join('')}</div>`;
+  }
+
+  // #83 답 칸: 대문자 · 숫자만 남기고 [다음]만 켜고 끈다(다시 그리면 포커스를 잃는다)
+  function onBarInput(e) {
+    const el = e.target;
+    if (!el || !el.classList || !el.classList.contains('ans')) return;
+    const v = String(el.value).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    if (el.value !== v) el.value = v;
+    answer = v || null;
+    const nx = root.querySelector('[data-a="answered"]');
+    if (nx) nx.disabled = !answer;
   }
 
   function onBarClick(e) {
@@ -435,9 +463,10 @@
         return undefined;
       case 'answered': answerOk = true; return render();
       case 'back':
-        if (phase === 'survey' && answerOk) { answerOk = false; return render(); }   // 설문 → 정답 / 오답 팝업
+        if (phase === 'survey' && answerOk) { answerOk = false; return render(); }   // 설문 → 답 칸
+        if (phase === 'survey') return go('done');    // #83 답 칸 → 이 글 평가 끝 바
         return go(phase === 'survey' ? 'mark' : 'rate');
-      case 'finish': return toast('모든 글 평가 끝 — 답 칸 · 설문 · 저장은 다음 청크(6)에서 붙어요. 지금은 팝업 [기록 정지]로 끝내세요.');
+      case 'finish': answerOk = false; return go('survey');   // #83 마지막: 답 칸 → 설문
       case 'redo': return go('rate');                // #83: 고친 뒤 다시 [이 글 평가 끝]이면 label 하나 더
       case 'done': return exit(false);
       case 'cancel': return exit(true);
@@ -615,10 +644,37 @@
     bus.emit('label:mode', { on, show: !!show });    // 5-recorder: 틱 멈춤 / 재개 (show #83: 헤더 "평가 중 합류")
   }
 
+  // #83 글 준비 중 표시 (헤더 "준비 표시"). ms = 기다린 시간(없으면 걷기)
+  function showWait(ms) {
+    if (ms == null) { if (waitHost) { waitHost.remove(); waitHost = null; } return; }
+    if (!waitHost) {
+      waitHost = document.createElement('div');
+      waitHost.id = 'rbc-label-wait';
+      waitHost.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;' +
+        'justify-content:center;pointer-events:none;';
+      const r = waitHost.attachShadow({ mode: 'open' });
+      r.innerHTML = `<style>
+          .c{ display:flex; flex-direction:column; align-items:center; gap:14px; padding:24px 30px; border-radius:14px;
+            background:#fff; color:#1f2a1c; box-shadow:0 8px 30px rgba(0,0,0,.22); border:1px solid #d9e8d2;
+            font:15px/1.5 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif; text-align:center; max-width:80vw; }
+          .s{ width:38px; height:38px; border-radius:50%; border:4px solid #dcebd5; border-top-color:#4caf3f;
+            animation:rbcspin .9s linear infinite; }
+          @keyframes rbcspin{ to{ transform:rotate(360deg); } }
+          small{ color:#5d6b58; font-size:12.5px; }
+        </style><div class="c"><div class="s"></div><b class="t"></b><small class="m"></small></div>`;
+      document.documentElement.appendChild(waitHost);
+    }
+    const r = waitHost.shadowRoot;
+    const slow = ms > 20000;
+    r.querySelector('.t').textContent = slow ? '본문을 찾지 못하고 있어요' : '글 준비 중 · 잠시만 기다려 주세요';
+    r.querySelector('.m').textContent = slow ? '페이지를 새로고침해 보세요' : '준비가 끝나면 평가 화면이 바로 떠요';
+  }
+
   // #83 평가 중 합류 (헤더). 목록에 있는 글이면 평정부터, 없는 글이면 'off'.
   function maybeBegin() {
     if (!pendingEval || phase || !evList || !RBC.recorder.isRecording()) return;
     pendingEval = false;
+    showWait(null);
     const me = RBC.util.pageId(location.href);
     if ((evList.items || []).some((x) => x.pageId === me)) { begin('rate', 'popup', true); return; }
     setMode(true);                                   // 읽기로 안 잡히게 틱만 멈춘다
@@ -665,7 +721,7 @@
     const payload = makePayload(cancelled);
     teardown();
     if (!silent) bus.emit('label:done', payload);   // 5-recorder: label 이벤트 → 11-session: 정지(완료일 때)
-    setMode(false);                                  // 5-recorder: 틱 재개
+    if (cancelled) setMode(false);                   // 5-recorder: 틱 재개. #83 마지막 [완료]는 켜 둔다(헤더 "마지막")
     if (!silent && !cancelled) toast('평가를 저장했습니다 · 기록을 마치고 파일로 저장합니다');
     if (!silent && cancelled) { nextAskAt = performance.now() + backoff; endSince = 0; }
   }
@@ -739,7 +795,13 @@
   });
 
   // 라벨 중에 구간이 닫히면(세션 정지 · 이동) 남길 곳이 없다 — 조용히 끈다.
-  bus.on('record:stopped', () => exit(true, true));
+  bus.on('record:stopped', () => { exit(true, true); setMode(false); pendingEval = false; showWait(null); });
+
+  // #83 글 준비 중 표시: 5-recorder 가 본문 준비 걸음마다 stat 을 낸다(이 프레임 것만 — 최상위는 다른 프레임 stat 도 받는다)
+  bus.on('stat', (d) => {
+    if (!d || !d.isPrimary) return;
+    showWait(pendingEval && !phase && d.settling && !d.recording ? d.settling.ms : null);
+  });   // #83: 마지막 [완료] 뒤 켜 둔 모드도 끈다
 
   RBC.label = { isOn: () => !!phase, phase: () => phase };
 
