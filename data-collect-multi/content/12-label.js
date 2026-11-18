@@ -4,8 +4,8 @@
  * 소유: phase, 평정 · 표시 · 설문 값, 끝 도달 판정 상태, 라벨 바 · 가림막 DOM
  * 의존(직접 호출): 0-core, 2-units, 3-hittest, 4-input(scroller), 5-recorder(isRecording),
  *                 6-frames(isPrimary), 8-overlay(rangeForUnit)
- * 발행: label:mode({ on }), label:ask({ answer, shownMs }), label:done({ cancelled, trigger, ratings, ... })
- * 구독: cmd:label, tick:done, units:changed, record:started, record:stopped
+ * 발행: label:mode({ on }), label:ask({ answer, shownMs }), label:done({ cancelled, trigger, ratings, ... }), eval:go({ tabId })
+ * 구독: cmd:label, cmd:evallist, units:changed, record:started, record:stopped
  *
  * 명세: 라벨_명세_v2.md. 단계(phase):
  *   null(읽기) → 'ask'(다 읽었나요?) → 'rate'(문단 평정) → 'mark'(중요 유닛) → 'survey'(설문) → [완료]
@@ -22,6 +22,10 @@
  *   평가 중 [취소] · Esc 는 없다. 정답 / 오답 팝업 · 설문은 마지막에 한 번(청크 6 에서) — 지금은 글마다 띄우지 않는다.
  *   기록 중이 아닌 탭은 cmd:label 을 조용히 무시한다(모든 탭에 오므로 안내를 띄우면 엉뚱한 탭에 뜬다).
  *   phaseMs 키는 형식 그대로(ask · rate · mark · survey). 'done' 시간은 어디에도 더하지 않는다.
+ *   글 목록(청크 4): background 가 cmd:evallist{ items:[{no,title,done,tabId,here}], allDone } 를 보낸다(11-session · 6-frames 경유).
+ *     평가 바 맨 위에 "글 1 ✓ · 글 2 · 글 3 (닫힘)" 단추 줄. 누르면 eval:go{tabId} → background 가 그 탭을 앞으로.
+ *     지금 글(here) · 닫힌 글(tabId null)은 못 누른다. 전부 ✓ 면 done 바에 [완료]가 켜진다(누르면 할 일은 청크 6).
+ *     목록이 아직 안 왔으면 줄을 안 그린다.
  *
  * --- 정답 / 오답 (#24) -------------------------------------------------------------
  *   설문 단계에 들어가면 설문 질문보다 먼저 "질문의 답을 맞혔나요?" [정답] [오답] 팝업을 띄운다(참가자가 고름).
@@ -107,6 +111,7 @@
   let answerOk = false;          // 팝업에서 [다음]을 눌렀나 — false 면 survey 단계가 팝업을 보여 준다
   let zeroOk = false;            // mark: 0개로 넘어가기 확인
   let hoverPid = null;
+  let evList = null;             // #83 평가 글 목록 (cmd:evallist) | null
 
   // 끝 도달
   let lastPid = null, lastPidDirty = true, lastRange = null;
@@ -305,6 +310,12 @@
         button:disabled{ opacity:.45; cursor:default; }
         .r-skip.on{ background:#ececec; border-color:#888; } .r-skim.on{ background:#e3eefb; border-color:#428cdc; }
         .r-unsure.on{ background:#f0e6f8; border-color:#965ac8; }
+        .ls{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #e4ece0; }
+        .ls button{ max-width:220px; overflow:hidden; text-overflow:ellipsis; font-size:12.5px; padding:5px 9px; }
+        .ls button span{ color:#5d6b58; margin-left:4px; }
+        .ls button.dn{ background:#eef7ea; border-color:#9fd193; }
+        .ls button.here{ border-color:#2f7d24; border-width:2px; font-weight:600; }
+        .ls button.here:disabled{ opacity:1; }
       </style>
       <div class="bar" role="dialog" aria-label="읽기 평가"></div>`;
     root.querySelector('.bar').addEventListener('click', onBarClick);
@@ -344,8 +355,11 @@
       h = `<div class="hd"><b>이 글 평가를 마쳤어요 ✓</b>
           <small>다른 글 탭으로 가서 평가를 이어 가세요 · 칠해진 색 = 내가 고른 평정</small>
           <span class="n">평정 ${ratings.size}개 · 중요 ${marks.size}개</span></div>
-        <div class="row"><span class="sp"></span>
-          <button data-a="redo">다시 고치기</button></div>`;
+        <div class="row">${evList && evList.items && !evList.allDone
+            ? `<span>남은 글 ${evList.items.filter((x) => !x.done).length}개 · 위 목록에서 눌러 가세요</span>` : ''}
+          <span class="sp"></span>
+          <button data-a="redo">다시 고치기</button>
+          ${evList && evList.allDone ? '<button class="ok" data-a="finish">완료</button>' : ''}</div>`;
     } else if (pop) {
       h = `<div class="hd"><b>질문의 답을 맞혔나요?</b><small>직접 골라 주세요 · 다시 누르면 선택 해제</small></div>
         <div class="row pick">
@@ -365,13 +379,25 @@
           <button class="ok" data-a="done"${all ? '' : ' disabled'}>완료</button>
           <button data-a="cancel">취소</button></div>`;
     }
-    bar.innerHTML = h;
+    bar.innerHTML = (phase === 'rate' || phase === 'mark' || phase === 'done' ? listRow() : '') + h;
+  }
+
+  // #83 글 목록 줄. 지금 글 = 굵은 테두리(못 누름), 닫힌 글 = (닫힘)(못 누름), 끝낸 글 = ✓
+  function listRow() {
+    if (!evList || !evList.items || !evList.items.length) return '';
+    return `<div class="ls">${evList.items.map((x) => {
+      const off = x.here || x.tabId == null;
+      const tag = x.here ? ' (지금)' : x.tabId == null ? ' (닫힘)' : '';
+      return `<button class="${x.done ? 'dn' : ''}${x.here ? ' here' : ''}" data-go="${x.tabId == null ? '' : x.tabId}"` +
+        `${off ? ' disabled' : ''} title="${esc(x.title)}">글 ${x.no}${x.done ? ' ✓' : ''}${tag}<span>${esc(x.title)}</span></button>`;
+    }).join('')}</div>`;
   }
 
   function onBarClick(e) {
     const b = e.target.closest && e.target.closest('button');
     if (!b || b.disabled) return;
     if (b.dataset.r) return rate(b.dataset.r);
+    if (b.dataset.go) return bus.emit('eval:go', { tabId: Number(b.dataset.go) });   // #83 → 11-session → background
     if (b.dataset.ans) {                              // 정답 / 오답: 같은 것을 다시 누르면 해제
       answer = answer === b.dataset.ans ? null : b.dataset.ans;
       return render();
@@ -396,6 +422,7 @@
       case 'back':
         if (phase === 'survey' && answerOk) { answerOk = false; return render(); }   // 설문 → 정답 / 오답 팝업
         return go(phase === 'survey' ? 'mark' : 'rate');
+      case 'finish': return toast('모든 글 평가 끝 — 답 칸 · 설문 · 저장은 다음 청크(6)에서 붙어요. 지금은 팝업 [기록 정지]로 끝내세요.');
       case 'redo': return go('rate');                // #83: 고친 뒤 다시 [이 글 평가 끝]이면 label 하나 더
       case 'done': return exit(false);
       case 'cancel': return exit(true);
@@ -648,6 +675,12 @@
   bus.on('cmd:label', () => {
     if (phase === 'ask') answerAsk('yes');
     else if (!phase) begin('rate', 'popup');
+  });
+
+  // #83 글 목록: 받을 때마다 바를 다시 그린다(평가 중이 아니면 들고만 있다)
+  bus.on('cmd:evallist', (list) => {
+    evList = list || null;
+    render();
   });
 
   // 끝 도달 질문 카드는 쓰지 않는다(#83) — tick:done 을 구독하지 않는다. 평가는 팝업 [평가 시작]으로만.

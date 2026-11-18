@@ -34,12 +34,23 @@
  *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
  *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
  *
+ * --- 평가 목록 (#83) ------------------------------------------------------------------
+ *   'eval' 키 = { sessionId, on, pages: [{ pageId, url, title }], done: { pageId: true } }. 로그 밖 — JSON 에 안 들어간다.
+ *   pages = 이번 기록에 잡힌 글(page 기록이 온 순서 = 글 1, 2, 3…). 기록 안 하는 사이트는 page 를 안 보내므로 안 들어간다.
+ *   done = 그 글의 취소 아닌 label 이벤트가 flush 로 들어왔다. 판정을 따로 두지 않고 기록 그 자체를 본다.
+ *   on = [평가 시작]을 눌렀다. 기록 시작 때 새로 만들고, 정지 때 끈다.
+ *   목록(evallist)은 글을 보여 주는 탭(S.tabPage)마다 보낸다 — 평가 시작 · 글 하나 끝 · 탭 닫힘 · 탭 전환 때.
+ *     탭마다 here(이 탭의 글)를 달리 싣는다. 탭이 없는 글 = 닫힘(다시 열기는 청크 5).
+ *   탭 전환 때는 label 명령도 다시 보낸다 — 절전 탭이 [평가 시작]을 놓쳤어도 보는 순간 평가가 켜진다.
+ *   evalgo{tabId} = 평가 바의 목록에서 글을 눌렀다 → 그 탭 · 창을 앞으로.
+ *   보내기는 기다리지 않는다(serial 안의 handler 에서 탭 응답을 기다리면 다음 기록이 밀린다).
+ *
  * --- 내보냄 기억 (#40, 11-05 서현) ------------------------------------------------
  *   export 가 성공하면 { sessionId, seq } 를 'exported' 키에 둔다. status.exported = 이 세션을 내보낸 뒤로 기록이 늘지 않음.
  *   팝업은 exported 면 "새로 시작하면 지워집니다" 경고 · 두 번 누르기를 하지 않는다(이미 파일로 나갔으므로).
  *   파일이 실제로 저장됐는지는 모른다(a.download) — 저장 창에서 취소해도 내보낸 것으로 친다(예상: 크롬 기본은 창 없이 저장).
  * ========================================================================== */
-/* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField, skipClearAll */
+/* global VERSION, handlers, S:writable, emptyState, saveState, removeLog, broadcast, sessionMsg, cleanField, skipClearAll, serial */
 'use strict';
 
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
@@ -48,9 +59,11 @@ const CONSENT_VERSION = 4;    // consent.html 고지문 버전과 같아야 한�
 const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
 const LINK_MAX = 199;         // 테스트 번호 test000 ~ test<LINK_MAX> (popup.js 의 목록과 같아야 한다)
 const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
+const K_EVAL = 'eval';        // 평가 목록 (#83, 맨 위 주석)
 
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, at } | null
 let L = null;                 // { linkNo, sessionId, answer } | null
+let EV = null;                // 평가 목록 { sessionId, on, pages, done } | null (#83)
 const K_EXPORTED = 'exported'; // 마지막으로 내보낸 { sessionId, seq } (#40). 로그 밖 — JSON 에 안 들어간다
 let E = null;
 
@@ -82,9 +95,10 @@ function testerInfo() {
 
 Object.assign(VERSION, {
   mode: 'download',
-  ready: chrome.storage.local.get([K_CONSENT, K_LINK, K_EXPORTED]).then((r) => {
+  ready: chrome.storage.local.get([K_CONSENT, K_LINK, K_EXPORTED, K_EVAL]).then((r) => {
     C = r[K_CONSENT] || null;
     L = r[K_LINK] || null;
+    EV = r[K_EVAL] || null;
     E = r[K_EXPORTED] || null;
   }),
   async gate() { return consentValid() ? null : 'no-consent'; },
@@ -129,7 +143,8 @@ handlers.start = async (m, sender) => {
   const r = await coreStart(m, sender);
   if (r && r.rbc === 'start') {
     L = { linkNo, sessionId: S.sessionId };
-    await chrome.storage.local.set({ [K_LINK]: L });
+    EV = { sessionId: S.sessionId, on: false, pages: [], done: {} };   // #83
+    await chrome.storage.local.set({ [K_LINK]: L, [K_EVAL]: EV });
   }
   return r;
 };
@@ -141,6 +156,7 @@ const coreStop = handlers.stop;
 handlers.stop = async (m, sender) => {
   const was = S.recording;
   const r = await coreStop(m, sender);
+  if (was && EV && EV.on) { EV = Object.assign({}, EV, { on: false }); await chrome.storage.local.set({ [K_EVAL]: EV }); }
   if (was && m && m.reason === 'labeled' && L && L.sessionId === S.sessionId) {
     L = Object.assign({}, L, { answer: ANSWERS.includes(m.answer) ? m.answer : null });
     await chrome.storage.local.set({ [K_LINK]: L });
@@ -154,6 +170,7 @@ Object.assign(handlers, {
   //   content script 가 없는 탭(chrome:// · 새로고침 전)은 보내기가 실패한다 — 세어서 돌려준다(팝업이 숫자를 보여 줌).
   async label() {
     if (!S.recording) return { ok: false, why: 'not-recording' };
+    if (evOk() && !EV.on) { EV = Object.assign({}, EV, { on: true }); await chrome.storage.local.set({ [K_EVAL]: EV }); }
     const tabs = await chrome.tabs.query({});
     let sent = 0, failed = 0;
     await Promise.all(tabs.map(async (t) => {
@@ -161,7 +178,18 @@ Object.assign(handlers, {
       catch (e) { failed++; }
     }));
     if (!sent) return { ok: false, why: 'no-content' };
+    pushList();
     return { ok: true, sent, failed };
+  },
+
+  // 평가 바 목록에서 글을 눌렀다 (#83): 그 탭 · 창을 앞으로. 이번 기록의 글 탭만.
+  async evalgo(m) {
+    const tabId = m && Number(m.tabId);
+    if (!S.recording || !evOk() || !EV.on) return { ok: false, why: 'not-evaluating' };
+    if (!(String(tabId) in S.tabPage)) return { ok: false, why: 'no-tab' };
+    const t = await chrome.tabs.update(tabId, { active: true });
+    if (t && t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
+    return { ok: true };
   },
 
   // 동의 페이지가 보낸다. version = 그 페이지가 보여준 고지문 버전.
@@ -211,6 +239,66 @@ Object.assign(handlers, {
     return { ok: true };
   },
 });
+
+// ============================================================================
+// 평가 목록 (#83, 맨 위 주석)
+// ============================================================================
+function evOk() { return !!(EV && EV.sessionId && EV.sessionId === S.sessionId); }
+
+// 글을 보여 주는 탭 (같은 글을 두 탭에 열었으면 먼저 찾은 것)
+function tabOf(pageId) {
+  for (const [id, p] of Object.entries(S.tabPage)) if (p === pageId) return Number(id);
+  return null;
+}
+
+function listFor(tabId) {
+  const here = S.tabPage[tabId];
+  const items = EV.pages.map((p, i) => ({
+    no: i + 1, title: p.title || p.url || p.pageId, done: !!EV.done[p.pageId],
+    tabId: tabOf(p.pageId), here: p.pageId === here,
+  }));
+  return { items, allDone: items.length > 0 && items.every((x) => x.done) };
+}
+
+// 평가 중이면 글 탭마다 목록을 보낸다. 기다리지 않는다 — 실패(content 없음 · 고아)는 그 탭만 못 받는다.
+function pushList(alsoLabelTab) {
+  if (!S.recording || !evOk() || !EV.on) return;
+  for (const id of Object.keys(S.tabPage)) {
+    const tabId = Number(id);
+    if (tabId === alsoLabelTab) chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(() => {});
+    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(() => {});
+  }
+}
+
+// 글 목록 · 평가 끝 표시는 엔진 page · flush 를 그대로 부른 뒤에 본다(받기 성공한 것만).
+const corePage = handlers.page;
+handlers.page = async (m, sender) => {
+  const r = await corePage(m, sender);
+  if (r && r.ok && evOk() && !EV.pages.some((p) => p.pageId === m.pageId)) {
+    const meta = m.meta || {};
+    EV = Object.assign({}, EV, { pages: EV.pages.concat([{ pageId: m.pageId, url: meta.url || '', title: meta.title || '' }]) });
+    await chrome.storage.local.set({ [K_EVAL]: EV });
+    pushList();
+  }
+  return r;
+};
+const coreFlush = handlers.flush;
+handlers.flush = async (m, sender) => {
+  const r = await coreFlush(m, sender);
+  const labeled = r && r.ok && evOk() && m && Array.isArray(m.events) &&
+    m.events.some((e) => e && e.type === 'label' && !e.cancelled);
+  if (labeled && !EV.done[m.pageId]) {
+    EV = Object.assign({}, EV, { done: Object.assign({}, EV.done, { [m.pageId]: true }) });
+    await chrome.storage.local.set({ [K_EVAL]: EV });
+    pushList();
+  }
+  return r;
+};
+
+// 탭이 닫히면 다른 탭의 목록에 "닫힘"이 보이게. 엔진의 onRemoved(S.tabPage 지우기)가 먼저 줄을 선다(파일 순서).
+chrome.tabs.onRemoved.addListener(() => serial(async () => pushList()).catch((e) => console.warn('[RBC] 평가 목록', e)));
+// 탭 전환: 그 탭에 평가 명령 · 목록을 다시 보낸다(놓친 [평가 시작] 따라잡기).
+chrome.tabs.onActivated.addListener(({ tabId }) => serial(async () => pushList(tabId)).catch((e) => console.warn('[RBC] 평가 목록', e)));
 
 // 새로 설치하면 동의 페이지를 연다. 업데이트·확장 새로고침(reason 'update')에서는 안 연다.
 chrome.runtime.onInstalled.addListener(({ reason }) => {

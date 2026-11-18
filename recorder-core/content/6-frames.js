@@ -99,6 +99,7 @@
       case 'overlay': if (isPrimary) bus.emit('cmd:overlay', m); break;
       case 'list':    if (isPrimary) bus.emit('cmd:list'); break;
       case 'label':   if (isPrimary) bus.emit('cmd:label'); break;   // 12-label (팝업 "다 읽었어요")
+      case 'evallist': if (isPrimary) bus.emit('cmd:evallist', m.list); break;   // 12-label 평가 글 목록 (여러 글 버전 #83)
     }
   }
 
