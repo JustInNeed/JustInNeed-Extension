@@ -13,7 +13,7 @@
  * 잃는 것이 없으므로 경고 없이 한 번에 시작한다 (#40, 11-05 서현).
  *
  * 읽는 목적도 검색어와 같은 규칙 — 기록 시작 전에만 받는다.
- * 링크 번호(#24): 000~300 목록에서 골라야 [기록 시작]이 눌린다. 오타가 나지 않게 직접 입력은 받지 않는다.
+ * 테스트 번호(#83, 옛 링크 번호 자리): test000~test199 목록에서 골라야 [기록 시작]이 눌린다. 오타가 나지 않게 직접 입력은 받지 않는다.
  *   팝업을 열 때마다 비어 있다 — 앞 글의 번호로 다음 글을 시작하는 실수를 막는다. 기록 중에는 고른 번호를 보여 준다.
  * "다 읽었어요"(기록 중에만): 지금 보고 있는 탭에 라벨 모드를 켜고 팝업을 닫는다.
  *
@@ -37,7 +37,7 @@
 
   const WHY = {
     'no-consent': '동의가 없어 기록을 시작할 수 없습니다.',
-    'no-link': '링크 번호를 고르세요.',
+    'no-link': '테스트 번호를 고르세요.',
     'not-recording': '기록 중일 때만 중요한 부분을 고를 수 있습니다.',
     'no-tab': '지금 보고 있는 탭을 찾지 못했습니다.',
     'no-content': '이 탭에서는 고를 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요.',
@@ -65,10 +65,10 @@
     window.close();
   }
 
-  // 링크 번호 목록 000 ~ LINK_MAX (bg-collect.js 의 LINK_MAX 와 같아야 한다)
-  const LINK_MAX = 300;
+  // 테스트 번호 목록 test000 ~ test<LINK_MAX> (bg-collect.js 의 LINK_MAX 와 같아야 한다)
+  const LINK_MAX = 199;
   for (let n = 0; n <= LINK_MAX; n++) {
-    const v = String(n).padStart(3, '0');
+    const v = 'test' + String(n).padStart(3, '0');
     $('link').add(new Option(v, v));
   }
 
@@ -95,9 +95,7 @@
     if (!joined) {
       $('consent-text').textContent = !c
         ? '기록을 시작하려면 먼저 테스트 참여에 동의해야 합니다.'
-        : c.version === st.consentVersion && !c.tagValid
-          ? '조건 태그를 고르는 방식으로 바뀌었습니다. 동의 페이지에서 조건 태그(Q1 · Q2)를 고르고 다시 동의해 주세요.'
-          : '안내 내용이 바뀌어 다시 동의가 필요합니다. 동의 페이지에서 참여 번호를 확인해 주세요.';
+        : '안내 내용이 바뀌어 다시 동의가 필요합니다. 동의 페이지에서 참여 번호를 확인해 주세요.';
       return;
     }
 
@@ -114,7 +112,7 @@
 
     $('l-edit').hidden = rec;
     $('l-show').hidden = !rec || !st.linkNo;
-    $('l-val').textContent = st.linkNo ? `#${st.linkNo}` : '';
+    $('l-val').textContent = st.linkNo || '';
     $('q-edit').hidden = rec;
     $('q-show').hidden = !rec || !st.query;
     $('q-val').textContent = st.query || '';
@@ -141,7 +139,7 @@
       ? '[기록 정지]를 누르면 기록을 아예 멈춰요. 그냥 다른 탭으로 가면 기록이 저절로 다시 이어져요.'
       : rec
       ? '이 창을 닫고 글을 읽으세요. 끝까지 내리면 평가 질문이 뜹니다. 안 뜨면 다시 열어 [다 읽었어요]를 누르세요.'
-      : !$('link').value ? '먼저 링크 번호를 고르세요. 고르면 [기록 시작]을 누를 수 있어요.'
+      : !$('link').value ? '먼저 테스트 번호를 고르세요. 고르면 [기록 시작]을 누를 수 있어요.'
         : '기록 시작을 누르면 이 창이 닫힙니다. 창이 닫힌 뒤 글을 읽으세요.';
     $('tid').textContent = c.participantNo || '';
     renderConn(rec);
@@ -194,7 +192,7 @@
         : conn.units ? `이 탭 연결됨 · 본문 ${conn.units}부분 인식`
           : '이 탭 연결됨 · 본문을 찾는 중 — 잠시 뒤 다시 열어 보세요';
     $('btn-reload').hidden = !bad || !!conn.closed;
-    $('btn-rec').disabled = !rec && (bad || !$('link').value);   // 시작은 연결된 탭 + 링크 번호가 있어야
+    $('btn-rec').disabled = !rec && (bad || !$('link').value);   // 시작은 연결된 탭 + 테스트 번호가 있어야
   }
 
   $('btn-reload').addEventListener('click', async () => {

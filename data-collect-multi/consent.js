@@ -3,17 +3,17 @@
  *
  * background 에 요청만 한다. 동의 여부 판정·저장·게이트는 전부 background 소유다.
  *   status   → 어느 화면을 보여줄지 (동의 없음 / 안내 변경 / 참여 중)
- *   consent  → { version, participantNo, name, tag }. version 은 이 페이지 고지문의 버전
- *              참여 번호 = 연구자가 준 번호(필수). 조건 태그 = Q1 · Q2 중 선택(필수, #24).
+ *   consent  → { version, participantNo, name }. version 은 이 페이지 고지문의 버전
+ *              참여 번호 = 연구자가 준 번호(필수). 조건 태그는 없다(#83 — 질문 통일).
  *              testId 는 화면에서 '설치 ID' 로 부른다
  *   clear    → 기록만 삭제 (기록 중이면 거절)
  *   withdraw → 정지 + 기록 · 참여 정보 삭제
  *   export   → bundle 을 받아 JSON 파일로 저장 (파일 이름은 아래 "파일 이름 (#24)")
  *
- * 파일 이름 (#24): <링크 3자리>_rbc_<참여 번호>_<조건 태그>_<세션 앞 8자>_<시각>_<O|X>.json
- *   링크 번호 · 정답 여부는 status.linkNo · status.answer(이번 기록의 것 — 정답 / 오답은 평가의 설문 앞 팝업에서
- *   참가자가 고름, 12-label), 참여 번호 · 태그는 bundle 의 session.tester(기록 시작 때 복사본). JSON 은 그대로(10-31 서현).
- *   없으면 NOLINK · NOANS · NOID · NOTAG 로 채우고 배너로 알린다(조용히 빼지 않는다). 평가 없이 정지한 기록은 NOANS.
+ * 파일 이름 (#83): <테스트 번호>_rbc_<참여 번호>_<세션 앞 8자>_<시각>_<답>.json   예: test001_rbc_P01_1a2b3c4d_1763…_OOX.json
+ *   테스트 번호 · 답은 status.linkNo · status.answer(이번 기록의 것, 12-label), 참여 번호는 bundle 의
+ *   session.tester(기록 시작 때 복사본). JSON 은 그대로(10-31 서현). 조건 태그 칸은 뺐다(#83).
+ *   없으면 NOTEST · NOANS · NOID 로 채우고 배너로 알린다(조용히 빼지 않는다). 평가 없이 정지한 기록은 NOANS.
  *   디버그 패널 [내보내기](6-frames download())는 옛 이름 rbc_<참여 번호>_<세션>_<시각>.json 그대로.
  *
  * 주소가 #export 로 열리면(팝업의 내보내기 · 평가 [완료] 뒤 자동) 첫 status 뒤 한 번 바로 내보낸다.
@@ -36,7 +36,6 @@
     'no-consent': '동의가 없어 처리할 수 없습니다.',
     'no-participant': '참여 번호를 입력하세요.',
     'no-name': '이름을 입력하세요.',
-    'no-tag': '조건 태그(Q1 · Q2)를 고르세요.',
     'consent-version': '안내 내용이 바뀌었습니다. 이 페이지를 새로고침한 뒤 다시 동의하세요.',
     'recording': '기록 중에는 삭제할 수 없습니다. 먼저 기록을 정지하세요.',
   };
@@ -83,25 +82,15 @@
     return h ? `${h}시간 ${m}분` : `${m}분 ${sec}초`;
   }
 
-  // 조건 태그 선택 (Q1 · Q2 라디오). 안 골랐으면 ''
-  function tagValue() {
-    const r = document.querySelector('input[name="tag"]:checked');
-    return r ? r.value : '';
-  }
-  function setTag(v) {
-    for (const r of document.querySelectorAll('input[name="tag"]')) r.checked = r.value === v;
-  }
-
   // 파일 이름에 못 쓰는 글자는 _ 로
   const safe = (v) => String(v).replace(/[^A-Za-z0-9_-]/g, '_');
   function fileName(bundle) {
     const t = bundle.session.tester || {};
-    const link = st.linkNo || 'NOLINK';
+    const link = st.linkNo || 'NOTEST';
     const answer = st.answer || 'NOANS';
     const pno = safe(t.participantNo || 'NOID');
-    const tag = safe(t.tag || 'NOTAG');
     const sid = (bundle.session.sessionId || 'nosid').slice(0, 8);
-    return `${link}_rbc_${pno}_${tag}_${sid}_${Date.now()}_${answer}.json`;
+    return `${link}_rbc_${pno}_${sid}_${Date.now()}_${answer}.json`;
   }
 
   function setView(v) {
@@ -120,14 +109,11 @@
     const c = st.consent;
     if (!c || !c.valid) {
       setView('consent');
-      // 다시 동의(안내 버전 변경 · 조건 태그가 Q1/Q2 가 아님): 아는 값을 채워둔다 (설치 ID 는 background 가 유지)
+      // 다시 동의(안내 버전 변경): 아는 값을 채워둔다 (설치 ID 는 background 가 유지)
       if (c && !c.valid && !$('f-name').value) {
         $('f-no').value = c.participantNo || '';
         $('f-name').value = c.name || '';
-        setTag(c.tag);
-        show(c.version === VERSION && !c.tagValid
-          ? '조건 태그를 고르는 방식으로 바뀌었습니다. 조건 태그(Q1 · Q2)를 고르고 다시 동의하세요.'
-          : '안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호를 확인하고 다시 동의하세요.', 'warn');
+        show('안내 내용이 바뀌어 다시 동의가 필요합니다. 참여 번호를 확인하고 다시 동의하세요.', 'warn');
       }
       syncAgree();
       return;
@@ -137,7 +123,6 @@
     $('j-no').textContent = c.participantNo;
     $('j-id').textContent = c.testId;
     $('j-name').textContent = c.name;
-    $('j-tag').textContent = c.tag;
     $('j-at').textContent = fmtDate(c.at);
 
     $('s-dot').classList.toggle('on', st.recording);
@@ -152,7 +137,7 @@
     $('btn-export').title = st.recording ? '기록을 정지한 뒤에 내보낼 수 있습니다' : '';
     // 미리보기는 지금 동의 정보로 만든다. 실제 이름은 기록 시작 때 복사본(bundle tester) — 내보낸 뒤 배너에 실제 이름
     $('export-name').textContent = st.recording || !st.records ? ''
-      : `파일 이름(예상): ${st.linkNo || 'NOLINK'}_rbc_${safe(c.participantNo)}_${safe(c.tag)}_…_${st.answer || 'NOANS'}.json`;
+      : `파일 이름(예상): ${st.linkNo || 'NOTEST'}_rbc_${safe(c.participantNo)}_…_${st.answer || 'NOANS'}.json`;
     $('btn-clear').disabled = st.recording || !st.records;
     $('btn-clear').title = st.recording ? '기록을 정지한 뒤에 지울 수 있습니다' : '';
   }
@@ -172,11 +157,10 @@
   // 동의 폼
   // ---------------------------------------------------------------------------
   function syncAgree() {
-    $('btn-agree').disabled = !($('f-no').value.trim() && $('f-name').value.trim() && tagValue() && $('f-agree').checked);
+    $('btn-agree').disabled = !($('f-no').value.trim() && $('f-name').value.trim() && $('f-agree').checked);
   }
   $('f-no').addEventListener('input', syncAgree);
   $('f-name').addEventListener('input', syncAgree);
-  $('f-tag').addEventListener('change', syncAgree);
   $('f-agree').addEventListener('change', syncAgree);
 
   $('form').addEventListener('submit', async (ev) => {
@@ -185,7 +169,7 @@
     $('btn-agree').disabled = true;
     try {
       const r = await bg({ rbc: 'consent', version: VERSION, participantNo: $('f-no').value,
-                           name: $('f-name').value, tag: tagValue() });
+                           name: $('f-name').value });
       show(`참여 번호 ${r.consent.participantNo} 로 동의했습니다. 이제 기록을 시작할 수 있습니다.`);
       await refresh();
       window.scrollTo(0, 0);
@@ -208,7 +192,7 @@
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);   // 탭이라 여유 있게
-    const missing = ['NOLINK', 'NOANS', 'NOID', 'NOTAG'].filter((k) => name.includes(k));
+    const missing = ['NOTEST', 'NOANS', 'NOID'].filter((k) => name.includes(k));
     if (missing.length) {
       show(`파일로 내보냈지만 이름에 빠진 정보가 있습니다(${missing.join(' · ')}): ${name} — 연구 담당자에게 알려주세요.`, 'warn');
     } else {
@@ -251,7 +235,7 @@
 
   twoStep($('btn-withdraw'), '한 번 더 누르면 철회', async () => {
     await bg({ rbc: 'withdraw' });
-    $('f-no').value = ''; $('f-name').value = ''; setTag(''); $('f-agree').checked = false;
+    $('f-no').value = ''; $('f-name').value = ''; $('f-agree').checked = false;
     show('동의를 철회했습니다. 이 브라우저의 기록과 참여 정보를 모두 지웠습니다.');
   });
 

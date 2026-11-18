@@ -12,7 +12,7 @@
  *   로그를 지워도 남는다. version 이 CONSENT_VERSION 과 다르면 없는 것으로 본다
  *   (고지문을 바꾸면 다시 받는다). 동의 페이지는 자기가 보여준 고지문의 version 을
  *   보내고, 여기서 다르면 거절한다 — 옛 페이지로 새 동의가 들어오는 것을 막는다.
- *   참가자 정보(참여 번호·testId·이름·조건 태그)는 start 기록에 복사된다. 그래서 bundle 의
+ *   참가자 정보(참여 번호·testId·이름)는 start 기록에 복사된다. 그래서 bundle 의
  *   session.tester 도 assemble() 이 로그만 보고 만든다(순수 함수 유지).
  *   참여 번호(participantNo) = 연구자가 정해 준 사람 식별자 (필수, 공백 정리 · 대문자 · 20자).
  *   testId = 이 설치의 난수 ID. 같은 사람이 재설치 · 철회 뒤 재동의하면 testId 는 바뀌고
@@ -25,10 +25,10 @@
  *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
  *   라벨 [완료] → 그 탭이 stop(reason 'labeled') 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 글 = 한 기록).
  *
- * --- 조건 태그 · 링크 번호 (#24) ----------------------------------------------
- *   조건 태그 = Q1 · Q2 중 하나(필수). 동의 페이지에서 고른다. 다른 값(옛 자유 입력 · 빈 값)이면
- *   동의가 없는 것으로 봐서 다시 고르게 한다 — testId 는 유지된다.
- *   링크 번호 = 이번에 읽는 글의 번호(000~300, 세 자리). 팝업이 start 에 linkNo 로 싣는다. 없으면 시작 거절.
+ * --- 테스트 번호 (#83, 옛 #24 의 링크 번호 자리) --------------------------------------
+ *   조건 태그(Q1 · Q2)는 없다 — 질문을 통일했다(11-17 서현). tester.tag 는 키만 남기고 늘 null(형식 그대로).
+ *   테스트 번호 = 이번에 푸는 테스트 세트 번호 'test000' ~ 'test199'. 팝업이 start 에 linkNo 로 싣는다(이름은 옛 것 그대로).
+ *   없으면 시작 거절.
  *   정답 / 오답 = 평가의 설문 앞 팝업에서 참가자가 고른 값(O · X). 평가 [완료]의 stop(reason 'labeled')에 answer 로 온다.
  *   둘 다 기록 로그 · JSON 에는 넣지 않는다(형식 그대로, 10-31 서현). 'link' 키에 { linkNo, sessionId, answer } 로 두고,
  *   내보내기 페이지가 파일 이름에만 쓴다. sessionId 로 이번 기록의 값인지 맞춘다.
@@ -42,14 +42,13 @@
 'use strict';
 
 const K_CONSENT = 'consent';  // 동의 기록. 세션 로그와 따로 산다
-const CONSENT_VERSION = 3;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가, 3 = 연구 담당 연락처 · 철회 요청 방법)
+const CONSENT_VERSION = 4;    // consent.html 고지문 버전과 같아야 한다 (2 = 참여 번호 추가, 3 = 연구 담당 연락처 · 철회 요청 방법, 4 = 조건 태그 뺌 #83)
 
 const K_LINK = 'link';        // 이번 기록의 { linkNo, sessionId, answer }. 로그 밖 — JSON 에 안 들어간다
-const TAGS = ['Q1', 'Q2'];    // 조건 태그로 고를 수 있는 값 (consent.html 의 선택지와 같아야 한다)
-const LINK_MAX = 300;         // 링크 번호 000 ~ LINK_MAX (popup.js 의 목록과 같아야 한다)
+const LINK_MAX = 199;         // 테스트 번호 test000 ~ test<LINK_MAX> (popup.js 의 목록과 같아야 한다)
 const ANSWERS = ['O', 'X'];   // 정답 · 오답 (12-label 팝업)
 
-let C = null;                 // 동의 기록 { version, testId, participantNo, name, tag, at } | null
+let C = null;                 // 동의 기록 { version, testId, participantNo, name, at } | null
 let L = null;                 // { linkNo, sessionId, answer } | null
 const K_EXPORTED = 'exported'; // 마지막으로 내보낸 { sessionId, seq } (#40). 로그 밖 — JSON 에 안 들어간다
 let E = null;
@@ -57,16 +56,15 @@ let E = null;
 // ============================================================================
 // 동의
 // ============================================================================
-function tagValid(tag) { return TAGS.includes(tag); }
 function consentValid() {
-  return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo && tagValid(C.tag));
+  return !!(C && C.version === CONSENT_VERSION && C.testId && C.participantNo);
 }
 
-// '003' 처럼 세 자리 숫자 문자열이고 000 ~ LINK_MAX 안이면 그대로, 아니면 null
+// 'test003' 처럼 test + 세 자리 숫자이고 000 ~ LINK_MAX 안이면 그대로, 아니면 null
 function cleanLink(v) {
   const s = typeof v === 'string' ? v.trim() : '';
-  if (!/^\d{3}$/.test(s)) return null;
-  return Number(s) <= LINK_MAX ? s : null;
+  if (!/^test\d{3}$/.test(s)) return null;
+  return Number(s.slice(4)) <= LINK_MAX ? s : null;
 }
 
 // 헷갈리는 글자(0/O, 1/I/L)를 뺀 32자. 6자리 ≈ 10억 가지라 참가자 수십 명이면 충돌 걱정 없음
@@ -77,7 +75,7 @@ function newTestId() {
 }
 
 function testerInfo() {
-  return { participantNo: C.participantNo, testId: C.testId, name: C.name, tag: C.tag,
+  return { participantNo: C.participantNo, testId: C.testId, name: C.name, tag: null,   // 조건 태그 없음(#83), 키는 형식대로
            consentVersion: C.version, consentAt: C.at };
 }
 
@@ -99,9 +97,9 @@ Object.assign(VERSION, {
   },
   status() {
     return {
-      consent: C ? Object.assign({ valid: consentValid(), tagValid: tagValid(C.tag) }, C) : null,
+      consent: C ? Object.assign({ valid: consentValid() }, C) : null,
       consentVersion: CONSENT_VERSION,
-      // 이번 세션의 링크 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
+      // 이번 세션의 테스트 번호 · 정답 여부. 다른 세션의 것이면 null (파일 이름에 엉뚱한 값이 붙지 않게)
       linkNo: L && L.sessionId === S.sessionId ? L.linkNo : null,
       answer: L && L.sessionId === S.sessionId ? (L.answer || null) : null,
       // 이 세션을 내보낸 뒤로 기록이 늘지 않았음 → 새로 시작해도 잃는 것이 없다 (#40)
@@ -120,7 +118,7 @@ handlers.export = async (m, sender) => {
   return r;
 };
 
-// 기록 시작에 링크 번호를 요구한다. 엔진 start 는 그대로 부르고, 시작에 성공하면 번호를 'link' 키에 둔다.
+// 기록 시작에 테스트 번호를 요구한다. 엔진 start 는 그대로 부르고, 시작에 성공하면 번호를 'link' 키에 둔다.
 //   동의가 없으면 엔진 gate 의 'no-consent' 가 먼저 나오도록 동의부터 본다.
 const coreStart = handlers.start;
 handlers.start = async (m, sender) => {
@@ -172,13 +170,11 @@ Object.assign(handlers, {
     if (!participantNo) return { ok: false, why: 'no-participant' };
     const name = cleanField(m.name, 40);
     if (!name) return { ok: false, why: 'no-name' };
-    if (!tagValid(m.tag)) return { ok: false, why: 'no-tag' };
     C = {
       version: CONSENT_VERSION,
       testId: (C && C.testId) || newTestId(),
       participantNo,
       name,
-      tag: m.tag,
       at: new Date().toISOString(),
     };
     await chrome.storage.local.set({ [K_CONSENT]: C });

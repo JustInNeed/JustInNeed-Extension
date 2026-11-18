@@ -158,7 +158,7 @@
     <p>읽기 행동 수집 테스트 버전입니다. 기록은 이 브라우저 안에만 저장됩니다.</p>
   </aside>
 
-  <main id="main" data-consent-version="3">
+  <main id="main" data-consent-version="4">
     <div id="msg" class="banner" role="status" hidden></div>
 
     <!-- consent.js 가 첫 status 를 그리면 숨긴다. 이 문구가 남아 있으면 스크립트가 안 뜬 것 -->
@@ -173,7 +173,6 @@
         <div class="who">
           <dl><dt>참여 번호</dt><dd class="id" id="j-no"></dd></dl>
           <dl><dt>이름</dt><dd id="j-name"></dd></dl>
-          <dl><dt>조건 태그</dt><dd id="j-tag"></dd></dl>
           <dl><dt>동의한 날</dt><dd id="j-at"></dd></dl>
           <dl><dt>설치 ID</dt><dd id="j-id"></dd></dl>
         </div>
@@ -229,7 +228,7 @@
             <li>탭 전환 순서, 화면 크기</li>
             <li>본문에서 선택하거나 복사한 텍스트</li>
             <li>직접 입력한 검색어와 읽는 목적, 중요하다고 고른 부분</li>
-            <li>이 페이지에 입력한 참여 번호, 이름, 조건 태그</li>
+            <li>이 페이지에 입력한 참여 번호, 이름</li>
           </ul>
           <p class="note">검색 결과 페이지도 기록 중에 열면 글과 같은 방식으로 수집됩니다.</p>
         </div>
@@ -272,14 +271,6 @@
           <span>이름</span>
           <input type="text" id="f-name" maxlength="40" autocomplete="off" placeholder="예: 홍길동">
         </label>
-        <div class="field">
-          <span id="f-tag-label">조건 태그</span>
-          <div class="seg" id="f-tag" role="radiogroup" aria-labelledby="f-tag-label">
-            <label><input type="radio" name="tag" value="Q1"><b>Q1</b></label>
-            <label><input type="radio" name="tag" value="Q2"><b>Q2</b></label>
-          </div>
-          <small class="hint">연구 담당자가 알려준 것을 고르세요. 골라야 참여할 수 있습니다.</small>
-        </div>
         <label class="agree">
           <input type="checkbox" id="f-agree">
           <span>위 내용을 읽었고 테스트 참여에 동의합니다.</span>
