@@ -3,7 +3,8 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 2-units(무한 스크롤 의심의 앞 글 표본, #78), 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66), nav:hint(#78)
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66), nav:hint(#78),
+ *       eval:fail(#83 여러 글 버전)
  * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, eval:go, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
@@ -156,7 +157,10 @@
 
   // 여러 글 수집 버전(#83): 평가 바 목록에서 글을 눌렀다 → background 가 그 글의 탭을 앞으로(닫혔으면 다시 연다).
   //   다른 버전은 발행하지 않는다.
-  bus.on('eval:go', (d) => toBg({ rbc: 'evalgo', pageId: d && d.pageId }));
+  //   거절되면 eval:fail{why}(12-label 이 평가 바에 띄움). 못 닿음은 toBg 가 패널 연결 표시에 남긴다.
+  bus.on('eval:go', (d) => toBg({ rbc: 'evalgo', pageId: d && d.pageId }).then((r) => {
+    if (r && r.ok === false) bus.emit('eval:fail', { why: r.why });
+  }));
 
   if (!IS_TOP) return;          // 이하 전부 최상위 전용
 

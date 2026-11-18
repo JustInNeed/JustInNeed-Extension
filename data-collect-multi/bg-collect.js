@@ -175,16 +175,17 @@ Object.assign(handlers, {
   // 팝업 [평가 시작] (#83): 모든 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
   //   탭이 기록 중인지는 그 탭이 판단한다(기록 안 한 탭은 조용히 무시). 여기서는 세션만 본다.
   //   content script 가 없는 탭(chrome:// · 새로고침 전)은 보내기가 실패한다 — 세어서 돌려준다(팝업이 숫자를 보여 줌).
+  //   serial 안이라 오래 기다리지 않는다: 1.5초 안에 답한 탭만 센다(얼어 있는 탭이 page · flush 를 밀지 않게, #83 검토).
+  //   늦게 받은 탭도 명령은 받는다. 하나도 못 받았으면 평가 중으로 바꾸지 않는다.
   async label() {
     if (!S.recording) return { ok: false, why: 'not-recording' };
-    if (evOk() && !EV.on) { EV = Object.assign({}, EV, { on: true }); await chrome.storage.local.set({ [K_EVAL]: EV }); }
     const tabs = await chrome.tabs.query({});
     let sent = 0, failed = 0;
-    await Promise.all(tabs.map(async (t) => {
-      try { await chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 }); sent++; }
-      catch (e) { failed++; }
-    }));
+    const each = tabs.map((t) => chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 })
+      .then(() => { sent++; }, () => { failed++; }));
+    await Promise.race([Promise.all(each), new Promise((r) => setTimeout(r, 1500))]);
     if (!sent) return { ok: false, why: 'no-content' };
+    if (evOk() && !EV.on) { EV = Object.assign({}, EV, { on: true }); await chrome.storage.local.set({ [K_EVAL]: EV }); }
     pushList();
     return { ok: true, sent, failed };
   },
@@ -237,7 +238,8 @@ Object.assign(handlers, {
     await saveState();
     C = null;
     L = null;
-    await chrome.storage.local.remove([K_CONSENT, K_LINK]);
+    EV = null;                           // 평가 목록에 읽은 글 주소 · 제목이 있다 — 철회면 같이 지운다 (#83 검토)
+    await chrome.storage.local.remove([K_CONSENT, K_LINK, K_EVAL]);
     return { ok: true };
   },
 
@@ -248,7 +250,8 @@ Object.assign(handlers, {
     S = emptyState();
     await saveState();
     L = null;
-    await chrome.storage.local.remove(K_LINK);
+    EV = null;                           // 글 주소 · 제목이 든 평가 목록도 (#83 검토)
+    await chrome.storage.local.remove([K_LINK, K_EVAL]);
     return { ok: true };
   },
 });
@@ -271,7 +274,12 @@ function listFor(tabId) {
     tabId: tabOf(p.pageId), here: p.pageId === here, diff: (EV.diff && EV.diff[p.pageId]) || 0,
   }));
   return { items, allDone: items.length > 0 && items.every((x) => x.done),
-           startedAt: S.epoch || null, testNo: L && L.sessionId === S.sessionId ? L.linkNo : null };   // "대상 아님" 바가 어느 기록인지 보여 준다
+           sessionId: S.sessionId, startedAt: S.epoch || null, testNo: L && L.sessionId === S.sessionId ? L.linkNo : null };   // "대상 아님" 바가 어느 기록인지 보여 준다
+}
+
+// 글 탭에 못 보냈다 — 그 탭은 평가가 안 켜지거나 옛 목록을 본다. 서비스 워커 콘솔에 원문을 남긴다 (#83 검토, 규칙 5)
+function sendFail(tabId, what) {
+  return (e) => console.warn(`[RBC] 평가 ${what} 보내기 실패 — 탭 ${tabId}:`, e && e.message ? e.message : e);
 }
 
 // 평가 중이면 글 탭마다 목록을 보낸다. 기다리지 않는다 — 실패(content 없음 · 고아)는 그 탭만 못 받는다.
@@ -279,8 +287,8 @@ function pushList(alsoLabelTab) {
   if (!S.recording || !evOk() || !EV.on) return;
   for (const id of Object.keys(S.tabPage)) {
     const tabId = Number(id);
-    if (tabId === alsoLabelTab) chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(() => {});
-    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(() => {});
+    if (tabId === alsoLabelTab) chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(sendFail(tabId, 'label'));
+    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(sendFail(tabId, 'evallist'));
   }
 }
 
@@ -312,8 +320,8 @@ handlers.hello = async (m, sender) => {
   const r = await coreHello(m, sender);
   const tabId = sender && sender.tab ? sender.tab.id : null;
   if (tabId != null && S.recording && evOk() && EV.on) {
-    chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(() => {});
-    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(() => {});
+    chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(sendFail(tabId, 'label'));
+    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(sendFail(tabId, 'evallist'));
   }
   return r;
 };

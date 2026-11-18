@@ -4,8 +4,8 @@
  * 소유: phase, 평정 · 표시 · 설문 값, 끝 도달 판정 상태, 라벨 바 · 가림막 DOM
  * 의존(직접 호출): 0-core, 2-units, 3-hittest, 4-input(scroller), 5-recorder(isRecording),
  *                 6-frames(isPrimary), 8-overlay(rangeForUnit)
- * 발행: label:mode({ on }), label:ask({ answer, shownMs }), label:done({ cancelled, trigger, ratings, ... }), eval:go({ tabId })
- * 구독: cmd:label, cmd:evallist, units:changed, record:started, record:stopped, stat
+ * 발행: label:mode({ on }), label:ask({ answer, shownMs }), label:done({ cancelled, trigger, ratings, ... }), eval:go({ pageId })
+ * 구독: cmd:label, cmd:evallist, eval:fail, units:changed, record:started, record:stopped, stat
  *
  * 명세: 라벨_명세_v2.md. 단계(phase):
  *   null(읽기) → 'ask'(다 읽었나요?) → 'rate'(문단 평정) → 'mark'(중요 유닛) → 'survey'(설문) → [완료]
@@ -25,11 +25,17 @@
  *     그대로 다시 싣고 survey 만 채운다(취소 아닌 마지막 것이 정답이라 평정은 같다). [완료]는 done 단계에만 있으므로
  *     이 탭이 그 글의 평정을 들고 있다(새로고침한 탭은 done 이 아니라 [완료]가 안 보인다).
  *     답 칸 = 질문 순서대로의 채점(예: OOX). 영문 대문자 · 숫자만(소문자는 대문자로), 1~10자. 파일 이름 끝에만 붙는다.
+ *     마지막 label 은 이 글의 [이 글 평가 끝] 때 payload 를 그대로 쓰고 survey · answer · phaseMs 만 바꾼다 — done 동안
+ *     유닛이 바뀌어도(무한 스크롤 · 바뀌는 문단) 앞서 저장한 평정보다 덜 찬 평정으로 덮지 않게 (#83 검토).
+ *     평가 중에는 라벨 모드를 켠 모든 탭이 움직임을 알린다(11-session) → 무동작 자동 정지가 사실상 꺼진다. 평가 중엔 안 멈춘다는
+ *     원래 결정(#26)과 같다. 그만두기는 [기록 정지].
  *     마지막 [완료] 뒤에는 라벨 모드를 켠 채로 둔다 — 정지 방송이 오기 전 틱이 끼지 않게. 구간이 닫히면(record:stopped) 끈다.
  *   기록 중이 아닌 탭은 cmd:label 을 조용히 무시한다(모든 탭에 오므로 안내를 띄우면 엉뚱한 탭에 뜬다).
  *   phaseMs 키는 형식 그대로(ask · rate · mark · survey). 'done' 시간은 어디에도 더하지 않는다.
  *   글 목록(청크 4): background 가 cmd:evallist{ items:[{no,title,done,tabId,here}], allDone } 를 보낸다(11-session · 6-frames 경유).
- *     평가 바 맨 위에 "글 1 ✓ · 글 2 · 글 3 (닫힘)" 단추 줄. 누르면 eval:go{tabId} → background 가 그 탭을 앞으로.
+ *     평가 바 맨 위에 "글 1 ✓ · 글 2 · 글 3 (닫힘)" 단추 줄. 누르면 eval:go{pageId} → background 가 그 탭을 앞으로.
+ *     이동이 거절되면(eval:fail, 예: 다시 열 수 없는 주소) 평가 바 위에 이유를 띄운다.
+ *     목록에는 sessionId 가 있다 — 지금 구간의 세션과 다르면(앞 기록의 목록) 평가를 켜지 않는다. 구간이 닫히면 목록을 버린다.
  *     지금 글(here) · 닫힌 글(tabId null)은 못 누른다. 전부 ✓ 면 done 바에 [완료]가 켜진다(누르면 할 일은 청크 6).
  *     목록이 아직 안 왔으면 줄을 안 그린다.
  *   평가 중 합류(청크 5): cmd:label 은 "평가를 켜라"는 바람(pendingEval)으로만 받고, 기록 중 · 목록 있음 · 단계 없음이
@@ -131,6 +137,8 @@
   let evList = null;             // #83 평가 글 목록 (cmd:evallist) | null
   let pendingEval = false;       // #83 평가를 켜라는 명령을 받았고 아직 못 켰다 (maybeBegin)
   let waitHost = null;           // #83 글 준비 중 표시 (화면 가운데)
+  let curSid = null;             // #83 지금 구간의 세션 (record:started) — 앞 기록의 목록을 가려낸다
+  let donePayload = null;        // #83 [이 글 평가 끝] 때 남긴 payload — 마지막 label 이 이걸 다시 싣는다
 
   // 끝 도달
   let lastPid = null, lastPidDirty = true, lastRange = null;
@@ -673,6 +681,7 @@
   // #83 평가 중 합류 (헤더). 목록에 있는 글이면 평정부터, 없는 글이면 'off'.
   function maybeBegin() {
     if (!pendingEval || phase || !evList || !RBC.recorder.isRecording()) return;
+    if (evList.sessionId && evList.sessionId !== curSid) return;   // 앞 기록의 목록 — 이번 기록 것이 오면 그때 (#83 검토)
     pendingEval = false;
     showWait(null);
     const me = RBC.util.pageId(location.href);
@@ -718,7 +727,9 @@
       return;
     }
     tickPhase();
-    const payload = makePayload(cancelled);
+    const payload = !cancelled && donePayload      // #83 마지막: 이 글 평가 끝 때 평정 그대로 + 설문 · 답 (헤더 "마지막")
+      ? Object.assign({}, donePayload, { phaseMs: { ...phaseMs }, survey: { ...survey }, answer })
+      : makePayload(cancelled);
     teardown();
     if (!silent) bus.emit('label:done', payload);   // 5-recorder: label 이벤트 → 11-session: 정지(완료일 때)
     if (cancelled) setMode(false);                   // 5-recorder: 틱 재개. #83 마지막 [완료]는 켜 둔다(헤더 "마지막")
@@ -729,7 +740,8 @@
   // #83: 이 글 평가 끝 — label 을 남기되(keep: 정지 안 함) 라벨 모드 · 가림막은 그대로 두고 done 으로.
   function pageDone() {
     tickPhase();
-    bus.emit('label:done', Object.assign(makePayload(false), { keep: true }));
+    donePayload = makePayload(false);
+    bus.emit('label:done', Object.assign({}, donePayload, { keep: true }));
     phase = 'done';
     hoverPid = null;
     stopBox();
@@ -744,7 +756,7 @@
       trigger,
       phaseMs,
       ratings: Object.fromEntries(ratings),
-      ratingLog,
+      ratingLog: ratingLog.slice(),
       excluded: excluded.slice(),
       marks: [...marks].sort((a, b) => order(a) - order(b)),
       survey: { ...survey },
@@ -789,13 +801,24 @@
   });
 
   // 새 구간: 끝 도달 상태 초기화
-  bus.on('record:started', () => {
+  bus.on('record:started', (d) => {
     endSince = 0; nextAskAt = 0; backoff = ASK_BACKOFF0; lastPidDirty = true;
+    curSid = d && d.sessionId ? d.sessionId : null;
     maybeBegin();                                    // #83: 평가 중 합류 — 첫 틱보다 먼저
   });
 
   // 라벨 중에 구간이 닫히면(세션 정지 · 이동) 남길 곳이 없다 — 조용히 끈다.
-  bus.on('record:stopped', () => { exit(true, true); setMode(false); pendingEval = false; showWait(null); });
+  bus.on('record:stopped', () => {
+    exit(true, true); setMode(false); pendingEval = false; showWait(null);
+    evList = null; donePayload = null; curSid = null;   // #83 검토: 다음 기록으로 넘기지 않는다
+  });
+
+  // #83 검토: 목록의 글로 못 갔다(11-session 이 background 거절을 알림) — 눌러도 반응 없는 것처럼 보이지 않게
+  bus.on('eval:fail', (d) => {
+    const why = d && d.why;
+    toast(why === 'no-url' ? '이 글은 주소가 http(s)가 아니라 다시 열 수 없어요 — 끝내려면 팝업 [기록 정지]'
+      : `글로 가지 못했어요 (${why || '응답 없음'})`);
+  });
 
   // #83 글 준비 중 표시: 5-recorder 가 본문 준비 걸음마다 stat 을 낸다(이 프레임 것만 — 최상위는 다른 프레임 stat 도 받는다)
   bus.on('stat', (d) => {
