@@ -149,8 +149,9 @@
   //   label 이벤트를 먼저 넘기므로(파일 순서상 먼저 구독) 정지 요청보다 라벨 조각이 먼저 도착한다.
   //   취소는 정지하지 않는다 — 계속 읽는다.
   //   answer(정답 'O' / 오답 'X', #24)는 정지 요청에만 싣는다 — 데이터 수집 버전이 파일 이름에 쓴다. 기록 JSON 에는 없다.
+  //   keep(#83): 여러 글 수집 버전은 글마다 평가를 끝내도 기록을 이어 간다(마지막에 따로 정지). 다른 버전은 keep 을 안 보낸다.
   bus.on('label:done', (d) => {
-    if (d && !d.cancelled) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
+    if (d && !d.cancelled && !d.keep) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
   });
 
   if (!IS_TOP) return;          // 이하 전부 최상위 전용

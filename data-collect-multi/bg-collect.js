@@ -21,9 +21,10 @@
  *
  * --- 테스트 모드: 읽는 목적 · 라벨 ---------------------------------------------
  *   읽는 목적(scenario)은 기록 시작 전에 팝업에서 받아 start 기록에 싣는다 → session.scenario.
- *   라벨은 팝업 "다 읽었어요" → label 명령 → 지금 보고 있는 탭으로 전달. 라벨 데이터 자체는
+ *   라벨은 팝업 [평가 시작] → label 명령 → 모든 탭으로 전달(#83 — 기록 중인 탭마다 그 글의 평가가 켜진다). 라벨 데이터 자체는
  *   그 탭의 timeline 이벤트(type=label)로 들어온다 — 여기서는 전달만 한다.
- *   라벨 [완료] → 그 탭이 stop(reason 'labeled') 을 보낸다 → 정지 + 1.5초 뒤 내보내기 탭 (한 글 = 한 기록).
+ *   글마다 [이 글 평가 끝]은 정지하지 않는다(label:done keep, #83). 마지막 정지 → 내보내기는 청크 6 에서.
+ *   (옛 경로: 라벨 [완료] → stop(reason 'labeled') → 정지 + 1.5초 뒤 내보내기 탭 — 코드는 남아 있다)
  *
  * --- 테스트 번호 (#83, 옛 #24 의 링크 번호 자리) --------------------------------------
  *   조건 태그(Q1 · Q2)는 없다 — 질문을 통일했다(11-17 서현). tester.tag 는 키만 남기고 늘 null(형식 그대로).
@@ -148,18 +149,19 @@ handlers.stop = async (m, sender) => {
 };
 
 Object.assign(handlers, {
-  // 팝업 "다 읽었어요": 지금 보고 있는 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
-  //   탭이 기록 중인지는 그 탭이 판단한다(아니면 안내 문구). 여기서는 세션만 본다.
+  // 팝업 [평가 시작] (#83): 모든 탭에 라벨 모드를 켠다 (11-session → primary 의 12-label).
+  //   탭이 기록 중인지는 그 탭이 판단한다(기록 안 한 탭은 조용히 무시). 여기서는 세션만 본다.
+  //   content script 가 없는 탭(chrome:// · 새로고침 전)은 보내기가 실패한다 — 세어서 돌려준다(팝업이 숫자를 보여 줌).
   async label() {
     if (!S.recording) return { ok: false, why: 'not-recording' };
-    const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!t) return { ok: false, why: 'no-tab' };
-    try {
-      await chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 });
-    } catch (e) {
-      return { ok: false, why: 'no-content' };      // content script 없음(새로고침 전 · chrome:// 등)
-    }
-    return { ok: true };
+    const tabs = await chrome.tabs.query({});
+    let sent = 0, failed = 0;
+    await Promise.all(tabs.map(async (t) => {
+      try { await chrome.tabs.sendMessage(t.id, { rbc: 'label' }, { frameId: 0 }); sent++; }
+      catch (e) { failed++; }
+    }));
+    if (!sent) return { ok: false, why: 'no-content' };
+    return { ok: true, sent, failed };
   },
 
   // 동의 페이지가 보낸다. version = 그 페이지가 보여준 고지문 버전.

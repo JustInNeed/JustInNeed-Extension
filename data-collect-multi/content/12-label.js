@@ -11,6 +11,18 @@
  *   null(읽기) → 'ask'(다 읽었나요?) → 'rate'(문단 평정) → 'mark'(중요 유닛) → 'survey'(설문) → [완료]
  *   팝업 "다 읽었어요"(cmd:label) 는 ask 를 건너뛰고 rate 부터 (trigger 'popup').
  *
+ * --- 여러 글 수집 버전 (#83, data-collect-multi) ---------------------------------------
+ *   한 기록 = 여러 탭의 글. 평가는 팝업 [평가 시작] 하나로만 들어간다 — background 가 cmd:label 을 모든 탭에 보내고,
+ *   기록 중인 탭(primary)마다 이 모듈이 rate 부터 켠다. 끝 도달 질문 카드(ask)는 쓰지 않는다(tick:done 구독 없음).
+ *   글 하나의 흐름 = rate → mark → 'done'. mark 의 [이 글 평가 끝] 이 label:done 에 keep:true 를 실어 보낸다
+ *     → 5-recorder 가 label 이벤트를 남기고(survey 는 빈 {}), 11-session 은 keep 이라 정지하지 않는다.
+ *   'done' = 이 글 평가를 마친 상태. 라벨 모드(틱 정지)와 가림막을 그대로 둔다 — 평가가 시작되면 읽기 기록으로 돌아가지
+ *     않는다(가림막을 걷으면 링크로 새 글이 열려 읽기로 잡힌다). 평정 색을 칠해 두고, [다시 고치기]는 rate 로 돌아가
+ *     값을 고친 뒤 label 을 하나 더 남긴다(취소 아닌 마지막 것이 정답, 명세 §6).
+ *   평가 중 [취소] · Esc 는 없다. 정답 / 오답 팝업 · 설문은 마지막에 한 번(청크 6 에서) — 지금은 글마다 띄우지 않는다.
+ *   기록 중이 아닌 탭은 cmd:label 을 조용히 무시한다(모든 탭에 오므로 안내를 띄우면 엉뚱한 탭에 뜬다).
+ *   phaseMs 키는 형식 그대로(ask · rate · mark · survey). 'done' 시간은 어디에도 더하지 않는다.
+ *
  * --- 정답 / 오답 (#24) -------------------------------------------------------------
  *   설문 단계에 들어가면 설문 질문보다 먼저 "질문의 답을 맞혔나요?" [정답] [오답] 팝업을 띄운다(참가자가 고름).
  *   다시 누르면 선택 해제, 하나를 골라야 [다음] → 설문. 설문의 [이전 단계]는 이 팝업으로 돌아온다.
@@ -253,7 +265,7 @@
     if (!HL_OK) return;
     for (const k of Object.keys(HL)) HL[k].clear();
     const add = (name, pid) => { const r = unitRange(pid); if (r) hl(name).add(r); };
-    if (phase === 'rate') {
+    if (phase === 'rate' || phase === 'done') {          // done(#83) = 평가를 마친 글: 평정 색을 남겨 둔다
       for (const [pid, v] of ratings) add('rbc-r-' + v, pid);
     } else if (phase === 'mark') {
       for (const pid of marks) add('rbc-m-sel', pid);
@@ -313,23 +325,27 @@
       const cur = pid ? ratings.get(pid) : null;
       const done = ratings.size >= targets.length;   // 보이는 유닛이 0개인 글도 넘어갈 수 있게
       h = `<div class="hd"><b>초록 상자 안 부분을 어떻게 읽었나요?</b>
-          <small>누르면 다음으로 넘어가요 · ← 이전 · 다른 부분을 클릭하면 그곳으로 · Esc 취소</small>
+          <small>누르면 다음으로 넘어가요 · ← 이전 · 다른 부분을 클릭하면 그곳으로</small>
           <span class="n">${Math.min(idx + 1, targets.length)} / ${targets.length}</span></div>
         <div class="row">${RATES.map(([v, t], i) =>
           `<button class="r-${v}${cur === v ? ' on' : ''}" data-r="${v}"><kbd>${i + 1}</kbd>${t}</button>`).join('')}
           <span class="sp"></span>
           <button data-a="prev"${idx > 0 ? '' : ' disabled'}>이전</button>
-          <button class="ok" data-a="next"${done ? '' : ' disabled'}>다음 단계</button>
-          <button data-a="cancel">취소</button></div>`;
+          <button class="ok" data-a="next"${done ? '' : ' disabled'}>다음 단계</button></div>`;
     } else if (phase === 'mark') {
       h = `<div class="hd"><b>가장 중요하거나 기억하고 싶은 부분을 눌러 표시하세요</b>
           <small>여러 개 가능 · 다시 누르면 해제 · 새로 읽지 말고 기억나는 대로</small>
           <span class="n">선택 ${marks.size}개</span></div>
         <div class="row"><span class="sp"></span>
           <button data-a="back">이전 단계</button>
-          <button class="ok" data-a="next">${!marks.size && zeroOk ? '그대로 넘어가기' : '다음 단계'}</button>
-          <button data-a="cancel">취소</button></div>
+          <button class="ok" data-a="next">${!marks.size && zeroOk ? '그대로 끝내기' : '이 글 평가 끝'}</button></div>
         ${!marks.size && zeroOk ? '<div class="warn">하나도 고르지 않았어요. 그대로 넘어갈까요?</div>' : ''}`;
+    } else if (phase === 'done') {                    // #83: 이 글 평가를 마침. 다른 글 탭으로 가서 이어 간다
+      h = `<div class="hd"><b>이 글 평가를 마쳤어요 ✓</b>
+          <small>다른 글 탭으로 가서 평가를 이어 가세요 · 칠해진 색 = 내가 고른 평정</small>
+          <span class="n">평정 ${ratings.size}개 · 중요 ${marks.size}개</span></div>
+        <div class="row"><span class="sp"></span>
+          <button data-a="redo">다시 고치기</button></div>`;
     } else if (pop) {
       h = `<div class="hd"><b>질문의 답을 맞혔나요?</b><small>직접 골라 주세요 · 다시 누르면 선택 해제</small></div>
         <div class="row pick">
@@ -373,13 +389,14 @@
         if (phase === 'rate') return go('mark');
         if (phase === 'mark') {
           if (!marks.size && !zeroOk) { zeroOk = true; return render(); }
-          return go('survey');
+          return pageDone();                          // #83: 설문은 마지막에 한 번 — 글마다 띄우지 않는다
         }
         return undefined;
       case 'answered': answerOk = true; return render();
       case 'back':
         if (phase === 'survey' && answerOk) { answerOk = false; return render(); }   // 설문 → 정답 / 오답 팝업
         return go(phase === 'survey' ? 'mark' : 'rate');
+      case 'redo': return go('rate');                // #83: 고친 뒤 다시 [이 글 평가 끝]이면 label 하나 더
       case 'done': return exit(false);
       case 'cancel': return exit(true);
       default: return undefined;
@@ -468,8 +485,8 @@
   function onKey(e) {
     if (!phase) return;
     let used = true;
-    if (e.key === 'Escape') {
-      if (phase === 'ask') answerAsk('cancel'); else exit(true);
+    if (e.key === 'Escape' || phase === 'done') {     // #83: 평가 중 취소 없음 · done 에선 키를 안 쓴다
+      used = false;
     } else if (phase === 'rate' && e.key >= '1' && e.key <= String(RATES.length)) {
       rate(RATES[Number(e.key) - 1][0]);
     } else if (phase === 'rate' && e.key === 'ArrowLeft') {
@@ -508,7 +525,7 @@
 
   function tickPhase() {
     const now = performance.now();
-    if (phase && phaseMs) phaseMs[phase] += Math.round(now - phaseT);
+    if (phase && phaseMs && phase in phaseMs) phaseMs[phase] += Math.round(now - phaseT);   // done(#83)은 안 셈
     phaseT = now;
   }
 
@@ -534,10 +551,7 @@
 
   // 라벨 모드 켜기. 'ask' 또는 'rate' 부터.
   function begin(first, trig) {
-    if (!RBC.recorder.isRecording()) {
-      if (first === 'rate') toast('이 탭은 지금 기록 중이 아니라 평가를 남길 수 없습니다.');
-      return;
-    }
+    if (!RBC.recorder.isRecording()) return;          // #83: cmd:label 은 모든 탭에 온다 — 기록 안 한 탭은 조용히
     trigger = trig;
     t0 = performance.now();
     askT = t0;
@@ -594,8 +608,28 @@
       return;
     }
     tickPhase();
+    const payload = makePayload(cancelled);
+    teardown();
+    if (!silent) bus.emit('label:done', payload);   // 5-recorder: label 이벤트 → 11-session: 정지(완료일 때)
+    setMode(false);                                  // 5-recorder: 틱 재개
+    if (!silent && !cancelled) toast('평가를 저장했습니다 · 기록을 마치고 파일로 저장합니다');
+    if (!silent && cancelled) { nextAskAt = performance.now() + backoff; endSince = 0; }
+  }
+
+  // #83: 이 글 평가 끝 — label 을 남기되(keep: 정지 안 함) 라벨 모드 · 가림막은 그대로 두고 done 으로.
+  function pageDone() {
+    tickPhase();
+    bus.emit('label:done', Object.assign(makePayload(false), { keep: true }));
+    phase = 'done';
+    hoverPid = null;
+    stopBox();
+    paint(); render();
+    toast('이 글 평가를 저장했어요 · 다른 글 탭으로 가서 이어 가세요');
+  }
+
+  function makePayload(cancelled) {
     const order = (pid) => { const u = RBC.units.byPid(pid); return u ? u.order : 1e9; };
-    const payload = {
+    return {
       cancelled: !!cancelled,
       trigger,
       phaseMs,
@@ -606,11 +640,6 @@
       survey: { ...survey },
       answer,                                        // 정답 / 오답 — 11-session 이 background 로만. JSON 에는 안 들어감
     };
-    teardown();
-    if (!silent) bus.emit('label:done', payload);   // 5-recorder: label 이벤트 → 11-session: 정지(완료일 때)
-    setMode(false);                                  // 5-recorder: 틱 재개
-    if (!silent && !cancelled) toast('평가를 저장했습니다 · 기록을 마치고 파일로 저장합니다');
-    if (!silent && cancelled) { nextAskAt = performance.now() + backoff; endSince = 0; }
   }
 
   // ==========================================================================
@@ -621,14 +650,7 @@
     else if (!phase) begin('rate', 'popup');
   });
 
-  // 끝 도달: 읽는 중(phase null) · primary · 기록 중일 때 틱마다 (라벨 모드면 틱이 없음)
-  bus.on('tick:done', () => {
-    if (phase || !RBC.frames.isPrimary() || !RBC.recorder.isRecording()) return;
-    const now = performance.now();
-    if (!reachedEnd()) { endSince = 0; return; }
-    if (!endSince) endSince = now;
-    if (now - endSince >= END_HOLD_MS && now >= nextAskAt) begin('ask', 'end');
-  });
+  // 끝 도달 질문 카드는 쓰지 않는다(#83) — tick:done 을 구독하지 않는다. 평가는 팝업 [평가 시작]으로만.
 
   // 재스캔으로 유닛이 바뀌면(append · splice): 끝 유닛 다시 계산. 평정 중이면 대상 목록을 새로 만들고
   //   (새 유닛은 끼워 넣음 — 빠지면 [17] FAIL), 사라진 pid 는 평정 · 표시에서 뺀다. 지금 유닛은 유지.
