@@ -26,6 +26,13 @@
  *     평가 바 맨 위에 "글 1 ✓ · 글 2 · 글 3 (닫힘)" 단추 줄. 누르면 eval:go{tabId} → background 가 그 탭을 앞으로.
  *     지금 글(here) · 닫힌 글(tabId null)은 못 누른다. 전부 ✓ 면 done 바에 [완료]가 켜진다(누르면 할 일은 청크 6).
  *     목록이 아직 안 왔으면 줄을 안 그린다.
+ *   평가 중 합류(청크 5): cmd:label 은 "평가를 켜라"는 바람(pendingEval)으로만 받고, 기록 중 · 목록 있음 · 단계 없음이
+ *     다 갖춰지면(maybeBegin — cmd:label · cmd:evallist · record:started 때) 이 글이 목록에 있는지 본다(pageId).
+ *     있음 → rate (label:mode show:true — 첫 틱 전이면 5-recorder 가 글 정보를 지금 보낸다). 평가 중에 새로고침 · 다시 연 탭.
+ *     없음 → 'off' = "이번 기록에 없는 글" 바만 띄우고 라벨 모드만 켠다(틱 정지 = 읽기로 안 잡힘, 가림막 없음, label 안 남김).
+ *     record:started 안에서 바로 켜므로 첫 틱보다 먼저다(틱은 setInterval).
+ *   닫힌 글 = 목록 단추 "(닫힘 · 다시 열기)" — eval:go{pageId} 로 background 가 그 주소를 새 탭으로 연다.
+ *   diff = 이 글을 다시 연 뒤 기록 때 없던 문단 수(background 가 셈). 0 이 아니면 바에 알린다(그 문단은 읽은 기록이 없음).
  *
  * --- 정답 / 오답 (#24) -------------------------------------------------------------
  *   설문 단계에 들어가면 설문 질문보다 먼저 "질문의 답을 맞혔나요?" [정답] [오답] 팝업을 띄운다(참가자가 고름).
@@ -112,6 +119,7 @@
   let zeroOk = false;            // mark: 0개로 넘어가기 확인
   let hoverPid = null;
   let evList = null;             // #83 평가 글 목록 (cmd:evallist) | null
+  let pendingEval = false;       // #83 평가를 켜라는 명령을 받았고 아직 못 켰다 (maybeBegin)
 
   // 끝 도달
   let lastPid = null, lastPidDirty = true, lastRange = null;
@@ -379,16 +387,23 @@
           <button class="ok" data-a="done"${all ? '' : ' disabled'}>완료</button>
           <button data-a="cancel">취소</button></div>`;
     }
-    bar.innerHTML = (phase === 'rate' || phase === 'mark' || phase === 'done' ? listRow() : '') + h;
+    if (phase === 'off') {                           // #83: 이번 기록에 없는 글 — 평가 대상 아님
+      h = `<div class="hd"><b>이 글은 이번 기록에 없는 글이라 평가하지 않아요</b>
+          <small>평가 중에는 읽은 기록도 남지 않아요 · 위 목록에서 평가할 글로 가세요</small></div>`;
+    }
+    const me = evList && evList.items ? evList.items.find((x) => x.here) : null;
+    const diff = (phase === 'rate' || phase === 'mark') && me && me.diff
+      ? `<div class="warn">이 글에 기록 때 없던 문단이 ${me.diff}개 있어요 — 그 문단은 읽은 기록이 없으니 기억나는 대로만 고르세요</div>` : '';
+    bar.innerHTML = (phase === 'rate' || phase === 'mark' || phase === 'done' || phase === 'off' ? listRow() : '') + h + diff;
   }
 
   // #83 글 목록 줄. 지금 글 = 굵은 테두리(못 누름), 닫힌 글 = (닫힘)(못 누름), 끝낸 글 = ✓
   function listRow() {
     if (!evList || !evList.items || !evList.items.length) return '';
     return `<div class="ls">${evList.items.map((x) => {
-      const off = x.here || x.tabId == null;
-      const tag = x.here ? ' (지금)' : x.tabId == null ? ' (닫힘)' : '';
-      return `<button class="${x.done ? 'dn' : ''}${x.here ? ' here' : ''}" data-go="${x.tabId == null ? '' : x.tabId}"` +
+      const off = x.here;
+      const tag = x.here ? ' (지금)' : x.tabId == null ? ' (닫힘 · 다시 열기)' : '';
+      return `<button class="${x.done ? 'dn' : ''}${x.here ? ' here' : ''}" data-go="${esc(x.pageId)}"` +
         `${off ? ' disabled' : ''} title="${esc(x.title)}">글 ${x.no}${x.done ? ' ✓' : ''}${tag}<span>${esc(x.title)}</span></button>`;
     }).join('')}</div>`;
   }
@@ -397,7 +412,7 @@
     const b = e.target.closest && e.target.closest('button');
     if (!b || b.disabled) return;
     if (b.dataset.r) return rate(b.dataset.r);
-    if (b.dataset.go) return bus.emit('eval:go', { tabId: Number(b.dataset.go) });   // #83 → 11-session → background
+    if (b.dataset.go) return bus.emit('eval:go', { pageId: b.dataset.go });   // #83 → 11-session → background (탭 앞으로 · 닫혔으면 다시 열기)
     if (b.dataset.ans) {                              // 정답 / 오답: 같은 것을 다시 누르면 해제
       answer = answer === b.dataset.ans ? null : b.dataset.ans;
       return render();
@@ -577,7 +592,7 @@
   }
 
   // 라벨 모드 켜기. 'ask' 또는 'rate' 부터.
-  function begin(first, trig) {
+  function begin(first, trig, show) {
     if (!RBC.recorder.isRecording()) return;          // #83: cmd:label 은 모든 탭에 온다 — 기록 안 한 탭은 조용히
     trigger = trig;
     t0 = performance.now();
@@ -587,17 +602,29 @@
     targets = []; excluded = []; idx = 0;
     ratings.clear(); ratingLog = []; marks.clear(); survey = {}; zeroOk = false;
     answer = null; answerOk = false;
-    if (first !== 'ask') setMode(true);              // ask 카드 동안은 계속 기록
+    if (first !== 'ask') setMode(true, show);        // ask 카드 동안은 계속 기록. show(#83) = 첫 틱 전이면 글 정보를 지금 보냄
     buildBar();
     window.addEventListener('keydown', onKey, true);
     phase = null;
     go(first);
   }
 
-  function setMode(on) {
+  function setMode(on, show) {
     if (on === modeOn) return;
     modeOn = on;
-    bus.emit('label:mode', { on });                  // 5-recorder: 틱 멈춤 / 재개
+    bus.emit('label:mode', { on, show: !!show });    // 5-recorder: 틱 멈춤 / 재개 (show #83: 헤더 "평가 중 합류")
+  }
+
+  // #83 평가 중 합류 (헤더). 목록에 있는 글이면 평정부터, 없는 글이면 'off'.
+  function maybeBegin() {
+    if (!pendingEval || phase || !evList || !RBC.recorder.isRecording()) return;
+    pendingEval = false;
+    const me = RBC.util.pageId(location.href);
+    if ((evList.items || []).some((x) => x.pageId === me)) { begin('rate', 'popup', true); return; }
+    setMode(true);                                   // 읽기로 안 잡히게 틱만 멈춘다
+    buildBar();
+    phase = 'off';
+    render();
   }
 
   function teardown() {
@@ -674,12 +701,13 @@
   // ==========================================================================
   bus.on('cmd:label', () => {
     if (phase === 'ask') answerAsk('yes');
-    else if (!phase) begin('rate', 'popup');
+    else if (!phase) { pendingEval = true; maybeBegin(); }   // #83: 목록 · 기록 중을 기다린다
   });
 
   // #83 글 목록: 받을 때마다 바를 다시 그린다(평가 중이 아니면 들고만 있다)
   bus.on('cmd:evallist', (list) => {
     evList = list || null;
+    maybeBegin();
     render();
   });
 
@@ -707,6 +735,7 @@
   // 새 구간: 끝 도달 상태 초기화
   bus.on('record:started', () => {
     endSince = 0; nextAskAt = 0; backoff = ASK_BACKOFF0; lastPidDirty = true;
+    maybeBegin();                                    // #83: 평가 중 합류 — 첫 틱보다 먼저
   });
 
   // 라벨 중에 구간이 닫히면(세션 정지 · 이동) 남길 곳이 없다 — 조용히 끈다.

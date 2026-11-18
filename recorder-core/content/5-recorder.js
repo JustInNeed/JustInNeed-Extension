@@ -68,6 +68,9 @@
  *   label:mode{on:true} 동안 틱을 찍지 않는다 (숨김 · 포커스 없음과 같은 처리: drain 버림).
  *   라벨 고르는 시간은 읽기 행동이 아니다 (명세). 선택 · 복사도 기록하지 않는다.
  *   v2 (라벨_명세_v2.md §6). 끝 도달 질문 카드가 떠 있는 동안은 계속 기록한다(무시하고 읽는 사람 대비).
+ *   label:mode{on:true, show:true}(여러 글 수집 버전 #83 — 평가 중에 열린 탭이 첫 틱 없이 평가로 들어감): 아직 seg:page 를
+ *   안 보냈으면 지금 보낸다. 평가할 글이 화면에 떠 있다는 뜻이라 "첫 틱 = 이 탭을 봤다"와 같은 자리. 틱은 여전히 안 찍는다.
+ *   다른 버전은 show 를 안 보낸다.
  *   label:ask  → { type:'labelask', t, segId, answer, startT, ms }  answer = yes | no | cancel.
  *                startT = 카드가 뜬 때(t − shownMs). 이 구간의 틱은 정상 기록이다.
  *                yes 면 바로 label:mode{on:true} — 라벨 모드(틱 정지)는 여기부터.
@@ -639,6 +642,7 @@
     labeling = on;
     if (on) {
       labelStartT = recording ? tNow() : 0;
+      if (d.show && recording && !pageSent) { pageSent = true; emitPage(); }   // #83 (헤더 "라벨 모드")
     } else {
       RBC.input.drain();
       prevTickTime = null;

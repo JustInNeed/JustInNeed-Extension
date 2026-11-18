@@ -154,8 +154,9 @@
     if (d && !d.cancelled && !d.keep) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
   });
 
-  // 여러 글 수집 버전(#83): 평가 바 목록에서 글을 눌렀다 → background 가 그 탭을 앞으로. 다른 버전은 발행하지 않는다.
-  bus.on('eval:go', (d) => toBg({ rbc: 'evalgo', tabId: d && d.tabId }));
+  // 여러 글 수집 버전(#83): 평가 바 목록에서 글을 눌렀다 → background 가 그 글의 탭을 앞으로(닫혔으면 다시 연다).
+  //   다른 버전은 발행하지 않는다.
+  bus.on('eval:go', (d) => toBg({ rbc: 'evalgo', pageId: d && d.pageId }));
 
   if (!IS_TOP) return;          // 이하 전부 최상위 전용
 

@@ -42,7 +42,10 @@
  *   목록(evallist)은 글을 보여 주는 탭(S.tabPage)마다 보낸다 — 평가 시작 · 글 하나 끝 · 탭 닫힘 · 탭 전환 때.
  *     탭마다 here(이 탭의 글)를 달리 싣는다. 탭이 없는 글 = 닫힘(다시 열기는 청크 5).
  *   탭 전환 때는 label 명령도 다시 보낸다 — 절전 탭이 [평가 시작]을 놓쳤어도 보는 순간 평가가 켜진다.
- *   evalgo{tabId} = 평가 바의 목록에서 글을 눌렀다 → 그 탭 · 창을 앞으로.
+ *   evalgo{pageId} = 평가 바의 목록에서 글을 눌렀다 → 그 글의 탭 · 창을 앞으로. 탭이 없으면(닫힘) 그 주소를 새 탭으로 연다(청크 5).
+ *   평가 중 합류(청크 5): 평가 중에 hello 를 보낸 탭(새로 연 탭 · 새로고침 · 다시 연 글 · 탭 안 이동)에 label 명령 · 목록을 보낸다.
+ *     그 탭의 12-label 이 목록에 있는 글이면 평가로, 없는 글이면 "평가 대상 아님"으로 들어간다 — 어느 쪽이든 틱이 없다.
+ *   diff[pageId] = 평가 중에 온 page 기록에서, 그 전까지 이 글에 없던 평정 대상 문단(pid) 수(전부 noise 유닛은 안 셈). 다시 연 글의 내용이 바뀐 경우를 바에 알린다.
  *   보내기는 기다리지 않는다(serial 안의 handler 에서 탭 응답을 기다리면 다음 기록이 밀린다).
  *
  * --- 내보냄 기억 (#40, 11-05 서현) ------------------------------------------------
@@ -63,7 +66,7 @@ const K_EVAL = 'eval';        // 평가 목록 (#83, 맨 위 주석)
 
 let C = null;                 // 동의 기록 { version, testId, participantNo, name, at } | null
 let L = null;                 // { linkNo, sessionId, answer } | null
-let EV = null;                // 평가 목록 { sessionId, on, pages, done } | null (#83)
+let EV = null;                // 평가 목록 { sessionId, on, pages, done, diff } | null (#83)
 const K_EXPORTED = 'exported'; // 마지막으로 내보낸 { sessionId, seq } (#40). 로그 밖 — JSON 에 안 들어간다
 let E = null;
 
@@ -182,11 +185,17 @@ Object.assign(handlers, {
     return { ok: true, sent, failed };
   },
 
-  // 평가 바 목록에서 글을 눌렀다 (#83): 그 탭 · 창을 앞으로. 이번 기록의 글 탭만.
+  // 평가 바 목록에서 글을 눌렀다 (#83): 그 글의 탭 · 창을 앞으로, 탭이 없으면 그 주소를 새 탭으로. 이번 기록의 글만.
   async evalgo(m) {
-    const tabId = m && Number(m.tabId);
     if (!S.recording || !evOk() || !EV.on) return { ok: false, why: 'not-evaluating' };
-    if (!(String(tabId) in S.tabPage)) return { ok: false, why: 'no-tab' };
+    const p = EV.pages.find((x) => x.pageId === (m && m.pageId));
+    if (!p) return { ok: false, why: 'not-in-list' };
+    const tabId = tabOf(p.pageId);
+    if (tabId == null) {
+      if (!/^https?:/.test(p.url)) return { ok: false, why: 'no-url' };
+      await chrome.tabs.create({ url: p.url, active: true });   // 열린 탭이 hello → 아래 hello 감싸기가 평가를 켠다
+      return { ok: true, reopened: true };
+    }
     const t = await chrome.tabs.update(tabId, { active: true });
     if (t && t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
     return { ok: true };
@@ -254,8 +263,8 @@ function tabOf(pageId) {
 function listFor(tabId) {
   const here = S.tabPage[tabId];
   const items = EV.pages.map((p, i) => ({
-    no: i + 1, title: p.title || p.url || p.pageId, done: !!EV.done[p.pageId],
-    tabId: tabOf(p.pageId), here: p.pageId === here,
+    no: i + 1, pageId: p.pageId, title: p.title || p.url || p.pageId, done: !!EV.done[p.pageId],
+    tabId: tabOf(p.pageId), here: p.pageId === here, diff: (EV.diff && EV.diff[p.pageId]) || 0,
   }));
   return { items, allDone: items.length > 0 && items.every((x) => x.done) };
 }
@@ -273,12 +282,33 @@ function pushList(alsoLabelTab) {
 // 글 목록 · 평가 끝 표시는 엔진 page · flush 를 그대로 부른 뒤에 본다(받기 성공한 것만).
 const corePage = handlers.page;
 handlers.page = async (m, sender) => {
+  const before = new Set((m && S.pagePids[m.pageId]) || []);   // 엔진이 합치기 전 = 기록 때 이 글에 있던 문단
   const r = await corePage(m, sender);
-  if (r && r.ok && evOk() && !EV.pages.some((p) => p.pageId === m.pageId)) {
+  if (!(r && r.ok && evOk())) return r;
+  if (!EV.pages.some((p) => p.pageId === m.pageId)) {
     const meta = m.meta || {};
     EV = Object.assign({}, EV, { pages: EV.pages.concat([{ pageId: m.pageId, url: meta.url || '', title: meta.title || '' }]) });
     await chrome.storage.local.set({ [K_EVAL]: EV });
-    pushList();
+  } else if (EV.on) {
+    // 평정 대상만 센다 — 조각이 전부 noise 인 유닛(본문 밖, 12-label 이 평정에서 뺌)은 빼고. 브런치 멤버십 칸의 남은 시간 시계처럼
+    //   본문 밖 글자가 바뀌어 pid 가 새로 생기는 경우가 있다(11-18 서현 실측).
+    const rated = (x) => !(Array.isArray(x.pieces) && x.pieces.length && x.pieces.every((pc) => pc && pc.noise));
+    const n = (m.paragraphs || []).filter((x) => !before.has(x.pid) && rated(x)).length;
+    EV = Object.assign({}, EV, { diff: Object.assign({}, EV.diff, { [m.pageId]: n }) });
+    await chrome.storage.local.set({ [K_EVAL]: EV });
+  }
+  pushList();                                   // 다시 연 글은 탭이 생겼다 → 다른 탭 목록의 (닫힘)이 풀린다
+  return r;
+};
+
+// 평가 중 합류 (청크 5, 맨 위 주석). 응답은 엔진 그대로, 평가 명령 · 목록은 따로 보낸다(기다리지 않음).
+const coreHello = handlers.hello;
+handlers.hello = async (m, sender) => {
+  const r = await coreHello(m, sender);
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  if (tabId != null && S.recording && evOk() && EV.on) {
+    chrome.tabs.sendMessage(tabId, { rbc: 'label' }, { frameId: 0 }).catch(() => {});
+    chrome.tabs.sendMessage(tabId, { rbc: 'evallist', list: listFor(tabId) }, { frameId: 0 }).catch(() => {});
   }
   return r;
 };
