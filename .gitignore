@@ -9,6 +9,7 @@ venv/
 # 기록 · 산출물 (2026-10-09 폴더 정리)
 *.json
 !data-collect/manifest.json
+!data-collect-multi/manifest.json
 !service/manifest.json
 !test/baseline_session.json
 *.zip
