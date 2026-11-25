@@ -192,7 +192,14 @@
   //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
-    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="])';
+    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
+    'article div.linkNews, p.imgsell, [id^="adpnut_"]';
+  // 뉴시스(#80, 11-23 서현 "이 시간 핫뉴스 같은 걸 못 걸러서 아쉬움"): 페이지가 열린 뒤 스크립트가 끼워 넣는 칸 셋.
+  //   article div.linkNews = 모바일(mobile.newsis.com) "이시간 핫뉴스" 목록(기사 5개 + 광고 iframe). 기사 글 칸 div.article
+  //     한가운데에 끼어 본문 문단 사이 유닛이 됐다. 기사 칸 밖의 관련기사 목록(모바일 div.linkNews.newStyle2 · PC ul.linkNews)은 안 걸림.
+  //   p.imgsell = 사진 바로 뒤 "구매정보안내" 링크(PC · 모바일). [id^="adpnut_"] = 모바일 기사 칸 끝 떠 있는 광고("AD 광고삭제").
+  //   핫뉴스는 방문마다 기사가 바뀌어 noise 로 두면 앞뒤 유닛 pid 가 갈린다 → 광고처럼 스트림에서 뺀다. 지난 모바일 뉴시스 기록과
+  //   핫뉴스 앞뒤 유닛 pid 가 다를 수 있다(팀 공유). 이름이 다른 사이트에도 있으면 거기서도 빠진다(있는지 미확인).
   // 나무위키(#72): 옆 칸 "최근 변경" 목록(머리 링크 /RecentChanges + 문서 링크 /w/… + "N초 전")과 "실시간 검색어" 목록
   //   (/Go?q=… 링크)이 10초쯤마다 바뀌어 유닛이 계속 갈렸다(서현 기록 data/namu1.json: 유닛 245~248 · splice 6회 · 기록 시간
   //   6.6%, 11-10 서현 "광고처럼 아예 스트림에서 빼기"). 클래스 이름이 뒤섞인 글자라 링크 모양으로 잡는다(브라우저 확인: 각 1칸).
