@@ -3,8 +3,9 @@
  *
  * 소유: session(background 세션 상태의 읽기 전용 사본, 최상위만), lastKey
  * 의존(직접 호출): 0-core, 2-units(무한 스크롤 의심의 앞 글 표본, #78), 6-frames
- * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66), nav:hint(#78)
- * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, activity,
+ * 발행: session:changed, session:link, export:ready, ui:panel, overlay:pref, idle:clock, skip:page(#49), popup:perf(#66), nav:hint(#78),
+ *       eval:fail(#83 여러 글 버전)
+ * 구독: seg:page, seg:flush, label:mode, scan:done, label:done, eval:go, activity,
  *       ui:rec, ui:export, ui:query, ui:idletest, ui:overlay, stat
  *
  * --- 이 레이어가 하는 일 ----------------------------------------------------
@@ -150,9 +151,17 @@
   //   label 이벤트를 먼저 넘기므로(파일 순서상 먼저 구독) 정지 요청보다 라벨 조각이 먼저 도착한다.
   //   취소는 정지하지 않는다 — 계속 읽는다.
   //   answer(정답 'O' / 오답 'X', #24)는 정지 요청에만 싣는다 — 데이터 수집 버전이 파일 이름에 쓴다. 기록 JSON 에는 없다.
+  //   keep(#83): 여러 글 수집 버전은 글마다 평가를 끝내도 기록을 이어 간다(마지막에 따로 정지). 다른 버전은 keep 을 안 보낸다.
   bus.on('label:done', (d) => {
-    if (d && !d.cancelled) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
+    if (d && !d.cancelled && !d.keep) toBg({ rbc: 'stop', reason: 'labeled', answer: d.answer || null });
   });
+
+  // 여러 글 수집 버전(#83): 평가 바 목록에서 글을 눌렀다 → background 가 그 글의 탭을 앞으로(닫혔으면 다시 연다).
+  //   다른 버전은 발행하지 않는다.
+  //   거절되면 eval:fail{why}(12-label 이 평가 바에 띄움). 못 닿음은 toBg 가 패널 연결 표시에 남긴다.
+  bus.on('eval:go', (d) => toBg({ rbc: 'evalgo', pageId: d && d.pageId }).then((r) => {
+    if (r && r.ok === false) bus.emit('eval:fail', { why: r.why });
+  }));
 
   if (!IS_TOP) return;          // 이하 전부 최상위 전용
 
@@ -301,6 +310,8 @@
       RBC.frames.send('stop', { reason: m.reason === 'idle' ? 'idle' : 'user' });
     }
     else if (m.rbc === 'label') { RBC.frames.send('label'); reply({ ok: true }); }
+    // 여러 글 수집 버전(#83): 평가할 글 목록 → primary 의 12-label. 다른 버전의 background 는 보내지 않는다.
+    else if (m.rbc === 'evallist') { RBC.frames.send('evallist', { list: m.list }); reply({ ok: true }); }
     else if (m.rbc === 'ping') {                       // 팝업의 연결 확인 (참가자용, 0-B)
       //   settling = 본문 준비 중 대기. 팝업은 기록 시작 뒤 이게 풀리고 recording 이 될 때까지 기다렸다 닫힌다.
       const ri = RBC.stream.rootInfo() || {};

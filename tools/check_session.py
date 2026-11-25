@@ -67,8 +67,14 @@ content.js가 export한 세션 JSON의 *구조적 불변식*을 검사한다.
          따로가 되기 전(10-09 전) 기록, 합쳐진 유닛의 앞 문단만 통째로 빠진 경우(예상, 이어받기 안 됨)에도 나온다. 학습 제외.
   세션 단위 추가:
     [S6] stopReason == 'labeled' 이면 취소 아닌 label 이 어느 페이지엔가 있다  FAIL
+    [S8] 여러 글 수집 버전(#83) 설문 — stopReason == 'labeled' 이면 어느 페이지의 최종 label 에 설문 3개가 다 있다  FAIL
+         여러 글 버전 = session.tester.consentVersion ≥ 4 (data-collect-multi 의 동의 버전). 이 기록은 설문을 테스트 끝에
+         한 번만 받으므로 [17] 은 페이지마다 survey 가 {} 이거나 3개 다 있으면 통과. 다시 연 글(평가 구간에 틱 0)에서
+         평정 빠진 유닛은 그사이 바뀐 문단(브런치 남은 시간 시계 등)이라 FAIL 대신 WARN.
     [S7] 파일 이름 (#24)                              PASS / WARN / FAIL
          데이터 수집 버전 이름 = <링크 3자리>_rbc_<참여 번호>_<조건 태그>_<세션 앞 8자>_<시각 13자리>_<O|X>.json
+         여러 글 버전(#83) 이름 = test<3자리>_rbc_<참여 번호>_<세션 앞 8자>_<시각 13자리>_<답>.json
+           답 = 질문 순서대로 채점(영문 대문자 · 숫자 1~10자, 예 OOX) · 조건 태그 칸 없음 · 모름 = NOTEST · NOANS · NOID
          링크 번호 · 정답 여부는 이름에만 있다(JSON 에 없음). 이름에서 읽어 보여 준다.
          FAIL: 이름의 참여 번호 · 조건 태그 · 세션이 JSON(session.tester · sessionId)과 다름 — 다른 기록의 이름표.
          WARN: 옛 이름(rbc_<참여 번호>_<세션>_<시각>.json — #24 전 · 디버그 패널 내보내기) · 규칙 밖 이름 ·
@@ -870,8 +876,15 @@ def final_label(timeline):
     return labs[-1] if labs else None
 
 
-def check_label(rep, meta, timeline, ticks):
-    """[17] 라벨 v2 형식 · 정합 · 라벨 모드 중 기록 없음 · 대충 찍기 의심."""
+def is_multi(session):
+    """여러 글 수집 버전(#83, data-collect-multi) 기록인가 — 동의 버전 4 이상(그 버전에서 조건 태그를 빼며 올렸다)."""
+    v = (session.get("tester") or {}).get("consentVersion")
+    return isinstance(v, int) and v >= 4
+
+
+def check_label(rep, meta, timeline, ticks, multi=False):
+    """[17] 라벨 v2 형식 · 정합 · 라벨 모드 중 기록 없음 · 대충 찍기 의심.
+    multi(#83): 설문은 세션 끝 한 번이라 {} 도 통과([S8] 이 따로 본다). 다시 연 글의 빠진 유닛은 WARN."""
     name = "라벨 v2"
     # 라벨 모드 구간: label(취소 포함) 의 (startT, t). labelask 카드 구간은 기록이 정상이라 뺀다
     windows = [(e["startT"], e["t"]) for e in timeline
@@ -906,8 +919,13 @@ def check_label(rep, meta, timeline, ticks):
     if both:
         probs.append(f"평정 · 제외 겹침 {len(both)}개")
     missing = set(allp) - set(rat) - set(exc)
+    reopened_gap = 0
     if missing:
-        probs.append(f"평정 빠진 유닛 {len(missing)}개")
+        # 여러 글 버전: 평가한 구간에 틱이 없으면 = 평가 중 다시 연 글. 앞 구간에만 있던 유닛은 그사이 바뀐 문단이다
+        if multi and not any(e.get("segId") == lab.get("segId") for e in ticks):
+            reopened_gap = len(missing)
+        else:
+            probs.append(f"평정 빠진 유닛 {len(missing)}개")
     extra = (set(rat) | set(exc)) - set(allp)
     if extra:
         probs.append(f"없는 유닛 {len(extra)}개")
@@ -922,9 +940,10 @@ def check_label(rep, meta, timeline, ticks):
     out = set(marks) - set(rat) - (set(exc) & allnoise)
     if out:
         probs.append(f"marks 가 평정 대상 밖 {len(out)}개")
-    for k, ok in SURVEY_VALUES.items():
-        if lab["survey"].get(k) not in ok:
-            probs.append(f"설문 {k}={lab['survey'].get(k)!r}")
+    if not (multi and lab["survey"] == {}):          # 여러 글 버전: 글마다 평가는 설문 없이 {} (#83)
+        for k, ok in SURVEY_VALUES.items():
+            if lab["survey"].get(k) not in ok:
+                probs.append(f"설문 {k}={lab['survey'].get(k)!r}")
     last = {}
     for row in lab["ratingLog"]:
         if isinstance(row, list) and len(row) == 3:
@@ -941,6 +960,8 @@ def check_label(rep, meta, timeline, ticks):
         return
 
     warns = []
+    if reopened_gap:
+        warns.append(f"다시 연 글 — 기록 때만 있던 유닛 {reopened_gap}개는 평정 없음")
     if rat:
         n_uns = sum(1 for v in rat.values() if v == "unsure")
         if n_uns / len(rat) > 0.5:
@@ -960,7 +981,7 @@ def check_label(rep, meta, timeline, ticks):
     sv = lab["survey"]
     detail = (f"{lab['trigger']} · {lab['ms'] / 1000:.0f}s · 평정 {len(rat)}(제외 {len(exc)}) "
               + " ".join(f"{k}{cnt.get(k, 0)}" for k in ("skip", "skim", "read", "focus", "unsure"))
-              + f" · 중요 {len(marks)} · 설문 {sv.get('gain')}/{sv.get('interest')}/{sv.get('familiarity')}")
+              + f" · 중요 {len(marks)} · 설문 " + (f"{sv.get('gain')}/{sv.get('interest')}/{sv.get('familiarity')}" if sv else "없음(세션 끝 한 번)"))
     if warns:
         rep.add(WARN, name, " · ".join(warns) + " — " + detail)
     else:
@@ -1056,6 +1077,10 @@ def parse_file_name(path):
         return None
     stem = re.sub(r" \(\d+\)$", "", stem)
     parts = stem.split("_")
+    # 여러 글 버전(#83): test<3자리> _ rbc _ 참여 번호(… _ 포함 가능) _ 세션 _ 시각 _ 답
+    if (len(parts) >= 6 and parts[1] == "rbc" and re.fullmatch(r"test\d{3}|NOTEST", parts[0])
+            and re.fullmatch(r"\d{13}", parts[-2]) and re.fullmatch(r"[A-Z0-9]{1,10}|NOANS", parts[-1])):
+        return {"kind": "multi", "link": parts[0], "pno": "_".join(parts[2:-3]), "sid": parts[-3], "answer": parts[-1]}
     # 새 이름: 링크 _ rbc _ 참여 번호(… _ 포함 가능) _ 태그 _ 세션 _ 시각 _ O|X
     if len(parts) >= 7 and parts[1] == "rbc" and parts[-1] in ("O", "X", "NOANS") and re.fullmatch(r"\d{13}", parts[-2]):
         link = parts[0]
@@ -1086,6 +1111,12 @@ def check_file_name(rep, path, session):
         return
     if name["kind"] == "old":
         rep.add(WARN, "파일 이름", "옛 이름(#24 전 · 디버그 패널 내보내기) — 링크 번호 · 정답 여부 없음")
+        return
+    if name["kind"] == "multi":
+        unknown = [k for k in ("NOTEST", "NOANS", "NOID") if k in (name["link"], name["answer"], name["pno"])]
+        detail = f"테스트 {name['link']} · 답 {name['answer']} · {name['pno']} · 이름과 JSON 일치"
+        rep.add(WARN if unknown else OK, "파일 이름",
+                detail + (f" — 내보낼 때 모른 값 {' · '.join(unknown)}" if unknown else ""))
         return
     unknown = [k for k in ("NOLINK", "NOANS", "NOID", "NOTAG") if k in (name["link"], name["answer"], name["pno"], name["tag"])]
     said = {"O": "정답", "X": "오답"}.get(name["answer"], "모름")
@@ -1130,7 +1161,7 @@ def check_settle(rep, timeline):
     rep.add(OK, "본문 준비 대기", " / ".join(parts))
 
 
-def run_payload(label, data, baseline=None):
+def run_payload(label, data, baseline=None, multi=False):
     """페이지 payload 하나 (단일 파일 또는 bundle 의 한 페이지)."""
     meta = data.get("meta", {})
     timeline = data.get("timeline", [])
@@ -1164,7 +1195,7 @@ def run_payload(label, data, baseline=None):
     check_vis_cross(rep, meta, oticks)
     check_scroll_cross(rep, meta, timeline, ticks)
     check_v3_fields(rep, meta, timeline, ticks)
-    check_label(rep, meta, timeline, ticks)
+    check_label(rep, meta, timeline, ticks, multi)
     if baseline:
         check_units_baseline(rep, meta, baseline)
 
@@ -1203,7 +1234,7 @@ def run(path, baseline=None):
         url = meta.get("url") or meta.get("pageId") or ""
         use = baseline and (base_url is None or same_article(base_url, url))
         used = used or bool(use)
-        reps.append(run_payload(f"{path} [p{i}] {url[:70]}", page, baseline if use else None))
+        reps.append(run_payload(f"{path} [p{i}] {url[:70]}", page, baseline if use else None, is_multi(session)))
 
     if baseline and not used:
         srep.add(WARN, "유닛 기준선", f"기준선 글({base_url})이 이 세션에 없음 — 검사 안 함")
@@ -1215,6 +1246,12 @@ def run(path, baseline=None):
         lv = OK if has else FAIL
         srep2 = Report(f"{path} [세션 라벨]")
         srep2.add(lv, "라벨로 정지", "완료된 label 있음" if has else "stopReason=labeled 인데 완료된 label 없음")
+        # [S8] 여러 글 버전: 설문은 테스트 끝에 한 번 — 어느 글의 최종 label 에 3개가 다 있어야 한다 (#83)
+        if is_multi(session):
+            fulls = [lab for lab in (final_label(pg.get("timeline", [])) for pg in data.get("pages", []))
+                     if lab and all(lab.get("survey", {}).get(k) in ok for k, ok in SURVEY_VALUES.items())]
+            srep2.add(OK if len(fulls) == 1 else WARN if fulls else FAIL, "설문(세션 끝 한 번)",
+                      f"설문 든 글 {len(fulls)}개" + ("" if len(fulls) == 1 else " — 1개여야 함"))
         srep2.show()
         reps.append(srep2)
     return reps

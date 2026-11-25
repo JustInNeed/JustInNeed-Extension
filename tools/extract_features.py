@@ -204,7 +204,17 @@ def load_bundle(path):
         if v < 3:
             sys.exit(f"{path}: schemaVersion {v} — v3 미만은 지원 안 함.")
     tester = s.get("tester") or {}
+    # 여러 글 수집 버전(#83): 설문은 테스트 끝에 한 번 — 어느 글의 최종 label 에만 있다. 세션 설문으로 들고 있다가
+    #   설문이 빈({}) label 의 페이지에 채운다(page_rows). 옛 버전은 페이지마다 설문이 있어 이 값을 안 쓴다.
+    sess_sv = {}
+    for p in pages:
+        labs = [e for e in p.get("timeline", []) if e.get("type") == "label" and not e.get("cancelled")]
+        sv = (labs[-1].get("survey") or {}) if labs else {}
+        if all(k in sv for k in ("gain", "interest", "familiarity")):
+            sess_sv = sv
+            break
     return {
+        "session_survey": sess_sv,
         "path": path,
         "session": s,
         "pages": pages,
@@ -465,6 +475,8 @@ def page_rows(bundle, page, df, base, n_sess_tester, query_info, noise):
     exc = set(lab.get("excluded") or []) if lab else set()
     mk = set(lab.get("marks") or []) if lab else set()
     lab_sv = (lab.get("survey") or {}) if lab else {}
+    if lab and not lab_sv:                         # 여러 글 버전(#83): 세션 끝 한 번 받은 설문을 이 글에도
+        lab_sv = bundle.get("session_survey") or {}
     pms = (lab.get("phaseMs") or {}) if lab else {}
     rate_gap = {}                                  # pid → 최종값을 누르기까지 직전 누름과의 간격
     prev_t = None
