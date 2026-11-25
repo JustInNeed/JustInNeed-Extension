@@ -337,7 +337,13 @@
     // javascript.info(#72, 11-10 서현): 본문 설명(article.formatted)과 과제 · 해답(div.tasks)이 main > .content 안의 형제라
     //   1) 시맨틱 첫 article 만 루트가 돼 과제가 기록 밖이었다. 사람은 과제 · 해답까지 본문으로 본다(서현) → 둘을 감싼 칸을 루트로.
     //   제목(header) · 댓글(#comments)은 밖. jsdom: 본문 유닛 pid 그대로(본문 끝 유닛 1개는 과제 첫머리와 합쳐져 바뀔 수 있음).
-    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' }];
+    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' },
+    // 보안뉴스(#80, 11-23 서현 "본문 밑에 Editor's Pick 까지 다 나가는 게 큰 문제"): 페이지 첫 article 이 맨 위 메뉴
+    //   (article#user-gnb, 1321자)라 1) 시맨틱 규칙이 메뉴 · "최신뉴스" 띠 같은 엉뚱한 칸을 루트로 골랐다(jsdom: 띠 = 유닛 3개 ·
+    //   판정 미판정). 기사 영역 칸 = 제목 머리(header — 스트림에서 원래 빠짐) + 본문 영역(기사 · 기자 · 댓글 · Editor's Pick ·
+    //   보안 리포트 · 생활 속 보안) + 옆 칸(aside — 원래 빠짐). 이 칸을 루트로 하되 judge = 본문 판정은 그대로 한다
+    //   — 본문 칸은 SITE_BOXES 보안뉴스 줄.
+    { host: /(^|\.)boannews\.com$/, sel: 'div.article-view-container', judge: true }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
@@ -349,7 +355,8 @@
       const el = document.querySelector(site.sel);
       if (!el || !textLen(el)) continue;
       const m = measure(el);
-      rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null };
+      rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null,
+        judge: !!site.judge };   // judge = 지정 루트여도 본문 판정을 한다(#80 보안뉴스). 기록에는 안 나감(5-recorder 는 el · how 만)
       useWalls = site.walls || false;
       return el;
     }
@@ -675,6 +682,11 @@
     { host: /(^|\.)pressian\.com$/, name: '프레시안',
       sel: '.view_header > .title, .view_header > .sub_title, .article_body',
       skip: 'a[href*="google.com/preferences/source"]' },
+    // 보안뉴스(#80): 루트(SITE_ROOTS 보안뉴스 — 기사 영역 칸) 안에서 기사 글 칸 article#article-view-content-div 만 본문.
+    //   도구 줄 · 저작권 · 키워드 · 기자 칸 · 댓글 · Editor's Pick · 보안 리포트 · 생활 속 보안은 noise.
+    //   제목 · 분류 · 기자 줄은 <header> 안이고 옆 칸은 <aside> 라 원래 스트림에서 빠진다(SKIP_TAGS, 모든 사이트 공통 — 안 바꿈).
+    //   기사 글 칸 이름이 블로터 · 테크M 과 같은 뉴스 프로그램 것(블로터 줄과 같은 [id=…] 꼴).
+    { host: /(^|\.)boannews\.com$/, name: '보안뉴스', sel: '[id="article-view-content-div"]' },
     // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
     //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
     { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
@@ -895,7 +907,7 @@
       return total ? inside / total : 0;
     };
     const ruleEls = rule ? siteBoxes(rule) : [];
-    if (rootInfo && rootInfo.how === 'site') {
+    if (rootInfo && rootInfo.how === 'site' && !rootInfo.judge) {
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
     } else if (ruleEls.length) {
       const skip = rule.skip || null;
