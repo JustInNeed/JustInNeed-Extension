@@ -660,6 +660,14 @@
     { host: /(^|\.)inews24\.com$/, name: '아이뉴스24',
       sel: '[id="articleBody"], [id="joynewsView"] > h1, [id="joynewsView"] > h2, [id="joynewsView"] div[itemprop="articleBody"]',
       skip: 'div.namecard, div.topnews' },
+    // 프레시안(#80): 기사 칸 div.article_view 안에 고정 머리줄(정기후원 · 공유) · 제목 · 부제 · 기자 줄 · 공유 도구 · 본문 칸
+    //   div.article_body · 후원 결제 칸 · 기자 소개(div.list_author — 최근글보기 · 네이버 구독) · 제보 · 후원(div.report_support) ·
+    //   댓글 · 헤드라인이 다 들어 있다. Readability 가 이 바깥 칸을 골라 기사 아닌 것까지 본문이었다(2026010711361334922, 11-20 서현).
+    //   제목 · 부제 · 본문 칸만 상자로. 제목 아래 기자 줄("허환주 기자 | 기사입력 …")은 noise(11-26 서현). 본문 칸 끝
+    //   "구글에서 프레시안을 더 자주 만나기" 링크는 뺀다.
+    { host: /(^|\.)pressian\.com$/, name: '프레시안',
+      sel: '.view_header > .title, .view_header > .sub_title, .article_body',
+      skip: 'a[href*="google.com/preferences/source"]' },
     // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
     //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
     { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
