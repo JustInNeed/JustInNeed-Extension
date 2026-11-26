@@ -91,6 +91,9 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 //     검색어는 이 화면 기록에서 얻지 않는다: 글의 meta.searchQuery 는 referrer · 팝업 입력으로만 채워 왔고(구글은 referrer 에
 //     검색어를 안 남김, 예상) AI 는 그 칸만 읽는다. 검색 결과 주소를 파싱하는 건 tools/extract_features 뿐(옛 기록용).
 //     규칙 = 하위 도메인까지(m.search.naver.com 등) · 구글은 /search 경로만(google.com 통째는 지도 · 문서까지 걸림).
+//     네이버 블로그 · 카페 홈의 검색(section.*.naver.com 의 검색 경로)도 검색 결과 목록(11-26 서현).
+//   home = 포털 첫 화면(#80, 11-26 서현 — 구글 · 네이버 · 다음 · 네이버 쇼핑): 본문 없는 링크 모음. exact = 그 주소 하나만
+//     (0-core skipMatch) — naver.com 아래 뉴스 · 블로그 글, 쇼핑 상품은 그대로 기록. 주소 모양은 서현 실측 전 = 예상.
 const NO_RECORD_SITES = [
   { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
   { url: 'google.com/search', why: 'search' },
@@ -99,11 +102,23 @@ const NO_RECORD_SITES = [
   { url: 'search.daum.net', why: 'search' },
   { url: 'search.shopping.naver.com', why: 'search' },    // 네이버 쇼핑 검색 — search.naver.com 의 하위 도메인이 아니라 따로(11-13 서현)
   { url: 'msearch.shopping.naver.com', why: 'search' },   // 그 모바일
+  { url: 'section.blog.naver.com/Search', why: 'search' },          // 블로그 홈 검색(Search/Post.naver?keyword=…)
+  { url: 'section.cafe.naver.com/ca-fe/home/search', why: 'search' },  // 카페 홈 검색
+  { url: 'google.com', why: 'home', exact: true },
+  { url: 'google.co.kr', why: 'home', exact: true },
+  { url: 'google.com/webhp', why: 'home', exact: true },
+  { url: 'naver.com', why: 'home', exact: true },
+  { url: 'm.naver.com', why: 'home', exact: true },
+  { url: 'daum.net', why: 'home', exact: true },
+  { url: 'm.daum.net', why: 'home', exact: true },
+  { url: 'shopping.naver.com', why: 'home', exact: true },
+  { url: 'shopping.naver.com/ns/home', why: 'home', exact: true },
 ];
 // 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
 };

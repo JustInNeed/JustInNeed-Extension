@@ -198,6 +198,9 @@
   //     도메인 = 같거나 그 하위 도메인(zdnet.co.kr → m.zdnet.co.kr 도) · 포트 = 같음(없으면 기본 포트만)
   //     경로 = 없으면 전부, 있으면 그 경로 또는 그 아래(/feed → /feed · /feed/1, /feeds 는 아님)
   //     쿼리 = 규칙에 있는 이름=값이 주소에 다 있음
+  //   exact = 엔진 목록(bg-core NO_RECORD_SITES)에만 쓰는 표시(#80): 도메인이 똑같고(하위 도메인 X) 경로도 똑같을 때만
+  //     (경로 없음 = 첫 화면 "/" 만). 포털 첫 화면처럼 "그 주소 하나"만 빼려고 — 보통 규칙은 그 아래 전부라 naver.com 이
+  //     뉴스 · 블로그까지 다 막는다. BE · 웹 표시형에는 없는 표시라 서버 규칙에는 안 붙는다.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -214,7 +217,9 @@
       const [, rHost, rPort = '', rRaw = '', rQuery = ''] = m;
       const rPath = dec(rRaw);
       const h = rHost.toLowerCase();
-      if (host !== h && !host.endsWith('.' + h)) continue;
+      if (r.exact) {
+        if (host !== h || path !== rPath.replace(/\/+$/, '')) continue;
+      } else if (host !== h && !host.endsWith('.' + h)) continue;
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
       if (rQuery) {
