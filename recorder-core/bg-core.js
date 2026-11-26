@@ -113,6 +113,7 @@ const NO_RECORD_SITES = [
   { url: 'm.daum.net', why: 'home', exact: true },
   { url: 'shopping.naver.com', why: 'home', exact: true },
   { url: 'shopping.naver.com/ns/home', why: 'home', exact: true },
+  { url: 'section.cafe.naver.com/ca-fe/home', why: 'home', exact: true },   // 카페 홈(11-26 서현). 그 아래 검색은 위 search 줄
 ];
 // 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
