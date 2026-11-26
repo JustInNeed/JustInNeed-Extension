@@ -331,6 +331,7 @@
   //   (stepL_iframe: 유닛 25 · 링크 글자 조각 119/345). 벽 없음(일반 사이트와 같은 청킹).
   //   실제 DOM 으로 확인 안 한 선택자 — 패널 루트 줄이 "div.se-main-container (site)" 인지로 확인. 옛 에디터 글은 이 상자가 없어 폴백 그대로.
   //   host(선택) = 그 사이트에서만 본다 — 선택자가 흔한 이름일 때.
+  //   shell(선택, #80) = 그 요소(본문을 담은 iframe)를 루트로 삼아 이 페이지는 유닛 0개 — 프레임 뽑기에서 본문 창에 자리를 내준다.
   //   judge(선택, #80) = 루트만 지정하고 본문 판정(SITE_BOXES · Readability)은 그대로 한다. 없으면 루트 전체 = 본문(판정 생략).
   //   뉴시스(#72, 11-10 서현): 기사 칸은 .viewer > article (지금도 1) 시맨틱 첫 article 로 같은 칸). [속보] 기사는 본문이
   //   "후속기사가 이어집니다" 한 줄이라 문턱(MIN_ROOT_TEXT)에서 떨어져 2) 폴백이 맨 아래 회사 주소 칸(div#footer)을 골랐다(jsdom).
@@ -349,7 +350,15 @@
     //   판정 미판정). 기사 영역 칸 = 제목 머리(header — 스트림에서 원래 빠짐) + 본문 영역(기사 · 기자 · 댓글 · Editor's Pick ·
     //   보안 리포트 · 생활 속 보안) + 옆 칸(aside — 원래 빠짐). 이 칸을 루트로 하되 judge = 본문 판정은 그대로 한다
     //   — 본문 칸은 SITE_BOXES 보안뉴스 줄.
-    { host: /(^|\.)boannews\.com$/, sel: 'div.article-view-container', judge: true }];
+    { host: /(^|\.)boannews\.com$/, sel: 'div.article-view-container', judge: true },
+    // 네이버 카페 PC(#80, 11-26 서현 "옆에 쓸데없는 메뉴가 본문처럼 나와 · 본문 글자가 안 잡힘"): 글 화면 = 바깥 페이지
+    //   (왼쪽 메뉴 · 카페 정보 · 게시판 목록) 안에 본문 창 iframe#cafe_main(cafe.naver.com/ca-fe/cafes/…/articles/…).
+    //   본문 창은 위 .se-main-container 줄로 본문을 잘 찾는데(jsdom: 유닛 2 · 240자 = 본문 전부), 바깥 메뉴가 유닛이 더 많아
+    //   (fallback div#cafe-body-skin, 유닛 11) 프레임 뽑기에서 이겼다. 본문 창이 늦게 뜨면 후보조차 못 됐다(서현 패널 "후보 1개").
+    //   shell = 바깥 페이지가 물러난다: 본문 창 iframe 자체를 루트로 → 스트림이 비어 유닛 0개 → 후보에서 빠지고, 본문 창이 늦게
+    //   뜨면 네이버 블로그 PC 와 같은 다시 뽑기(6-frames reelect)로 잡힌다. 본문 창 안에는 이 iframe 이 없어 안 걸린다.
+    //   카페 PC 주소에만(블로그 · 모바일 카페 m.cafe 는 안 걸림).
+    { host: /^cafe\.naver\.com$/, sel: 'iframe#cafe_main', shell: true }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
@@ -359,7 +368,7 @@
     for (const site of SITE_ROOTS) {
       if (site.host && !site.host.test(location.hostname)) continue;
       const el = document.querySelector(site.sel);
-      if (!el || !textLen(el)) continue;
+      if (!el || (!site.shell && !textLen(el))) continue;   // shell = 본문 창 iframe 이 있으면 글자 없이도 루트(유닛 0개, 네이버 카페)
       const m = measure(el);
       rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null,
         judge: !!site.judge };   // judge = 지정 루트여도 본문 판정을 한다(#80 보안뉴스). 기록에는 안 나감(5-recorder 는 el · how 만)
