@@ -201,6 +201,8 @@
   //   exact = 엔진 목록(bg-core NO_RECORD_SITES)에만 쓰는 표시(#80): 도메인이 똑같고(하위 도메인 X) 경로도 똑같을 때만
   //     (경로 없음 = 첫 화면 "/" 만). 포털 첫 화면처럼 "그 주소 하나"만 빼려고 — 보통 규칙은 그 아래 전부라 naver.com 이
   //     뉴스 · 블로그까지 다 막는다. BE · 웹 표시형에는 없는 표시라 서버 규칙에는 안 붙는다.
+  //   path = 엔진 목록에만 쓰는 표시(#80): 경로 모양(정규식 글자). 앞부분이 같은 글 · 목록 주소를 가른다
+  //     (네이버 카페 /f-e/cafes/<번호>/menus/… = 게시판 목록, …/articles/… = 글). 메시지로 오가므로 RegExp 가 아니라 글자.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -222,6 +224,7 @@
       } else if (host !== h && !host.endsWith('.' + h)) continue;
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
+      if (r.path) { let re; try { re = new RegExp(r.path); } catch (e) { continue; } if (!re.test(path)) continue; }
       if (rQuery) {
         let all = true;
         new URLSearchParams(rQuery).forEach((v, k) => { if (!u.searchParams.getAll(k).includes(v)) all = false; });

@@ -121,12 +121,16 @@ const NO_RECORD_SITES = [
   { url: 'm.cafe.naver.com', why: 'home', exact: true },
   { url: 'm.cafe.naver.com/ca-fe', why: 'home', exact: true },
   { url: 'm.cafe.naver.com/ca-fe/home', why: 'home', exact: true },
+  // 카페 게시판 목록(11-26 서현 "본문 들어가기 전 목록 페이지도 제외 — 본문만 본다"): /f-e/cafes/<카페>/menus/<게시판>(?viewType=L 등).
+  //   글은 같은 /f-e/cafes/<카페>/ 아래 articles 라(예상) 경로 모양(path)으로 menus 만.
+  { url: 'cafe.naver.com/f-e/cafes', why: 'list', path: '^/f-e/cafes/\\d+/menus(/|$)' },
   { url: 'cafe.naver.com/ca-fe/home/search', why: 'search' },   // 카페 검색(하위 도메인 m. · section. 도 걸림, 주소 모양 예상)
 ];
 // 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 게시판 목록은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
