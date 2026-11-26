@@ -203,6 +203,10 @@
   //     뉴스 · 블로그까지 다 막는다. BE · 웹 표시형에는 없는 표시라 서버 규칙에는 안 붙는다.
   //   path = 엔진 목록에만 쓰는 표시(#80): 경로 모양(정규식 글자). 앞부분이 같은 글 · 목록 주소를 가른다
   //     (네이버 카페 /f-e/cafes/<번호>/menus/… = 게시판 목록, …/articles/… = 글). 메시지로 오가므로 RegExp 가 아니라 글자.
+  //   home = 엔진 목록에만 쓰는 표시(#80, 11-26 서현 "첫 화면이면 다 기록에서 제외 · 완전 보수적으로 본문만"): url 과 상관없이
+  //     모든 사이트의 첫 화면 — 경로가 / 뿐 · ? 쿼리 없음 · #/ · #! 화면 이동 표시 없음(#top 같은 칸 이동은 첫 화면 그대로).
+  //     /?p=123(워드프레스 기본 글 주소) · #/post/1(앱처럼 화면 바꾸는 사이트)은 글일 수 있어 안 건다.
+  //     except = 첫 화면이 곧 글일 수 있는 도메인(정규식 글자) — 안 건다.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -214,6 +218,11 @@
     const host = u.hostname.toLowerCase().replace(/^www\.(?=[^.]+\.)/, '');
     const path = dec(u.pathname.replace(/\/+$/, ''));           // BE 표시형 경로는 입력 그대로(한글이 안 풀렸을 수 있음) → 둘 다 풀어서 비교
     for (const r of rules) {
+      if (r && r.home) {
+        if (path || u.search || /^#[!/]/.test(u.hash)) continue;
+        if (r.except) { let re; try { re = new RegExp(r.except); } catch (e) { re = null; } if (re && re.test(host)) continue; }
+        return r;
+      }
       const m = /^([^/?:]+)(?::(\d+))?(\/[^?]*)?(?:\?(.*))?$/.exec(String((r && r.url) || ''));
       if (!m) continue;
       const [, rHost, rPort = '', rRaw = '', rQuery = ''] = m;

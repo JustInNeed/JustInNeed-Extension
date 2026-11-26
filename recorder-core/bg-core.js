@@ -113,6 +113,18 @@ const NO_RECORD_SITES = [
   { url: 'm.daum.net', why: 'home', exact: true },
   { url: 'shopping.naver.com', why: 'home', exact: true },
   { url: 'shopping.naver.com/ns/home', why: 'home', exact: true },
+  // 모든 사이트 첫 화면(#80, 11-26 서현 "첫 화면이면 다 제외 · 보수적으로 본문만"). 조건은 0-core skipMatch home 주석.
+  //   except = 첫 화면이 곧 글일 수 있는 곳은 기록(노션 공개 페이지 notion.site · oopy.io · super.site, GitHub Pages,
+  //   블로그스팟, docs.* 문서 사이트). 자기 도메인 워드프레스 블로그 · 행사 안내 사이트는 못 가림 — 보이면 여기 더한다.
+  //   사전 확인(home-check.md 38곳): 기사 · 글 오탐 0, 홈 32곳 걸림. 놓친 곳(넘어간 주소)은 아래 exact 줄.
+  { url: '(모든 사이트 첫 화면 /)', why: 'home', home: true,
+    except: '(^|\\.)(notion\\.site|oopy\\.io|super\\.site|github\\.io|blogspot\\.com)$|^docs\\.' },
+  { url: 'news.kbs.co.kr/news/pc/main/main.html', why: 'home', exact: true },
+  { url: 'news.sbs.co.kr/news/newsMain.do', why: 'home', exact: true },
+  { url: 'clien.net/service', why: 'home', exact: true },
+  { url: 'ko.wikipedia.org/wiki/위키백과:대문', why: 'home', exact: true },
+  { url: 'developer.mozilla.org/ko', why: 'home', exact: true },
+  { url: 'developer.mozilla.org/en-US', why: 'home', exact: true },
   { url: 'section.cafe.naver.com/ca-fe/home', why: 'home', exact: true },   // 카페 홈(11-26 서현). 그 아래 검색은 위 search 줄
   // 카페 홈은 주소가 여럿(11-26 서현): PC cafe.naver.com/ca-fe/home · 모바일 m.cafe.naver.com/ca-fe/ (글이 끝없이 붙는 피드).
   //   카페 글 주소(…/ca-fe/web/cafes/…/articles/… · cafe.naver.com/<카페>/<번호>)는 그대로 기록. /home · 맨 앞 주소는 예상으로 같이.
