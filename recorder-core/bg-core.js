@@ -87,11 +87,63 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 // 기록할 수 없는 사이트 (#49). url = 0-core skipMatch 규칙(도메인[:포트][경로][?쿼리]), why = 탭 알림 · 패널의 이유 코드.
 //   infinite = 무한 스크롤: 읽다 스크롤하면 다음 글을 끝없이 붙이고 주소를 바꾼다. 앞 글이 DOM 에 남아 같은 글이
 //   여러 pageId 에 겹친다(예상). 자동 감지는 안 함 — 멀쩡한 사이트를 막을까 봐 목록으로만(11-06 서현).
+//   search = 검색 결과 화면(#80): 본문이 없는 링크 목록이라 기록하지 않는다(11-13 서현 — 구글 · 네이버 · 다음 · 네이버 쇼핑).
+//     검색어는 이 화면 기록에서 얻지 않는다: 글의 meta.searchQuery 는 referrer · 팝업 입력으로만 채워 왔고(구글은 referrer 에
+//     검색어를 안 남김, 예상) AI 는 그 칸만 읽는다. 검색 결과 주소를 파싱하는 건 tools/extract_features 뿐(옛 기록용).
+//     규칙 = 하위 도메인까지(m.search.naver.com 등) · 구글은 /search 경로만(google.com 통째는 지도 · 문서까지 걸림).
+//     네이버 블로그 · 카페 홈의 검색(section.*.naver.com 의 검색 경로)도 검색 결과 목록(11-26 서현).
+//   home = 포털 첫 화면(#80, 11-26 서현 — 구글 · 네이버 · 다음 · 네이버 쇼핑): 본문 없는 링크 모음. exact = 그 주소 하나만
+//     (0-core skipMatch) — naver.com 아래 뉴스 · 블로그 글, 쇼핑 상품은 그대로 기록. 주소 모양은 서현 실측 전 = 예상.
 const NO_RECORD_SITES = [
   { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
+  { url: 'google.com/search', why: 'search' },
+  { url: 'google.co.kr/search', why: 'search' },
+  { url: 'search.naver.com', why: 'search' },
+  { url: 'search.daum.net', why: 'search' },
+  { url: 'search.shopping.naver.com', why: 'search' },    // 네이버 쇼핑 검색 — search.naver.com 의 하위 도메인이 아니라 따로(11-13 서현)
+  { url: 'msearch.shopping.naver.com', why: 'search' },   // 그 모바일
+  { url: 'section.blog.naver.com/Search', why: 'search' },          // 블로그 홈 검색(Search/Post.naver?keyword=…)
+  { url: 'section.cafe.naver.com/ca-fe/home/search', why: 'search' },  // 카페 홈 검색
+  { url: 'google.com', why: 'home', exact: true },
+  { url: 'google.co.kr', why: 'home', exact: true },
+  { url: 'google.com/webhp', why: 'home', exact: true },
+  { url: 'naver.com', why: 'home', exact: true },
+  { url: 'm.naver.com', why: 'home', exact: true },
+  { url: 'daum.net', why: 'home', exact: true },
+  { url: 'm.daum.net', why: 'home', exact: true },
+  { url: 'shopping.naver.com', why: 'home', exact: true },
+  { url: 'shopping.naver.com/ns/home', why: 'home', exact: true },
+  // 모든 사이트 첫 화면(#80, 11-26 서현 "첫 화면이면 다 제외 · 보수적으로 본문만"). 조건은 0-core skipMatch home 주석.
+  //   except = 첫 화면이 곧 글일 수 있는 곳은 기록(노션 공개 페이지 notion.site · oopy.io · super.site, GitHub Pages,
+  //   블로그스팟, docs.* 문서 사이트). 자기 도메인 워드프레스 블로그 · 행사 안내 사이트는 못 가림 — 보이면 여기 더한다.
+  //   사전 확인(home-check.md 38곳): 기사 · 글 오탐 0, 홈 32곳 걸림. 놓친 곳(넘어간 주소)은 아래 exact 줄.
+  { url: '(모든 사이트 첫 화면 /)', why: 'home', home: true,
+    except: '(^|\\.)(notion\\.site|oopy\\.io|super\\.site|github\\.io|blogspot\\.com)$|^docs\\.' },
+  { url: 'news.kbs.co.kr/news/pc/main/main.html', why: 'home', exact: true },
+  { url: 'news.sbs.co.kr/news/newsMain.do', why: 'home', exact: true },
+  { url: 'clien.net/service', why: 'home', exact: true },
+  { url: 'ko.wikipedia.org/wiki/위키백과:대문', why: 'home', exact: true },
+  { url: 'developer.mozilla.org/ko', why: 'home', exact: true },
+  { url: 'developer.mozilla.org/en-US', why: 'home', exact: true },
+  { url: 'section.cafe.naver.com/ca-fe/home', why: 'home', exact: true },   // 카페 홈(11-26 서현). 그 아래 검색은 위 search 줄
+  // 카페 홈은 주소가 여럿(11-26 서현): PC cafe.naver.com/ca-fe/home · 모바일 m.cafe.naver.com/ca-fe/ (글이 끝없이 붙는 피드).
+  //   카페 글 주소(…/ca-fe/web/cafes/…/articles/… · cafe.naver.com/<카페>/<번호>)는 그대로 기록. /home · 맨 앞 주소는 예상으로 같이.
+  { url: 'cafe.naver.com', why: 'home', exact: true },
+  { url: 'cafe.naver.com/ca-fe/home', why: 'home', exact: true },
+  { url: 'm.cafe.naver.com', why: 'home', exact: true },
+  { url: 'm.cafe.naver.com/ca-fe', why: 'home', exact: true },
+  { url: 'm.cafe.naver.com/ca-fe/home', why: 'home', exact: true },
+  // 카페 게시판 목록(11-26 서현 "본문 들어가기 전 목록 페이지도 제외 — 본문만 본다"): /f-e/cafes/<카페>/menus/<게시판>(?viewType=L 등).
+  //   글은 같은 /f-e/cafes/<카페>/ 아래 articles 라(예상) 경로 모양(path)으로 menus 만.
+  { url: 'cafe.naver.com/f-e/cafes', why: 'list', path: '^/f-e/cafes/\\d+/menus(/|$)' },
+  { url: 'cafe.naver.com/ca-fe/home/search', why: 'search' },   // 카페 검색(하위 도메인 m. · section. 도 걸림, 주소 모양 예상)
 ];
 // 이유별 문구 — label = 이유 태그(알림 · 팝업 · 패널), head = 알림 윗줄 · 아이콘 설명, note = 툴바 팝업의 태그 옆 설명
+//   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
+  search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 게시판 목록은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
 };

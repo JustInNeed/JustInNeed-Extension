@@ -198,6 +198,15 @@
   //     도메인 = 같거나 그 하위 도메인(zdnet.co.kr → m.zdnet.co.kr 도) · 포트 = 같음(없으면 기본 포트만)
   //     경로 = 없으면 전부, 있으면 그 경로 또는 그 아래(/feed → /feed · /feed/1, /feeds 는 아님)
   //     쿼리 = 규칙에 있는 이름=값이 주소에 다 있음
+  //   exact = 엔진 목록(bg-core NO_RECORD_SITES)에만 쓰는 표시(#80): 도메인이 똑같고(하위 도메인 X) 경로도 똑같을 때만
+  //     (경로 없음 = 첫 화면 "/" 만). 포털 첫 화면처럼 "그 주소 하나"만 빼려고 — 보통 규칙은 그 아래 전부라 naver.com 이
+  //     뉴스 · 블로그까지 다 막는다. BE · 웹 표시형에는 없는 표시라 서버 규칙에는 안 붙는다.
+  //   path = 엔진 목록에만 쓰는 표시(#80): 경로 모양(정규식 글자). 앞부분이 같은 글 · 목록 주소를 가른다
+  //     (네이버 카페 /f-e/cafes/<번호>/menus/… = 게시판 목록, …/articles/… = 글). 메시지로 오가므로 RegExp 가 아니라 글자.
+  //   home = 엔진 목록에만 쓰는 표시(#80, 11-26 서현 "첫 화면이면 다 기록에서 제외 · 완전 보수적으로 본문만"): url 과 상관없이
+  //     모든 사이트의 첫 화면 — 경로가 / 뿐 · ? 쿼리 없음 · #/ · #! 화면 이동 표시 없음(#top 같은 칸 이동은 첫 화면 그대로).
+  //     /?p=123(워드프레스 기본 글 주소) · #/post/1(앱처럼 화면 바꾸는 사이트)은 글일 수 있어 안 건다.
+  //     except = 첫 화면이 곧 글일 수 있는 도메인(정규식 글자) — 안 건다.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -209,14 +218,22 @@
     const host = u.hostname.toLowerCase().replace(/^www\.(?=[^.]+\.)/, '');
     const path = dec(u.pathname.replace(/\/+$/, ''));           // BE 표시형 경로는 입력 그대로(한글이 안 풀렸을 수 있음) → 둘 다 풀어서 비교
     for (const r of rules) {
+      if (r && r.home) {
+        if (path || u.search || /^#[!/]/.test(u.hash)) continue;
+        if (r.except) { let re; try { re = new RegExp(r.except); } catch (e) { re = null; } if (re && re.test(host)) continue; }
+        return r;
+      }
       const m = /^([^/?:]+)(?::(\d+))?(\/[^?]*)?(?:\?(.*))?$/.exec(String((r && r.url) || ''));
       if (!m) continue;
       const [, rHost, rPort = '', rRaw = '', rQuery = ''] = m;
       const rPath = dec(rRaw);
       const h = rHost.toLowerCase();
-      if (host !== h && !host.endsWith('.' + h)) continue;
+      if (r.exact) {
+        if (host !== h || path !== rPath.replace(/\/+$/, '')) continue;
+      } else if (host !== h && !host.endsWith('.' + h)) continue;
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
+      if (r.path) { let re; try { re = new RegExp(r.path); } catch (e) { continue; } if (!re.test(path)) continue; }
       if (rQuery) {
         let all = true;
         new URLSearchParams(rQuery).forEach((v, k) => { if (!u.searchParams.getAll(k).includes(v)) all = false; });

@@ -18,6 +18,8 @@
  *     원본 페이지에는 아무것도 쓰지 않는다(쓰면 7-observer 가 재스캔한다).
  *   - 되찾은 뒤 대조: 복사본 상자에 남은 글 표본이 원본 상자 글에 다 들어 있어야 한다. 아니면 실패.
  *   - 플랫폼 지정 루트(how: site) = 루트가 곧 본문(§6 결정) → Readability 를 안 돌리고 전부 본문.
+ *     예외(#80 보안뉴스): SITE_ROOTS 줄에 judge: true 면 루트만 지정하고 판정은 보통대로 한다(how 는 그대로 site —
+ *     기록만 보면 how=site 인데 noise true 가 섞일 수 있다).
  *   - 사이트 지정 본문 칸(SITE_BOXES, #43) = 루트는 그대로 두고 Readability 대신 그 칸들을 전부 상자로(art.by).
  *     칸 안의 뺄 칸(art.skip, 광고 자리, #45)은 상자 밖처럼 noise. 뺄 칸은 기록 중에도 조각마다 조상으로 다시 본다 —
  *     광고가 나중에 채워지면 그 뒤 조각부터 noise(앞 조각 · 비율은 처음 그대로). 아래 "기록 중" 의 또 다른 예외.
@@ -192,7 +194,17 @@
   //     있으면 패널 "뺀 위젯" 수로 보임).
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
-    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="])';
+    'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
+    'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2';
+  // 뉴시스(#80, 11-23 서현 "이 시간 핫뉴스 같은 걸 못 걸러서 아쉬움"): 페이지가 열린 뒤 스크립트가 끼워 넣는 칸 셋.
+  //   article div.linkNews = 모바일(mobile.newsis.com) "이시간 핫뉴스" 목록(기사 5개 + 광고 iframe). 기사 글 칸 div.article
+  //     한가운데에 끼어 본문 문단 사이 유닛이 됐다. 기사 칸 밖의 관련기사 목록(모바일 div.linkNews.newStyle2 · PC ul.linkNews)은 안 걸림.
+  //   p.imgsell = 사진 바로 뒤 "구매정보안내" 링크(PC · 모바일). [id^="adpnut_"] = 모바일 기사 칸 끝 떠 있는 광고("AD 광고삭제").
+  // 프레시안(#80, 11-26 서현 "이것도 없애자"): .article_body > .article_ad · .article_ad2 = 본문 칸 안 구글 광고 자리
+  //   (ins.adsbygoogle). 광고가 "자세히 알아보기 · 시사 뉴스 보기 · 도서 추천" 같은 검색어 글자를 페이지 안에 그려 본문 유닛이
+  //   됐다(브라우저 확인: 한 기사에 2칸). 방문마다 글이 바뀐다.
+  //   핫뉴스는 방문마다 기사가 바뀌어 noise 로 두면 앞뒤 유닛 pid 가 갈린다 → 광고처럼 스트림에서 뺀다. 지난 모바일 뉴시스 기록과
+  //   핫뉴스 앞뒤 유닛 pid 가 다를 수 있다(팀 공유). 이름이 다른 사이트에도 있으면 거기서도 빠진다(있는지 미확인).
   // 나무위키(#72): 옆 칸 "최근 변경" 목록(머리 링크 /RecentChanges + 문서 링크 /w/… + "N초 전")과 "실시간 검색어" 목록
   //   (/Go?q=… 링크)이 10초쯤마다 바뀌어 유닛이 계속 갈렸다(서현 기록 data/namu1.json: 유닛 245~248 · splice 6회 · 기록 시간
   //   6.6%, 11-10 서현 "광고처럼 아예 스트림에서 빼기"). 클래스 이름이 뒤섞인 글자라 링크 모양으로 잡는다(브라우저 확인: 각 1칸).
@@ -319,6 +331,8 @@
   //   (stepL_iframe: 유닛 25 · 링크 글자 조각 119/345). 벽 없음(일반 사이트와 같은 청킹).
   //   실제 DOM 으로 확인 안 한 선택자 — 패널 루트 줄이 "div.se-main-container (site)" 인지로 확인. 옛 에디터 글은 이 상자가 없어 폴백 그대로.
   //   host(선택) = 그 사이트에서만 본다 — 선택자가 흔한 이름일 때.
+  //   shell(선택, #80) = 그 요소(본문을 담은 iframe)를 루트로 삼아 이 페이지는 유닛 0개 — 프레임 뽑기에서 본문 창에 자리를 내준다.
+  //   judge(선택, #80) = 루트만 지정하고 본문 판정(SITE_BOXES · Readability)은 그대로 한다. 없으면 루트 전체 = 본문(판정 생략).
   //   뉴시스(#72, 11-10 서현): 기사 칸은 .viewer > article (지금도 1) 시맨틱 첫 article 로 같은 칸). [속보] 기사는 본문이
   //   "후속기사가 이어집니다" 한 줄이라 문턱(MIN_ROOT_TEXT)에서 떨어져 2) 폴백이 맨 아래 회사 주소 칸(div#footer)을 골랐다(jsdom).
   //   문턱 없이 이 칸을 루트로 — 보통 기사는 루트 · 유닛 그대로. 지정 루트라 본문 판정(Readability)은 건너뛰고 루트 전체가
@@ -330,7 +344,21 @@
     // javascript.info(#72, 11-10 서현): 본문 설명(article.formatted)과 과제 · 해답(div.tasks)이 main > .content 안의 형제라
     //   1) 시맨틱 첫 article 만 루트가 돼 과제가 기록 밖이었다. 사람은 과제 · 해답까지 본문으로 본다(서현) → 둘을 감싼 칸을 루트로.
     //   제목(header) · 댓글(#comments)은 밖. jsdom: 본문 유닛 pid 그대로(본문 끝 유닛 1개는 과제 첫머리와 합쳐져 바뀔 수 있음).
-    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' }];
+    { host: /(^|\.)javascript\.info$/, sel: 'main > .content' },
+    // 보안뉴스(#80, 11-23 서현 "본문 밑에 Editor's Pick 까지 다 나가는 게 큰 문제"): 페이지 첫 article 이 맨 위 메뉴
+    //   (article#user-gnb, 1321자)라 1) 시맨틱 규칙이 메뉴 · "최신뉴스" 띠 같은 엉뚱한 칸을 루트로 골랐다(jsdom: 띠 = 유닛 3개 ·
+    //   판정 미판정). 기사 영역 칸 = 제목 머리(header — 스트림에서 원래 빠짐) + 본문 영역(기사 · 기자 · 댓글 · Editor's Pick ·
+    //   보안 리포트 · 생활 속 보안) + 옆 칸(aside — 원래 빠짐). 이 칸을 루트로 하되 judge = 본문 판정은 그대로 한다
+    //   — 본문 칸은 SITE_BOXES 보안뉴스 줄.
+    { host: /(^|\.)boannews\.com$/, sel: 'div.article-view-container', judge: true },
+    // 네이버 카페 PC(#80, 11-26 서현 "옆에 쓸데없는 메뉴가 본문처럼 나와 · 본문 글자가 안 잡힘"): 글 화면 = 바깥 페이지
+    //   (왼쪽 메뉴 · 카페 정보 · 게시판 목록) 안에 본문 창 iframe#cafe_main(cafe.naver.com/ca-fe/cafes/…/articles/…).
+    //   본문 창은 위 .se-main-container 줄로 본문을 잘 찾는데(jsdom: 유닛 2 · 240자 = 본문 전부), 바깥 메뉴가 유닛이 더 많아
+    //   (fallback div#cafe-body-skin, 유닛 11) 프레임 뽑기에서 이겼다. 본문 창이 늦게 뜨면 후보조차 못 됐다(서현 패널 "후보 1개").
+    //   shell = 바깥 페이지가 물러난다: 본문 창 iframe 자체를 루트로 → 스트림이 비어 유닛 0개 → 후보에서 빠지고, 본문 창이 늦게
+    //   뜨면 네이버 블로그 PC 와 같은 다시 뽑기(6-frames reelect)로 잡힌다. 본문 창 안에는 이 iframe 이 없어 안 걸린다.
+    //   카페 PC 주소에만(블로그 · 모바일 카페 m.cafe 는 안 걸림).
+    { host: /^cafe\.naver\.com$/, sel: 'iframe#cafe_main', shell: true }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
@@ -340,9 +368,10 @@
     for (const site of SITE_ROOTS) {
       if (site.host && !site.host.test(location.hostname)) continue;
       const el = document.querySelector(site.sel);
-      if (!el || !textLen(el)) continue;
+      if (!el || (!site.shell && !textLen(el))) continue;   // shell = 본문 창 iframe 이 있으면 글자 없이도 루트(유닛 0개, 네이버 카페)
       const m = measure(el);
-      rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null };
+      rootInfo = { how: 'site', sel: describe(el), len: m.len, link: m.link, el: attrs(el), walls: site.walls || null,
+        judge: !!site.judge };   // judge = 지정 루트여도 본문 판정을 한다(#80 보안뉴스). 기록에는 안 나감(5-recorder 는 el · how 만)
       useWalls = site.walls || false;
       return el;
     }
@@ -649,6 +678,37 @@
     // 경향신문(#45): Readability 상자(section.art_cont)가 사실상 #articleBody 하나라 본문은 잘 잡는다. 칸 안 광고 자리
     //   (사진 아래 텍스트 광고 #articleImageTxtAd · 본문 배너)가 전부 .ad-wrapper 로 감싸져 있어 그것만 뺀다.
     { host: /(^|\.)khan\.co\.kr$/, sel: '[id="articleBody"]', name: '경향신문', skip: '.ad-wrapper' },
+    // 아이뉴스24(#80): PC — 본문 칸 article#articleBody 안, 기사 글 · 기자 줄(address) 아래에 기자 칸(div.namecard — 기자 이름 ·
+    //   좋아요 · 응원수 · 소개 · 기자의 다른 기사 2개) · "주요뉴스" 목록(div.topnews — 기사 10개 · 새로고침)이 같이 들어 있다.
+    //   Readability 가 이 칸을 통째로 골라(비율 100%) 전부 본문이었다(view/2025952, 11-13 서현 패널) → 기자 칸 · 주요뉴스만 뺀다.
+    //   기자 줄("/정유림 기자(이메일)")까지는 본문(11-13 서현). 두 칸은 페이지가 열린 뒤 스크립트가 채운다 → skip 은 조각마다
+    //   조상으로 보므로 나중에 채워져도 noise.
+    //   모바일(m.inews24.com/v/…) — id="articleBody" 가 없고 기사 상자 article#joynewsView 안에 제목 h1 · 부제 h2 · 본문 칸
+    //   div[itemprop=articleBody](기자 줄 포함) · 기자 칸이 있다. Readability 가 상자 통째(비율 100%)를 골라 기자 칸 · 글자 크기
+    //   설정 글까지 본문이었다(v/2026037, 11-13 서현). 제목 · 부제 · 본문 칸만 상자로 — 기자 칸 · 입력 시각 · 메뉴는 밖 = noise.
+    { host: /(^|\.)inews24\.com$/, name: '아이뉴스24',
+      sel: '[id="articleBody"], [id="joynewsView"] > h1, [id="joynewsView"] > h2, [id="joynewsView"] div[itemprop="articleBody"]',
+      skip: 'div.namecard, div.topnews' },
+    // 프레시안(#80): 기사 칸 div.article_view 안에 고정 머리줄(정기후원 · 공유) · 제목 · 부제 · 기자 줄 · 공유 도구 · 본문 칸
+    //   div.article_body · 후원 결제 칸 · 기자 소개(div.list_author — 최근글보기 · 네이버 구독) · 제보 · 후원(div.report_support) ·
+    //   댓글 · 헤드라인이 다 들어 있다. Readability 가 이 바깥 칸을 골라 기사 아닌 것까지 본문이었다(2026010711361334922, 11-20 서현).
+    //   부제 · 본문 칸만 상자로. 제목(p.title)은 noise — 제목은 본문이 아니다(11-26 서현, 이데일리와 같게). 제목 아래 기자 줄
+    //   ("허환주 기자 | 기사입력 …")도 noise(11-26 서현). 본문 칸 끝 "구글에서 프레시안을 더 자주 만나기" 링크는 뺀다.
+    //   본문 칸 안 구글 광고 자리는 AD_WIDGETS(프레시안 줄).
+    { host: /(^|\.)pressian\.com$/, name: '프레시안',
+      sel: '.view_header > .sub_title, .article_body',
+      skip: 'a[href*="google.com/preferences/source"]' },
+    // 모바일 뉴시스(#80): 기사 상자 #cont > article 안에 부제 div.summury(h2 여러 개) · 사진 칸 div.thum(사진 설명) · 글 칸
+    //   div.article 이 나란히 있다. Readability 가 글 칸만 골라 부제 · 사진 설명이 noise 였다(NISX20250624_0003225795,
+    //   11-26 서현 "본문이랑 연관되는 건데" → 본문). 셋 다 상자로. 기자 줄 · 등록 시각(div.head)은 그대로 밖.
+    //   PC(www.newsis.com)는 SITE_ROOTS 지정 루트(판정 없음, 전부 본문)라 이 줄과 상관없다 — 모바일 주소만.
+    { host: /^mobile\.newsis\.com$/, name: '뉴시스 모바일',
+      sel: '[id="cont"] > article > .summury, [id="cont"] > article > .thum, [id="cont"] > article > div.article' },
+    // 보안뉴스(#80): 루트(SITE_ROOTS 보안뉴스 — 기사 영역 칸) 안에서 기사 글 칸 article#article-view-content-div 만 본문.
+    //   도구 줄 · 저작권 · 키워드 · 기자 칸 · 댓글 · Editor's Pick · 보안 리포트 · 생활 속 보안은 noise.
+    //   제목 · 분류 · 기자 줄은 <header> 안이고 옆 칸은 <aside> 라 원래 스트림에서 빠진다(SKIP_TAGS, 모든 사이트 공통 — 안 바꿈).
+    //   기사 글 칸 이름이 블로터 · 테크M 과 같은 뉴스 프로그램 것(블로터 줄과 같은 [id=…] 꼴).
+    { host: /(^|\.)boannews\.com$/, name: '보안뉴스', sel: '[id="article-view-content-div"]' },
     // 서울경제(#53): Readability 상자(div.article-content)가 위 도구 막대(뉴스 듣기 · 글자 크기 …) · 기사 머리 ·
     //   기자 구독 · 오른쪽 "많이 본 뉴스" 까지 다 담는다. 본문 칸 #article-body 만 상자로. 광고 자리는 AD_WIDGETS.
     { host: /(^|\.)sedaily\.com$/, sel: '[id="article-body"]', name: '서울경제' },
@@ -869,7 +929,7 @@
       return total ? inside / total : 0;
     };
     const ruleEls = rule ? siteBoxes(rule) : [];
-    if (rootInfo && rootInfo.how === 'site') {
+    if (rootInfo && rootInfo.how === 'site' && !rootInfo.judge) {
       art = { status: 'site', why: '플랫폼 지정 루트 = 본문, 판정 생략', boxes: [], ratio: 1 };
     } else if (ruleEls.length) {
       const skip = rule.skip || null;
