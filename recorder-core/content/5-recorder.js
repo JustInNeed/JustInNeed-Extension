@@ -345,7 +345,7 @@
         'pieces[].path = 조각의 가장 가까운 DOM 블록부터 루트 직전까지 최대 6단계 [tag,id,class,role]. ' +
         'pathCut = 6단계에서 잘림. DOM 블록이 루트 자신이면 []. meta.root = 루트 자신과 선택 방식.',
         'pieces[].noise = 조각 글이 Readability 가 고른 본문 상자 밖에 걸치면 true, 안이면 false. 필드 없음 = 미판정 ' +
-        '(Readability 실패 · 상자 비율이 문턱 미만). 플랫폼 지정 루트(how=site)는 판정 없이 전부 false. 조각을 처음 만들 때 정함.',
+        '(Readability 실패 · 상자 비율이 문턱 미만). 플랫폼 지정 루트(how=site)는 판정 없이 전부 false — 단 보안뉴스(boannews.com)는 루트만 지정하고 판정해 true 가 섞임. 조각을 처음 만들 때 정함.',
         '이탈 시각은 segend 이벤트 · session.flushReport.end 로 본다 (meta.leftAt 없음).',
         'tick.vis = 그 틱에 뷰포트와 겹친 조각 [pid, k, top, bottom, left, right]. 자기 프레임 뷰포트 기준 CSS px, ' +
         '자르지 않음(음수 · vh 초과 허용). 조각마다 Range 외곽 상자. 같은 pid 의 조각은 세로 구간 합집합으로 합칠 것(단순 합 금지). ' +
