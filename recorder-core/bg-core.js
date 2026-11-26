@@ -125,6 +125,54 @@ const NO_RECORD_SITES = [
   { url: 'ko.wikipedia.org/wiki/위키백과:대문', why: 'home', exact: true },
   { url: 'developer.mozilla.org/ko', why: 'home', exact: true },
   { url: 'developer.mozilla.org/en-US', why: 'home', exact: true },
+  // 기사 사이트 목록 화면(#86, 11-26 서현 "메뉴 눌러 들어가는 화면들도 제외 · 사이트마다 규칙"): 사이트마다 기사 주소 모양(article)
+  //   한 줄 — 그 도메인(exactHost, 하위 도메인 X)에서 주소가 기사 모양이 아니면 글 목록 화면. 메뉴 · 아래 칸 · 2쪽 · 검색 · 바뀐 메뉴까지.
+  //   모양은 각 사이트 첫 화면 링크로 확인(11-26, 보고 docs/reports/86.md). zdnet 은 무한 스크롤 줄(사이트 통째)이 이미 막음.
+  //   문화일보는 앱 브라우저에 차단 화면이 떠 못 봄 → 안 넣음. 주소 모양이 다른 특별 기사(연재 · 인터랙티브)는 막힐 수 있음 → 보이면 그 줄을 고친다.
+  { url: 'chosun.com', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/' },   // 조선일보 /<칸>/2026/11/26/<ID>
+  { url: 'joongang.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 중앙일보
+  { url: 'donga.com', why: 'list', exactHost: true, article: '/article/' },   // 동아일보 /news/<칸>/article/all/<날짜>/<번호>/1
+  { url: 'hani.co.kr', why: 'list', exactHost: true, article: '/\\d+\\.html' },   // 한겨레 /arti/<칸>/<번호>.html
+  { url: 'khan.co.kr', why: 'list', exactHost: true, article: '/article/\\d+' },   // 경향신문(뉴스레터 /newsletter/…/article/ · 영어 /en/article/ 도 기사)
+  { url: 'hankookilbo.com', why: 'list', exactHost: true, article: '^/news/article/' },   // 한국일보
+  { url: 'kmib.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+|arcid=' },   // 국민일보(옛 view.asp?arcid=)
+  { url: 'segye.com', why: 'list', exactHost: true, article: '^/newsView/\\d+' },   // 세계일보
+  { url: 'seoul.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d+' },   // 서울신문
+  { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/' },   // 연합뉴스 /view/AKR…
+  { url: 'news1.kr', why: 'list', exactHost: true, article: '/\\d{6,}($|\\?)' },   // 뉴스1 /<칸>/<칸>/<번호>
+  { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스
+  { url: 'mobile.newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스 모바일(예상: PC 와 같은 모양)
+  { url: 'mk.co.kr', why: 'list', exactHost: true, article: '/\\d{7,}($|\\?)' },   // 매일경제 /news/<칸>/<번호>
+  { url: 'hankyung.com', why: 'list', exactHost: true, article: '/article/\\d{8,}' },   // 한국경제 /article/<번호>
+  { url: 'mt.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d{10,}|mtview\\.php' },   // 머니투데이(옛 mtview.php?no=)
+  { url: 'sedaily.com', why: 'list', exactHost: true, article: '^/article/\\d+|NewsView' },   // 서울경제(옛 NewsView)
+  { url: 'edaily.co.kr', why: 'list', exactHost: true, article: '[?&]newsId=' },   // 이데일리 /News/Read?newsId=
+  { url: 'biz.heraldcorp.com', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 헤럴드경제
+  { url: 'asiae.co.kr', why: 'list', exactHost: true, article: '^/article/(.+/)?\\d{10,}' },   // 아시아경제(심층 /article/in-depth/<번호> 도 기사)
+  { url: 'fnnews.com', why: 'list', exactHost: true, article: '^/news/\\d{10,}' },   // 파이낸셜뉴스
+  { url: 'news.kbs.co.kr', why: 'list', exactHost: true, article: 'view\\.do\\?.*ncd=' },   // KBS /news/pc/view/view.do?ncd=
+  { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/article/\\d+_\\d+\\.html' },   // MBC /news/2026/<칸>/article/<번호>_<번호>.html
+  { url: 'news.sbs.co.kr', why: 'list', exactHost: true, article: 'endPage\\.do\\?.*news_?[iI]d=' },   // SBS /news/endPage.do?news_id=
+  { url: 'ytn.co.kr', why: 'list', exactHost: true, article: '^/_ln/\\d+_\\d+|view\\.php' },   // YTN /_ln/<칸>_<번호>
+  { url: 'news.jtbc.co.kr', why: 'list', exactHost: true, article: '^/article/[A-Z]{2}\\d+' },   // JTBC /article/NB…
+  { url: 'nocutnews.co.kr', why: 'list', exactHost: true, article: '^/news/\\d+' },   // 노컷뉴스
+  { url: 'ohmynews.com', why: 'list', exactHost: true, article: '[?&]CNTN_CD=' },   // 오마이뉴스 at_pg.aspx?CNTN_CD=
+  { url: 'pressian.com', why: 'list', exactHost: true, article: '^/pages/articles/\\d+' },   // 프레시안
+  { url: 'mediatoday.co.kr', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 미디어오늘
+  { url: 'sisain.co.kr', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 시사IN
+  { url: 'etnews.com', why: 'list', exactHost: true, article: '^/\\d{14}' },   // 전자신문 /<14자리>
+  { url: 'm.etnews.com', why: 'list', exactHost: true, article: '^/\\d{14}' },   // 전자신문 모바일(예상)
+  { url: 'inews24.com', why: 'list', exactHost: true, article: '^/(v|view)/\\d+' },   // 아이뉴스24 /v/ · /view/
+  { url: 'm.inews24.com', why: 'list', exactHost: true, article: '^/(v|view)/\\d+' },   // 아이뉴스24 모바일 /v/
+  { url: 'bloter.net', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 블로터
+  { url: 'dt.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 디지털타임스
+  { url: 'techm.kr', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 테크M(블로터와 같은 뉴스 프로그램, 예상)
+  { url: 'boannews.com', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 보안뉴스
+  { url: 'news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 섹션 · 랭킹(기사는 n.news.naver.com, 앱 브라우저가 못 엶 = 예상)
+  { url: 'n.news.naver.com', why: 'list', exactHost: true, article: '/article/' },   // 네이버 뉴스 기사 /article/ · /mnews/article/(예상)
+  { url: 'm.news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 모바일(예상)
+  { url: 'news.daum.net', why: 'list', exactHost: true, article: '^/v/\\d+' },   // 다음 뉴스 섹션(기사는 v.daum.net, 예상)
+  { url: 'v.daum.net', why: 'list', exactHost: true, article: '^/v/\\d+' },   // 다음 뉴스 기사(예상)
   { url: 'section.cafe.naver.com/ca-fe/home', why: 'home', exact: true },   // 카페 홈(11-26 서현). 그 아래 검색은 위 search 줄
   // 카페 홈은 주소가 여럿(11-26 서현): PC cafe.naver.com/ca-fe/home · 모바일 m.cafe.naver.com/ca-fe/ (글이 끝없이 붙는 피드).
   //   카페 글 주소(…/ca-fe/web/cafes/…/articles/… · cafe.naver.com/<카페>/<번호>)는 그대로 기록. /home · 맨 앞 주소는 예상으로 같이.
