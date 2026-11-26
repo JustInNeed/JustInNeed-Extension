@@ -210,7 +210,7 @@
   //   exactHost = 엔진 목록에만(#86): 도메인이 똑같을 때만(하위 도메인 X — 같은 신문사라도 biz. · sports. 는 주소 모양이 다름).
   //   article = 엔진 목록에만(#86): 그 사이트의 "기사 주소 모양"(정규식 글자, 경로 + ?쿼리 에 맞춰 봄 — 기사 번호가 쿼리에 있는
   //     사이트가 있음). 주소가 이 모양이 **아니면** 걸린다 = 메뉴로 들어가는 기사 목록 화면(아래 칸 · 2쪽 · 바뀐 메뉴까지).
-  //     모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
+  //     맞춰 보는 경로는 끝 슬래시 그대로 · 대소문자 무시. 모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -240,7 +240,10 @@
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
       if (r.path) { let re; try { re = new RegExp(r.path); } catch (e) { continue; } if (!re.test(path)) continue; }
-      if (r.article) { let re; try { re = new RegExp(r.article); } catch (e) { continue; } if (re.test(path + u.search)) continue; }
+      if (r.article) {                                         // 끝 슬래시를 지우지 않은 경로(/view/?id= 꼴) · 대소문자 무시(newsid= 등)
+        let re; try { re = new RegExp(r.article, 'i'); } catch (e) { continue; }
+        if (re.test(dec(u.pathname) + u.search)) continue;
+      }
       if (rQuery) {
         let all = true;
         new URLSearchParams(rQuery).forEach((v, k) => { if (!u.searchParams.getAll(k).includes(v)) all = false; });

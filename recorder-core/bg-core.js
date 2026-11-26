@@ -137,7 +137,7 @@ const NO_RECORD_SITES = [
   { url: 'hankookilbo.com', why: 'list', exactHost: true, article: '^/news/article/' },   // 한국일보
   { url: 'kmib.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+|arcid=' },   // 국민일보(옛 view.asp?arcid=)
   { url: 'segye.com', why: 'list', exactHost: true, article: '^/newsView/\\d+' },   // 세계일보
-  { url: 'seoul.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d+' },   // 서울신문
+  { url: 'seoul.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d+|newsView\\.php' },   // 서울신문(옛 newsView.php?id=)
   { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/' },   // 연합뉴스 /view/AKR…
   { url: 'news1.kr', why: 'list', exactHost: true, article: '/\\d{6,}($|\\?)' },   // 뉴스1 /<칸>/<칸>/<번호>
   { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스
@@ -153,7 +153,7 @@ const NO_RECORD_SITES = [
   { url: 'news.kbs.co.kr', why: 'list', exactHost: true, article: 'view\\.do\\?.*ncd=' },   // KBS /news/pc/view/view.do?ncd=
   { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/article/\\d+_\\d+\\.html' },   // MBC /news/2026/<칸>/article/<번호>_<번호>.html
   { url: 'news.sbs.co.kr', why: 'list', exactHost: true, article: 'endPage\\.do\\?.*news_?[iI]d=' },   // SBS /news/endPage.do?news_id=
-  { url: 'ytn.co.kr', why: 'list', exactHost: true, article: '^/_ln/\\d+_\\d+|view\\.php' },   // YTN /_ln/<칸>_<번호>
+  { url: 'ytn.co.kr', why: 'list', exactHost: true, article: '^/_[a-z]n/\\d+_\\d+|view\\.php' },   // YTN /_ln/<칸>_<번호>(옛 /_sn/ 등)
   { url: 'news.jtbc.co.kr', why: 'list', exactHost: true, article: '^/article/[A-Z]{2}\\d+' },   // JTBC /article/NB…
   { url: 'nocutnews.co.kr', why: 'list', exactHost: true, article: '^/news/\\d+' },   // 노컷뉴스
   { url: 'ohmynews.com', why: 'list', exactHost: true, article: '[?&]CNTN_CD=' },   // 오마이뉴스 at_pg.aspx?CNTN_CD=
@@ -190,7 +190,7 @@ const NO_RECORD_SITES = [
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
-  list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 게시판 목록은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 글 목록 화면(게시판 · 기사 목록)은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
   excluded: { label: '수집 제외 사이트', head: '이 사이트는 기록하지 않아요', note: '웹 설정에서 수집 제외로 지정한 사이트예요' },
