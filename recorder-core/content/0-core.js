@@ -207,6 +207,10 @@
   //     모든 사이트의 첫 화면 — 경로가 / 뿐 · ? 쿼리 없음 · #/ · #! 화면 이동 표시 없음(#top 같은 칸 이동은 첫 화면 그대로).
   //     /?p=123(워드프레스 기본 글 주소) · #/post/1(앱처럼 화면 바꾸는 사이트)은 글일 수 있어 안 건다.
   //     except = 첫 화면이 곧 글일 수 있는 도메인(정규식 글자) — 안 건다.
+  //   exactHost = 엔진 목록에만(#86): 도메인이 똑같을 때만(하위 도메인 X — 같은 신문사라도 biz. · sports. 는 주소 모양이 다름).
+  //   article = 엔진 목록에만(#86): 그 사이트의 "기사 주소 모양"(정규식 글자, 경로 + ?쿼리 에 맞춰 봄 — 기사 번호가 쿼리에 있는
+  //     사이트가 있음). 주소가 이 모양이 **아니면** 걸린다 = 메뉴로 들어가는 기사 목록 화면(아래 칸 · 2쪽 · 바뀐 메뉴까지).
+  //     모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -230,10 +234,13 @@
       const h = rHost.toLowerCase();
       if (r.exact) {
         if (host !== h || path !== rPath.replace(/\/+$/, '')) continue;
+      } else if (r.exactHost) {
+        if (host !== h) continue;
       } else if (host !== h && !host.endsWith('.' + h)) continue;
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
       if (r.path) { let re; try { re = new RegExp(r.path); } catch (e) { continue; } if (!re.test(path)) continue; }
+      if (r.article) { let re; try { re = new RegExp(r.article); } catch (e) { continue; } if (re.test(path + u.search)) continue; }
       if (rQuery) {
         let all = true;
         new URLSearchParams(rQuery).forEach((v, k) => { if (!u.searchParams.getAll(k).includes(v)) all = false; });
