@@ -195,11 +195,14 @@
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
     'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
-    'article div.linkNews, p.imgsell, [id^="adpnut_"]';
+    'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2';
   // 뉴시스(#80, 11-23 서현 "이 시간 핫뉴스 같은 걸 못 걸러서 아쉬움"): 페이지가 열린 뒤 스크립트가 끼워 넣는 칸 셋.
   //   article div.linkNews = 모바일(mobile.newsis.com) "이시간 핫뉴스" 목록(기사 5개 + 광고 iframe). 기사 글 칸 div.article
   //     한가운데에 끼어 본문 문단 사이 유닛이 됐다. 기사 칸 밖의 관련기사 목록(모바일 div.linkNews.newStyle2 · PC ul.linkNews)은 안 걸림.
   //   p.imgsell = 사진 바로 뒤 "구매정보안내" 링크(PC · 모바일). [id^="adpnut_"] = 모바일 기사 칸 끝 떠 있는 광고("AD 광고삭제").
+  // 프레시안(#80, 11-26 서현 "이것도 없애자"): .article_body > .article_ad · .article_ad2 = 본문 칸 안 구글 광고 자리
+  //   (ins.adsbygoogle). 광고가 "자세히 알아보기 · 시사 뉴스 보기 · 도서 추천" 같은 검색어 글자를 페이지 안에 그려 본문 유닛이
+  //   됐다(브라우저 확인: 한 기사에 2칸). 방문마다 글이 바뀐다.
   //   핫뉴스는 방문마다 기사가 바뀌어 noise 로 두면 앞뒤 유닛 pid 가 갈린다 → 광고처럼 스트림에서 뺀다. 지난 모바일 뉴시스 기록과
   //   핫뉴스 앞뒤 유닛 pid 가 다를 수 있다(팀 공유). 이름이 다른 사이트에도 있으면 거기서도 빠진다(있는지 미확인).
   // 나무위키(#72): 옆 칸 "최근 변경" 목록(머리 링크 /RecentChanges + 문서 링크 /w/… + "N초 전")과 "실시간 검색어" 목록
@@ -680,11 +683,18 @@
     // 프레시안(#80): 기사 칸 div.article_view 안에 고정 머리줄(정기후원 · 공유) · 제목 · 부제 · 기자 줄 · 공유 도구 · 본문 칸
     //   div.article_body · 후원 결제 칸 · 기자 소개(div.list_author — 최근글보기 · 네이버 구독) · 제보 · 후원(div.report_support) ·
     //   댓글 · 헤드라인이 다 들어 있다. Readability 가 이 바깥 칸을 골라 기사 아닌 것까지 본문이었다(2026010711361334922, 11-20 서현).
-    //   제목 · 부제 · 본문 칸만 상자로. 제목 아래 기자 줄("허환주 기자 | 기사입력 …")은 noise(11-26 서현). 본문 칸 끝
-    //   "구글에서 프레시안을 더 자주 만나기" 링크는 뺀다.
+    //   부제 · 본문 칸만 상자로. 제목(p.title)은 noise — 제목은 본문이 아니다(11-26 서현, 이데일리와 같게). 제목 아래 기자 줄
+    //   ("허환주 기자 | 기사입력 …")도 noise(11-26 서현). 본문 칸 끝 "구글에서 프레시안을 더 자주 만나기" 링크는 뺀다.
+    //   본문 칸 안 구글 광고 자리는 AD_WIDGETS(프레시안 줄).
     { host: /(^|\.)pressian\.com$/, name: '프레시안',
-      sel: '.view_header > .title, .view_header > .sub_title, .article_body',
+      sel: '.view_header > .sub_title, .article_body',
       skip: 'a[href*="google.com/preferences/source"]' },
+    // 모바일 뉴시스(#80): 기사 상자 #cont > article 안에 부제 div.summury(h2 여러 개) · 사진 칸 div.thum(사진 설명) · 글 칸
+    //   div.article 이 나란히 있다. Readability 가 글 칸만 골라 부제 · 사진 설명이 noise 였다(NISX20250624_0003225795,
+    //   11-26 서현 "본문이랑 연관되는 건데" → 본문). 셋 다 상자로. 기자 줄 · 등록 시각(div.head)은 그대로 밖.
+    //   PC(www.newsis.com)는 SITE_ROOTS 지정 루트(판정 없음, 전부 본문)라 이 줄과 상관없다 — 모바일 주소만.
+    { host: /^mobile\.newsis\.com$/, name: '뉴시스 모바일',
+      sel: '[id="cont"] > article > .summury, [id="cont"] > article > .thum, [id="cont"] > article > div.article' },
     // 보안뉴스(#80): 루트(SITE_ROOTS 보안뉴스 — 기사 영역 칸) 안에서 기사 글 칸 article#article-view-content-div 만 본문.
     //   도구 줄 · 저작권 · 키워드 · 기자 칸 · 댓글 · Editor's Pick · 보안 리포트 · 생활 속 보안은 noise.
     //   제목 · 분류 · 기자 줄은 <header> 안이고 옆 칸은 <aside> 라 원래 스트림에서 빠진다(SKIP_TAGS, 모든 사이트 공통 — 안 바꿈).
