@@ -128,7 +128,9 @@ const NO_RECORD_SITES = [
   // 기사 사이트 목록 화면(#86, 11-26 서현 "메뉴 눌러 들어가는 화면들도 제외 · 사이트마다 규칙"): 사이트마다 기사 주소 모양(article)
   //   한 줄 — 그 도메인(exactHost, 하위 도메인 X)에서 주소가 기사 모양이 아니면 글 목록 화면. 메뉴 · 아래 칸 · 2쪽 · 검색 · 바뀐 메뉴까지.
   //   모양은 각 사이트 첫 화면 링크로 확인(11-26, 보고 docs/reports/86.md). zdnet 은 무한 스크롤 줄(사이트 통째)이 이미 막음.
-  //   문화일보는 앱 브라우저에 차단 화면이 떠 못 봄 → 안 넣음. 주소 모양이 다른 특별 기사(연재 · 인터랙티브)는 막힐 수 있음 → 보이면 그 줄을 고친다.
+  //   영상 · 포토 화면(11-27 서현 "글 본문 있는 곳만 풀기"): 열어 보고 글 본문이 있는 곳(뉴스1 · MBC 엠빅 · 서울경제 VOD · 연합 유튜브 ·
+  //   뉴시스 포토)은 기사 모양에 넣음. 글 없는 곳(한국일보 · JTBC 숏폼, 머니투데이 영상)과 중앙 디지털 스페셜(게임 · 설문, 서현)은 막힘.
+  //   문화일보는 앱 브라우저에 차단 화면이 떠 서현이 알려 준 기사 주소로 넣음(11-26). 주소 모양이 다른 특별 기사(연재 · 인터랙티브)는 막힐 수 있음 → 보이면 그 줄을 고친다.
   { url: 'chosun.com', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/' },   // 조선일보 /<칸>/2026/11/26/<ID>
   { url: 'joongang.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 중앙일보
   { url: 'donga.com', why: 'list', exactHost: true, article: '/article/' },   // 동아일보 /news/<칸>/article/all/<날짜>/<번호>/1
@@ -138,20 +140,20 @@ const NO_RECORD_SITES = [
   { url: 'kmib.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+|arcid=' },   // 국민일보(옛 view.asp?arcid=)
   { url: 'segye.com', why: 'list', exactHost: true, article: '^/newsView/\\d+' },   // 세계일보
   { url: 'seoul.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d+|newsView\\.php' },   // 서울신문(옛 newsView.php?id=)
-  { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/' },   // 연합뉴스 /view/AKR…
-  { url: 'news1.kr', why: 'list', exactHost: true, article: '/\\d{6,}($|\\?)' },   // 뉴스1 /<칸>/<칸>/<번호>
-  { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스
+  { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/|^/channel/articles\\?vid=' },   // (유튜브 본문 /channel/articles?vid= 도 글 본문 있음, 11-27)   // 연합뉴스 /view/AKR…
+  { url: 'news1.kr', why: 'list', exactHost: true, article: '/\\d{6,}($|\\?)|^/videos/\\d+' },   // 뉴스1 /<칸>/<칸>/<번호> · 영상 /videos/<번호>(글 본문 있음, 11-27)
+  { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/|graview/?\\?id=' },   // (포토 /photo/graview/?id= 도 사진 설명 글 있음, 11-27)   // 뉴시스
   { url: 'mobile.newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스 모바일(예상: PC 와 같은 모양)
   { url: 'mk.co.kr', why: 'list', exactHost: true, article: '/\\d{7,}($|\\?)' },   // 매일경제 /news/<칸>/<번호>
   { url: 'hankyung.com', why: 'list', exactHost: true, article: '/article/\\d{8,}' },   // 한국경제 /article/<번호>
   { url: 'mt.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d{10,}|mtview\\.php' },   // 머니투데이(옛 mtview.php?no=)
-  { url: 'sedaily.com', why: 'list', exactHost: true, article: '^/article/\\d+|NewsView' },   // 서울경제(옛 NewsView)
+  { url: 'sedaily.com', why: 'list', exactHost: true, article: '^/article/\\d+|NewsView|^/vod/(short/)?\\d+' },   // 서울경제(옛 NewsView · 영상 /vod/ — 글 본문 있음, 11-27)
   { url: 'edaily.co.kr', why: 'list', exactHost: true, article: '[?&]newsId=' },   // 이데일리 /News/Read?newsId=
   { url: 'biz.heraldcorp.com', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 헤럴드경제
   { url: 'asiae.co.kr', why: 'list', exactHost: true, article: '^/article/(.+/)?\\d{10,}' },   // 아시아경제(심층 /article/in-depth/<번호> 도 기사)
   { url: 'fnnews.com', why: 'list', exactHost: true, article: '^/news/\\d{10,}' },   // 파이낸셜뉴스
   { url: 'news.kbs.co.kr', why: 'list', exactHost: true, article: 'view\\.do\\?.*ncd=' },   // KBS /news/pc/view/view.do?ncd=
-  { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/article/\\d+_\\d+\\.html' },   // MBC /news/2026/<칸>/article/<번호>_<번호>.html
+  { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/\\d+_\\d+\\.html' },   // MBC(엠빅 · 14F 영상 /original/…/<번호>_<번호>.html 도 짧은 글 본문 있음, 11-27) — /news/2026/<칸>/article/<번호>_<번호>.html
   { url: 'news.sbs.co.kr', why: 'list', exactHost: true, article: 'endPage\\.do\\?.*news_?[iI]d=' },   // SBS /news/endPage.do?news_id=
   { url: 'ytn.co.kr', why: 'list', exactHost: true, article: '^/_[a-z]n/\\d+_\\d+|view\\.php' },   // YTN /_ln/<칸>_<번호>(옛 /_sn/ 등)
   { url: 'news.jtbc.co.kr', why: 'list', exactHost: true, article: '^/article/[A-Z]{2}\\d+' },   // JTBC /article/NB…
