@@ -213,6 +213,7 @@
   //     맞춰 보는 경로는 끝 슬래시 그대로 · 대소문자 무시. 모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
   //   seg = 엔진 목록에만(#86): url 과 상관없이 모든 사이트 — 주소 경로의 한 칸이 이 모양(정규식 글자, 대소문자 무시)이면 걸림.
   //     로그인 · 회원가입 화면(/member/login.php · /users/sign_in · /join). 칸 **전체**가 맞아야 해서 /join-the-team 같은 글 주소는 안 걸림.
+  //   except(보통 규칙) = 엔진 목록에만(#86): 걸린 도메인 가운데 안 거는 도메인(정규식 글자) — kbstar.com 전부 막되 otalk.kbstar.com(공지 글)은 뺄 때.
   //     except = 안 거는 도메인(정규식 글자, home 과 같음) · exceptPath = 안 거는 경로 모양(정규식 글자, 대소문자 무시) — 위키 /wiki/Login · 문서 /docs/…/sign-in · 태그 /tag/login 같은 글 주소.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
@@ -247,6 +248,7 @@
       } else if (r.exactHost) {
         if (host !== h) continue;
       } else if (host !== h && !host.endsWith('.' + h)) continue;
+      if (r.except) { let ex; try { ex = new RegExp(r.except); } catch (e) { ex = null; } if (ex && ex.test(host)) continue; }
       if (u.port !== rPort) continue;
       if (rPath && path !== rPath && !path.startsWith(rPath + '/')) continue;
       if (r.path) { let re; try { re = new RegExp(r.path); } catch (e) { continue; } if (!re.test(path)) continue; }
