@@ -142,6 +142,14 @@ const NO_RECORD_SITES = [
   { url: 'discord.com/app', why: 'chat' },
   { url: 'discord.com', why: 'list', exactHost: true, article: '^/(blog|safety)/[^/?]+|^/developers/docs/.+|^/(terms|privacy|guidelines)/?(\\?|$)' },
   { url: 'support.discord.com', why: 'list', exactHost: true, article: '^/hc/([^/]+/)?articles/\\d+' },   // 고객센터 글(주소 모양 예상 — 앱 브라우저가 못 엶)
+  // Claude(claude.ai, 11-27 서현 "아무 채팅 안 썼으면 기록 안 하게 — 본문이 아니니까"): 새 채팅 화면이 / 가 아니라 /new 라
+  //   첫 화면 규칙(home)에 안 걸렸다 → /new 를 home 으로. 그 밖은 대화 · 공유 대화 · 아티팩트 주소 모양이 아니면 list
+  //   (대화 목록 /recents · 프로젝트 /projects · /project/<id> · 설정 등 — 정부24 · 디스코드와 같은 "문서만" 원칙).
+  //   주소 모양은 예상(앱 브라우저는 로그인 안 됨): 대화 /chat/<uuid> · 공유 /share/<uuid> · 아티팩트 /artifact/… · /public/artifacts/….
+  //   로그인 화면(/login)은 위 login 줄이 먼저.
+  { url: 'claude.ai', why: 'home', exact: true },
+  { url: 'claude.ai/new', why: 'home', exact: true },
+  { url: 'claude.ai', why: 'list', exactHost: true, article: '^/(chat|share|artifact)/[^/?]+|^/public/artifacts/[^/?]+' },
   // 정부24(11-27 서현 "목록은 빼고 본문만 · 메뉴가 많아 규칙이 일일이 다르면 불편"): 상세 화면 주소 모양 하나로 가른다
   //   (앱 브라우저 확인). 하위 도메인 X — *.gov.kr 다른 기관 사이트는 안 건다.
   //   plus.gov.kr(새 정부24): 상세 = 경로 마지막 칸이 …dtl — 서비스 상세 /search/searchdtl?srvcId= · 공지 /portal/ntcmttr/ntcmttrdtl?pstSn= ·
