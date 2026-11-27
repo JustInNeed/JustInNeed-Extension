@@ -100,7 +100,12 @@ const NO_RECORD_SITES = [
   //   안 들어가지만, 이름 · 이메일 · 약관 같은 글이 보이는 화면이라 통째로 뺀다. 목록 맨 앞 — 다른 이유(list 등)보다 먼저 보이게.
   //   ① 모든 사이트: 주소 한 칸이 정확히 이 단어(+ .php 등 확장자)면. ② 로그인 전용 도메인. 화면의 비밀번호 칸 감지는 안 함(서현).
   { url: '(모든 사이트 로그인 · 가입 주소)', why: 'login',
-    seg: '^(log-?in|sign-?in|sign_in|sign-?up|sign_up|join|register|log-?out|sign-?out)(\\.(php|html?|aspx?|jsp|do|naver|nhn))?$' },
+    seg: '^(log-?in|sign-?in|sign_in|sign-?up|sign_up|join|register|log-?out|sign-?out)(\\.(php|html?|aspx?|jsp|do|naver|nhn))?$',
+    // 예외(11-27 서현 "예외 도메인으로"): 위키 · 코드 저장소 · 패키지 · 개발 문서는 Login · Register · sign-in 이 글 제목인 주소가 흔함
+    //   (검토가 확인: /wiki/Login · github.com/<사람>/register · npmjs.com/package/register). 그 사이트의 진짜 로그인 화면은 기록됨 —
+    //   입력칸 값은 원래 기록 안 됨. 경로에 /docs/ · /tag/ · /tags/ · /category/ 가 있으면(개발 문서 · 태그 목록)도 안 건다.
+    except: '(^|\\.)(wikipedia\\.org|wikimedia\\.org|namu\\.wiki|github\\.com|gitlab\\.com|npmjs\\.com|pypi\\.org|developer\\.mozilla\\.org|stackoverflow\\.com)$|^docs\\.',
+    exceptPath: '/(docs?|documentation|tags?|category|categories)(/|$)' },
   { url: 'nid.naver.com', why: 'login' },            // 네이버 로그인 · 가입 · 내 정보
   { url: 'accounts.google.com', why: 'login' },
   { url: 'accounts.kakao.com', why: 'login' },

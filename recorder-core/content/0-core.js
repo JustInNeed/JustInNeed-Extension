@@ -213,6 +213,7 @@
   //     맞춰 보는 경로는 끝 슬래시 그대로 · 대소문자 무시. 모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
   //   seg = 엔진 목록에만(#86): url 과 상관없이 모든 사이트 — 주소 경로의 한 칸이 이 모양(정규식 글자, 대소문자 무시)이면 걸림.
   //     로그인 · 회원가입 화면(/member/login.php · /users/sign_in · /join). 칸 **전체**가 맞아야 해서 /join-the-team 같은 글 주소는 안 걸림.
+  //     except = 안 거는 도메인(정규식 글자, home 과 같음) · exceptPath = 안 거는 경로 모양(정규식 글자, 대소문자 무시) — 위키 /wiki/Login · 문서 /docs/…/sign-in · 태그 /tag/login 같은 글 주소.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -226,6 +227,8 @@
     for (const r of rules) {
       if (r && r.seg) {
         let re; try { re = new RegExp(r.seg, 'i'); } catch (e) { continue; }
+        if (r.except) { let ex; try { ex = new RegExp(r.except); } catch (e) { ex = null; } if (ex && ex.test(host)) continue; }
+        if (r.exceptPath) { let ep; try { ep = new RegExp(r.exceptPath, 'i'); } catch (e) { ep = null; } if (ep && ep.test(dec(u.pathname))) continue; }
         if (u.pathname.split('/').some((x) => x && re.test(dec(x)))) return r;
         continue;
       }
