@@ -115,6 +115,10 @@ const NO_RECORD_SITES = [
   { url: 'login.microsoftonline.com', why: 'login' },
   { url: 'login.live.com', why: 'login' },
   { url: 'account.live.com', why: 'login' },
+  { url: 'auth.wikimedia.org', why: 'login' },       // 위키백과 통합 로그인(11-27 서현 실측 — 위키미디어가 위 예외라 빠졌음)
+  // 위키백과 · 위키미디어 안의 로그인 · 계정 만들기 특수 문서(문서 '로그인'은 기록)
+  { url: 'wikipedia.org', why: 'login', path: '^/wiki/(특수|Special):(로그인|UserLogin|계정만들기|CreateAccount)(/|$)' },
+  { url: 'wikimedia.org', why: 'login', path: '^/wiki/(특수|Special):(로그인|UserLogin|계정만들기|CreateAccount)(/|$)' },
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
