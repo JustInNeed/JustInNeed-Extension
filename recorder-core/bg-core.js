@@ -95,7 +95,21 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 //   home = 포털 첫 화면(#80, 11-26 서현 — 구글 · 네이버 · 다음 · 네이버 쇼핑): 본문 없는 링크 모음. exact = 그 주소 하나만
 //     (0-core skipMatch) — naver.com 아래 뉴스 · 블로그 글, 쇼핑 상품은 그대로 기록. 주소 모양은 서현 실측 전 = 예상.
 const NO_RECORD_SITES = [
-  { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
+  { url: 'zdnet.co.kr', why: 'infinite' },
+  // 로그인 · 회원가입 화면(#86, 11-27 서현 "개인정보가 들어가는 페이지라 빼는 시도라도"): 입력칸 값(아이디 · 비밀번호)은 원래 기록에
+  //   안 들어가지만, 이름 · 이메일 · 약관 같은 글이 보이는 화면이라 통째로 뺀다. 목록 맨 앞 — 다른 이유(list 등)보다 먼저 보이게.
+  //   ① 모든 사이트: 주소 한 칸이 정확히 이 단어(+ .php 등 확장자)면. ② 로그인 전용 도메인. 화면의 비밀번호 칸 감지는 안 함(서현).
+  { url: '(모든 사이트 로그인 · 가입 주소)', why: 'login',
+    seg: '^(log-?in|sign-?in|sign_in|sign-?up|sign_up|join|register|log-?out|sign-?out)(\\.(php|html?|aspx?|jsp|do|naver|nhn))?$' },
+  { url: 'nid.naver.com', why: 'login' },            // 네이버 로그인 · 가입 · 내 정보
+  { url: 'accounts.google.com', why: 'login' },
+  { url: 'accounts.kakao.com', why: 'login' },
+  { url: 'logins.daum.net', why: 'login' },
+  { url: 'appleid.apple.com', why: 'login' },
+  { url: 'idmsa.apple.com', why: 'login' },
+  { url: 'login.microsoftonline.com', why: 'login' },
+  { url: 'login.live.com', why: 'login' },
+  { url: 'account.live.com', why: 'login' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
@@ -207,6 +221,7 @@ const NO_RECORD_SITES = [
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  login: { label: '로그인 · 회원가입 화면', head: '로그인 · 회원가입 화면은 기록하지 않아요', note: '개인정보가 보일 수 있는 로그인 · 회원가입 화면은 기록하지 않아요. 다른 화면으로 가면 다시 기록돼요', quiet: true },
   video: { label: '영상 화면', head: '영상 화면은 기록하지 않아요', note: '본문 글이 없는 동영상 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 글 목록 화면(게시판 · 기사 목록)은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
