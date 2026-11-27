@@ -131,6 +131,8 @@ const NO_RECORD_SITES = [
   { url: 'pypi.org/account', why: 'login' },          // /account/login · /account/register · 비밀번호 찾기
   { url: 'stackoverflow.com/users/login', why: 'login' },
   { url: 'stackoverflow.com/users/signup', why: 'login' },
+  { url: 'accounts.firefox.com', why: 'login' },      // MDN 로그인이 넘어가는 모질라 계정(11-27 서현 실측 — 주소 경로가 /oauth 라 단어로 안 걸림)
+  { url: 'developer.mozilla.org/users', why: 'login' }, // MDN 계정 주소(/users/fxa/login 등) — MDN 이 위 예외라 따로
   { url: 'namu.wiki/member', why: 'login' },          // 나무위키 문서는 /w/ — /member/ 는 로그인 · 가입 · 내 정보
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
