@@ -181,6 +181,10 @@ const NO_RECORD_SITES = [
   { url: 'media.naver.com', why: 'list', exactHost: true, article: '/article/' },
   // 네이버 쇼츠(m.naver.com/shorts/?seedMediaId=…): 짧은 영상 화면(11-27 서현). 그 아래 주소까지. m.naver.com 의 다른 화면은 그대로.
   { url: 'm.naver.com/shorts', why: 'video' },
+  // 네이버 스포츠(11-27 서현 "m.sports.naver.com/volleyball/index 같은 화면도 목록"): 종목별 첫 화면 · 목록 · 일정 · 기록 화면.
+  //   기사는 /<종목>/article/<언론사>/<번호> 꼴(예상 — 앱 브라우저가 네이버를 못 엶) → /article/ 이 아니면 글 목록 화면. 모바일 · PC.
+  { url: 'm.sports.naver.com', why: 'list', exactHost: true, article: '/article/' },
+  { url: 'sports.naver.com', why: 'list', exactHost: true, article: '/article/' },
   { url: 'news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 섹션 · 랭킹(기사는 n.news.naver.com, 앱 브라우저가 못 엶 = 예상)
   { url: 'n.news.naver.com', why: 'list', exactHost: true, article: '/article/' },   // 네이버 뉴스 기사 /article/ · /mnews/article/(예상)
   { url: 'm.news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 모바일(예상)
