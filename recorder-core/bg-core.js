@@ -140,9 +140,9 @@ const NO_RECORD_SITES = [
   { url: 'kmib.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+|arcid=' },   // 국민일보(옛 view.asp?arcid=)
   { url: 'segye.com', why: 'list', exactHost: true, article: '^/newsView/\\d+' },   // 세계일보
   { url: 'seoul.co.kr', why: 'list', exactHost: true, article: '/20\\d\\d/\\d\\d/\\d\\d/\\d+|newsView\\.php' },   // 서울신문(옛 newsView.php?id=)
-  { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/|^/channel/articles\\?vid=' },   // (유튜브 본문 /channel/articles?vid= 도 글 본문 있음, 11-27)   // 연합뉴스 /view/AKR…
+  { url: 'yna.co.kr', why: 'list', exactHost: true, article: '^/view/|^/channel/articles\\?vid=' },   // 연합뉴스 /view/AKR… (유튜브 본문 /channel/articles?vid= 도 글 본문 있음, 11-27)
   { url: 'news1.kr', why: 'list', exactHost: true, article: '/\\d{6,}($|\\?)|^/videos/\\d+' },   // 뉴스1 /<칸>/<칸>/<번호> · 영상 /videos/<번호>(글 본문 있음, 11-27)
-  { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/|graview/?\\?id=' },   // (포토 /photo/graview/?id= 도 사진 설명 글 있음, 11-27)   // 뉴시스
+  { url: 'newsis.com', why: 'list', exactHost: true, article: '^/view/|graview/?\\?id=' },   // 뉴시스 (포토 /photo/graview/?id= 도 사진 설명 글 있음, 11-27)
   { url: 'mobile.newsis.com', why: 'list', exactHost: true, article: '^/view/' },   // 뉴시스 모바일(예상: PC 와 같은 모양)
   { url: 'mk.co.kr', why: 'list', exactHost: true, article: '/\\d{7,}($|\\?)' },   // 매일경제 /news/<칸>/<번호>
   { url: 'hankyung.com', why: 'list', exactHost: true, article: '/article/\\d{8,}' },   // 한국경제 /article/<번호>
@@ -153,7 +153,7 @@ const NO_RECORD_SITES = [
   { url: 'asiae.co.kr', why: 'list', exactHost: true, article: '^/article/(.+/)?\\d{10,}' },   // 아시아경제(심층 /article/in-depth/<번호> 도 기사)
   { url: 'fnnews.com', why: 'list', exactHost: true, article: '^/news/\\d{10,}' },   // 파이낸셜뉴스
   { url: 'news.kbs.co.kr', why: 'list', exactHost: true, article: 'view\\.do\\?.*ncd=' },   // KBS /news/pc/view/view.do?ncd=
-  { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/\\d+_\\d+\\.html' },   // MBC(엠빅 · 14F 영상 /original/…/<번호>_<번호>.html 도 짧은 글 본문 있음, 11-27) — /news/2026/<칸>/article/<번호>_<번호>.html
+  { url: 'imnews.imbc.com', why: 'list', exactHost: true, article: '/(article|original)/.*\\d+_\\d+\\.html' },   // MBC(엠빅 · 14F 영상 /original/…/<번호>_<번호>.html 도 짧은 글 본문 있음, 11-27) — /news/2026/<칸>/article/<번호>_<번호>.html
   { url: 'news.sbs.co.kr', why: 'list', exactHost: true, article: 'endPage\\.do\\?.*news_?[iI]d=' },   // SBS /news/endPage.do?news_id=
   { url: 'ytn.co.kr', why: 'list', exactHost: true, article: '^/_[a-z]n/\\d+_\\d+|view\\.php' },   // YTN /_ln/<칸>_<번호>(옛 /_sn/ 등)
   { url: 'news.jtbc.co.kr', why: 'list', exactHost: true, article: '^/article/[A-Z]{2}\\d+' },   // JTBC /article/NB…
