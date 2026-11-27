@@ -196,7 +196,12 @@
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
     'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
     'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2, ' +
-    '[data-section-log="콘텐츠 QR 배너"]';
+    '[data-section-log="콘텐츠 QR 배너"], [data-rail-chat-transcript] .sr-only, [data-rail-chat-transcript] .katex-mathml annotation';
+  // ChatGPT(#86): [data-rail-chat-transcript] .sr-only = 대화 칸(SITE_ROOTS ChatGPT 루트) 안 스크린리더 전용 글 — 턴마다 제목
+  //   h4.sr-only("내가 한 말: 나" · "ChatGPT 답변: ChatGPT")와 "이전 메시지 불러오는 중…". 화면엔 안 그려지는데 대화 유닛 글이 됐다(저장본 jsdom).
+  //   [data-rail-chat-transcript] .katex-mathml annotation = 수식(KaTeX)의 TeX 원문. 화면 수식 칸(.katex-html)은 aria-hidden 이라 원래
+  //   빠지고, 숨은 읽기용 칸(.katex-mathml)의 평문 수식 + TeX 원문이 기록돼 "2+3=52+3=5" · "L1={…}L_1=\\{a^nb^n…" 처럼 두 벌이 됐다
+  //   (수식 대화 저장본 2개). TeX 원문만 빼 평문 수식 한 벌(화면 글과 같음)을 남긴다. 대화 칸 안만 — 다른 사이트 수식은 그대로.
   // 토스뱅크(#86, 11-27 서현 "QR 띠도 빼 줘"): [data-section-log="콘텐츠 QR 배너"] = 화면 아래 떠 있는(position:fixed) "토스 앱에서
   //   자세히 알아보기 · 휴대전화로 QR 코드를 스캔하면 …" 띠. 스크롤해도 늘 같은 자리라 매 틱 vis 에 들어가고 본문 끝 유닛이 됐다
   //   (서현 패널, 앱 브라우저로 이름 확인). css-… 클래스는 뒤섞인 글자라 사이트가 붙인 기록용 이름으로 잡는다.
@@ -375,7 +380,14 @@
     //   shell = 바깥 페이지가 물러난다: 본문 창 iframe 자체를 루트로 → 스트림이 비어 유닛 0개 → 후보에서 빠지고, 본문 창이 늦게
     //   뜨면 네이버 블로그 PC 와 같은 다시 뽑기(6-frames reelect)로 잡힌다. 본문 창 안에는 이 iframe 이 없어 안 걸린다.
     //   카페 PC 주소에만(블로그 · 모바일 카페 m.cafe 는 안 걸림).
-    { host: /^cafe\.naver\.com$/, sel: 'iframe#cafe_main', shell: true }];
+    { host: /^cafe\.naver\.com$/, sel: 'iframe#cafe_main', shell: true },
+    // ChatGPT(#86, 11-27 서현 "대화내역만 본문처럼 · 대화 1칸만 본문으로 잡힘"): <article> 이 없고 <main> 이 여러 개 —
+    //   첫 main 은 숨은 새 대화 화면(37자)이라 1) 에서 떨어지고 2) 폴백이 답변 하나(가장 긴 칸)를 골랐다(서현 저장본 3개, jsdom).
+    //   전에 연 대화도 display:none 으로 남아 있어(data-app-shell-active-page="false") 보이는 페이지 안의 대화 칸
+    //   [data-rail-chat-transcript="true"] 를 루트로 — 질문 · 답 전부, 왼쪽 목록 · 입력칸 · 제목 줄은 밖. 판정 없음(루트 전체 = 본문).
+    //   칸 안 스크린리더 전용 글("내가 한 말:" · "ChatGPT 답변:" · "이전 메시지 불러오는 중…")은 AD_WIDGETS 에서 뺀다.
+    //   한계: 긴 대화는 위로 스크롤할 때 앞 메시지를 불러와 붙인다 — 그때 재스캔(예상).
+    { host: /(^|\.)chatgpt\.com$/, sel: '[data-app-shell-active-page="true"] [data-rail-chat-transcript="true"]' }];
   const NOTION_BLOCK = '[data-block-id]';
   let useWalls = false;                 // 지금 루트의 벽 블록 선택자 | false (findContentRoot 가 정함)
 
