@@ -227,6 +227,12 @@
     //   CSS 모듈 이름 끝의 뒤섞인 글자(__DLY4g)는 바뀔 수 있어 앞부분으로 잡는다.
     { host: /(^|\.)geeksforgeeks\.org$/, sel: '[class*="LeftbarDropDown_linksWithDropDownContainer__dropdownContent"]',
       name: 'geeksforgeeks 접힌 목록' },
+    // 토스뱅크(#86, 11-27 서현 패널 — 상품 화면 아래에 vis 상자가 겹겹이): 상품안내 · 금리정보 · 이용안내 · 기타사항 펼침 칸의
+    //   내용 칸이 접혀 있을 때 높이 0 · overflow:hidden · opacity 0(앱 브라우저 확인, 나눠모으기 통장 5칸 · 통장 화면도 같은 구조) —
+    //   안 보이는 글이 아래 칸 자리에 vis 로 찍혔다. 펼치면 li 클래스가 open-toggle 로 바뀌고 칸이 커져(796px) 그대로 나온다.
+    //   css-… 이름은 바뀔 수 있어 li 클래스(closed-toggle · open-toggle)와 제목 칸(.title)이 아닌 형제로 잡는다.
+    { host: /(^|\.)tossbank\.com$/, sel: 'li.closed-toggle > div:not(.title), li.open-toggle > div:not(.title)',
+      name: '토스뱅크 접힌 안내 칸' },
   ];
   // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
   function visClipOf(node) {
