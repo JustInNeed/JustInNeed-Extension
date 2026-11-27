@@ -704,6 +704,12 @@
     //   PC(www.newsis.com)는 SITE_ROOTS 지정 루트(판정 없음, 전부 본문)라 이 줄과 상관없다 — 모바일 주소만.
     { host: /^mobile\.newsis\.com$/, name: '뉴시스 모바일',
       sel: '[id="cont"] > article > .summury, [id="cont"] > article > .thum, [id="cont"] > article > div.article' },
+    // 다음 뉴스 기사(#86, v.daum.net/v/…): Readability 가 기사 바깥 큰 칸(div.main-content)을 골라 제목 · 기자 · 날짜 · 도구 줄
+    //   (요약보기 · 음성 · 번역 · 글자 크기) · Copyright 줄 · 감정 표시 · "○○에서 직접 확인하세요" 관련 기사 목록까지 본문이었다
+    //   (11-26 서현). 기사 칸 div.news_view 안 요약(strong.summary_view — 서현 "이대로") · 본문 칸(div.article_view)만 상자로.
+    //   제목 · 기자 · 날짜는 noise(다른 사이트와 같은 공통 규칙). 언론사가 달라도 다음이 같은 틀로 보여 줌(jsdom 2개: 연합 · 기타).
+    { host: /^v\.daum\.net$/, name: '다음 뉴스',
+      sel: '.news_view > .summary_view, .news_view > .article_view' },
     // 보안뉴스(#80): 루트(SITE_ROOTS 보안뉴스 — 기사 영역 칸) 안에서 기사 글 칸 article#article-view-content-div 만 본문.
     //   도구 줄 · 저작권 · 키워드 · 기자 칸 · 댓글 · Editor's Pick · 보안 리포트 · 생활 속 보안은 noise.
     //   제목 · 분류 · 기자 줄은 <header> 안이고 옆 칸은 <aside> 라 원래 스트림에서 빠진다(SKIP_TAGS, 모든 사이트 공통 — 안 바꿈).
