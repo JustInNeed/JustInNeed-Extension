@@ -196,12 +196,13 @@
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
     'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
     'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2, ' +
-    '[data-section-log="콘텐츠 QR 배너"], [data-rail-chat-transcript] .sr-only, [data-rail-chat-transcript] .katex-mathml annotation';
+    '[data-section-log="콘텐츠 QR 배너"], [data-rail-chat-transcript] .sr-only, [data-rail-chat-transcript] .katex-mathml semantics > :not(annotation)';
   // ChatGPT(#86): [data-rail-chat-transcript] .sr-only = 대화 칸(SITE_ROOTS ChatGPT 루트) 안 스크린리더 전용 글 — 턴마다 제목
   //   h4.sr-only("내가 한 말: 나" · "ChatGPT 답변: ChatGPT")와 "이전 메시지 불러오는 중…". 화면엔 안 그려지는데 대화 유닛 글이 됐다(저장본 jsdom).
-  //   [data-rail-chat-transcript] .katex-mathml annotation = 수식(KaTeX)의 TeX 원문. 화면 수식 칸(.katex-html)은 aria-hidden 이라 원래
-  //   빠지고, 숨은 읽기용 칸(.katex-mathml)의 평문 수식 + TeX 원문이 기록돼 "2+3=52+3=5" · "L1={…}L_1=\\{a^nb^n…" 처럼 두 벌이 됐다
-  //   (수식 대화 저장본 2개). TeX 원문만 빼 평문 수식 한 벌(화면 글과 같음)을 남긴다. 대화 칸 안만 — 다른 사이트 수식은 그대로.
+  //   [data-rail-chat-transcript] .katex-mathml semantics > :not(annotation) = 수식(KaTeX)의 숨은 읽기용 평문 수식. 화면 수식 칸(.katex-html)은
+  //   aria-hidden 이라 원래 빠지고, 읽기용 칸(.katex-mathml)의 평문 수식 + TeX 원문(annotation) 두 벌이 기록돼 "2+3=52+3=5" 가 됐다.
+  //   평문은 위 · 아래첨자가 납작해져("a^nb^n" → "anbn") 뜻이 사라지므로 평문을 빼고 TeX 원문 한 벌을 남긴다
+  //   (11-27 서현 "TeX 원문으로 — 기록은 LLM 이 가공하니 내용 보존이 중요"). 대화 칸 안만 — 다른 사이트 수식은 그대로.
   // 토스뱅크(#86, 11-27 서현 "QR 띠도 빼 줘"): [data-section-log="콘텐츠 QR 배너"] = 화면 아래 떠 있는(position:fixed) "토스 앱에서
   //   자세히 알아보기 · 휴대전화로 QR 코드를 스캔하면 …" 띠. 스크롤해도 늘 같은 자리라 매 틱 vis 에 들어가고 본문 끝 유닛이 됐다
   //   (서현 패널, 앱 브라우저로 이름 확인). css-… 클래스는 뒤섞인 글자라 사이트가 붙인 기록용 이름으로 잡는다.
