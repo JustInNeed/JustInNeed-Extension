@@ -142,6 +142,15 @@ const NO_RECORD_SITES = [
   { url: 'discord.com/app', why: 'chat' },
   { url: 'discord.com', why: 'list', exactHost: true, article: '^/(blog|safety)/[^/?]+|^/developers/docs/.+|^/(terms|privacy|guidelines)/?(\\?|$)' },
   { url: 'support.discord.com', why: 'list', exactHost: true, article: '^/hc/([^/]+/)?articles/\\d+' },   // 고객센터 글(주소 모양 예상 — 앱 브라우저가 못 엶)
+  // 정부24(11-27 서현 "목록은 빼고 본문만 · 메뉴가 많아 규칙이 일일이 다르면 불편"): 상세 화면 주소 모양 하나로 가른다
+  //   (앱 브라우저 확인). 하위 도메인 X — *.gov.kr 다른 기관 사이트는 안 건다.
+  //   plus.gov.kr(새 정부24): 상세 = 경로 마지막 칸이 …dtl — 서비스 상세 /search/searchdtl?srvcId= · 공지 /portal/ntcmttr/ntcmttrdtl?pstSn= ·
+  //     혜택 상세 /portal/benefitV2/…/benefitSrvcDtl?svcSeq=. 내 정보 · 결제 · 민원 신청 · 회원(/mypage · /pay · /minwon · /member · /login)은
+  //     …dtl 이어도 개인 화면이라 기록 안 함. 그 밖(메뉴 · 목록 · 혜택 찾기 · 이용안내 메뉴)은 list.
+  //   gov.kr(옛 정부24 www): 민원 안내 상세 /mw/AA020InfoCappView.do?CappBizCD= 만. 정책 뉴스 · 자료 글은 주소에 글 번호 없이(POST) 열려
+  //     주소로 못 가름 → 막힘(목록과 같이).
+  { url: 'plus.gov.kr', why: 'list', exactHost: true, article: '^(?!/(mypage|pay|minwon|member|login)(/|$))[^?]*dtl/?(\\?|$)' },
+  { url: 'gov.kr', why: 'list', exactHost: true, article: '^/mw/AA020InfoCappView\\.do\\?' },
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
