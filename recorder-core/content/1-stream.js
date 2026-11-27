@@ -314,17 +314,20 @@
 
   // [tag, id, class, role] — 조각 path(2-units) 와 meta.root 가 같이 쓴다 (감사 §8-4).
   //   class 는 getAttribute 로 읽는다 (SVG 의 className 은 문자열이 아님).
+  //   id 도 getAttribute 로 (11-27 서현 오류 — 에브리타임 로그인 <form> 안에 name="id" 입력칸이 있으면 form.id 가 글자가 아니라
+  //   그 입력칸이라 .slice 가 없어 스캔이 통째로 멈췄다. 보통 요소는 el.id 와 같은 글자라 기록 값 그대로).
   //   해시 클래스명도 그대로 남긴다. 해석은 백엔드.
   function attrs(el) {
     if (!el || el.nodeType !== 1) return null;
     const cls = (el.getAttribute('class') || '').replace(/\s+/g, ' ').trim();
-    return [el.tagName, (el.id || '').slice(0, 40), cls.slice(0, 80),
+    return [el.tagName, (el.getAttribute('id') || '').slice(0, 40), cls.slice(0, 80),
       (el.getAttribute('role') || '').trim()];
   }
 
   function describe(el) {
     const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
-    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
+    const id = el.getAttribute('id');   // form.id 는 name="id" 입력칸일 수 있음(위 attrs)
+    return el.tagName.toLowerCase() + (id ? '#' + id : '') + (cls ? '.' + cls : '');
   }
 
   // 알려진 플랫폼의 본문 컨테이너 — 글자 수 문턱 없이 루트로 쓴다.
