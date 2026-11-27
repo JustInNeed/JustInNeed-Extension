@@ -147,10 +147,10 @@ const NO_RECORD_SITES = [
   //   plus.gov.kr(새 정부24): 상세 = 경로 마지막 칸이 …dtl — 서비스 상세 /search/searchdtl?srvcId= · 공지 /portal/ntcmttr/ntcmttrdtl?pstSn= ·
   //     혜택 상세 /portal/benefitV2/…/benefitSrvcDtl?svcSeq=. 내 정보 · 결제 · 민원 신청 · 회원(/mypage · /pay · /minwon · /member · /login)은
   //     …dtl 이어도 개인 화면이라 기록 안 함. 그 밖(메뉴 · 목록 · 혜택 찾기 · 이용안내 메뉴)은 list.
-  //   gov.kr(옛 정부24 www): 민원 안내 상세 /mw/AA020InfoCappView.do?CappBizCD= 만. 정책 뉴스 · 자료 글은 주소에 글 번호 없이(POST) 열려
-  //     주소로 못 가름 → 막힘(목록과 같이).
+  //   gov.kr(옛 정부24 www): 민원 안내 상세 /mw/AA020InfoCappView.do?CappBizCD= · 정책 글 /portal/gvrnPolicy/view/<번호>?…(11-27 서현 실측,
+  //     같은 모양의 다른 메뉴도 /portal/<메뉴>/view/<번호> 로 — 예상). 지자체 소식은 각 시 · 도 사이트로 바로 나감.
   { url: 'plus.gov.kr', why: 'list', exactHost: true, article: '^(?!/(mypage|pay|minwon|member|login)(/|$))[^?]*dtl/?(\\?|$)' },
-  { url: 'gov.kr', why: 'list', exactHost: true, article: '^/mw/AA020InfoCappView\\.do\\?' },
+  { url: 'gov.kr', why: 'list', exactHost: true, article: '^/mw/AA020InfoCappView\\.do\\?|^/portal/[^/?]+/view/[^/?]+' },
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
