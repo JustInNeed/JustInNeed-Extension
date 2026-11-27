@@ -95,7 +95,7 @@ const IDLE_TEST = { in: 20 * 1000, out: 40 * 1000 };   // 패널 "빠른 시험"
 //   home = 포털 첫 화면(#80, 11-26 서현 — 구글 · 네이버 · 다음 · 네이버 쇼핑): 본문 없는 링크 모음. exact = 그 주소 하나만
 //     (0-core skipMatch) — naver.com 아래 뉴스 · 블로그 글, 쇼핑 상품은 그대로 기록. 주소 모양은 서현 실측 전 = 예상.
 const NO_RECORD_SITES = [
-  { url: 'zdnet.co.kr', why: 'infinite' },
+  { url: 'zdnet.co.kr', why: 'infinite' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
   // 로그인 · 회원가입 화면(#86, 11-27 서현 "개인정보가 들어가는 페이지라 빼는 시도라도"): 입력칸 값(아이디 · 비밀번호)은 원래 기록에
   //   안 들어가지만, 이름 · 이메일 · 약관 같은 글이 보이는 화면이라 통째로 뺀다. 목록 맨 앞 — 다른 이유(list 등)보다 먼저 보이게.
   //   ① 모든 사이트: 주소 한 칸이 정확히 이 단어(+ .php 등 확장자)면. ② 로그인 전용 도메인. 화면의 비밀번호 칸 감지는 안 함(서현).
@@ -109,7 +109,7 @@ const NO_RECORD_SITES = [
   { url: 'idmsa.apple.com', why: 'login' },
   { url: 'login.microsoftonline.com', why: 'login' },
   { url: 'login.live.com', why: 'login' },
-  { url: 'account.live.com', why: 'login' },      // 11-06 서현: 6번 스크롤 = 기사 7개 · 주소 · 제목 바뀜
+  { url: 'account.live.com', why: 'login' },
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
