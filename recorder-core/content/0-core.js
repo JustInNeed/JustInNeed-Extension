@@ -211,6 +211,8 @@
   //   article = 엔진 목록에만(#86): 그 사이트의 "기사 주소 모양"(정규식 글자, 경로 + ?쿼리 에 맞춰 봄 — 기사 번호가 쿼리에 있는
   //     사이트가 있음). 주소가 이 모양이 **아니면** 걸린다 = 메뉴로 들어가는 기사 목록 화면(아래 칸 · 2쪽 · 바뀐 메뉴까지).
   //     맞춰 보는 경로는 끝 슬래시 그대로 · 대소문자 무시. 모양 글자가 틀려 RegExp 가 안 되면 안 건다(막지 않는 쪽).
+  //   seg = 엔진 목록에만(#86): url 과 상관없이 모든 사이트 — 주소 경로의 한 칸이 이 모양(정규식 글자, 대소문자 무시)이면 걸림.
+  //     로그인 · 회원가입 화면(/member/login.php · /users/sign_in · /join). 칸 **전체**가 맞아야 해서 /join-the-team 같은 글 주소는 안 걸림.
   //   돌려주는 것 = 처음 걸린 규칙 { url, why } | null
   // ==========================================================================
   function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
@@ -222,6 +224,11 @@
     const host = u.hostname.toLowerCase().replace(/^www\.(?=[^.]+\.)/, '');
     const path = dec(u.pathname.replace(/\/+$/, ''));           // BE 표시형 경로는 입력 그대로(한글이 안 풀렸을 수 있음) → 둘 다 풀어서 비교
     for (const r of rules) {
+      if (r && r.seg) {
+        let re; try { re = new RegExp(r.seg, 'i'); } catch (e) { continue; }
+        if (u.pathname.split('/').some((x) => x && re.test(dec(x)))) return r;
+        continue;
+      }
       if (r && r.home) {
         if (path || u.search || /^#[!/]/.test(u.hash)) continue;
         if (r.except) { let re; try { re = new RegExp(r.except); } catch (e) { re = null; } if (re && re.test(host)) continue; }
