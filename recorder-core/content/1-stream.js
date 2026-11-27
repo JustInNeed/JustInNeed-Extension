@@ -351,6 +351,10 @@
     //   보안 리포트 · 생활 속 보안) + 옆 칸(aside — 원래 빠짐). 이 칸을 루트로 하되 judge = 본문 판정은 그대로 한다
     //   — 본문 칸은 SITE_BOXES 보안뉴스 줄.
     { host: /(^|\.)boannews\.com$/, sel: 'div.article-view-container', judge: true },
+    // JTBC 뉴스 기사(#86, 11-27 서현 승인): article · main 태그가 없어 2) 폴백이 기사 본문 칸을 품지 않는 칸을 고를 수 있었다
+    //   (서현 실측 "저작권 공지글밖에 못 잡음"). 본문 칸 div#ijam_content 를 루트로 — 제목 · 기자 · 좋아요 · 댓글 · 추천 콘텐츠는
+    //   기록 밖(네이버 블로그 본문 칸과 같은 방식). judge = 칸 안 광고 자리는 SITE_BOXES JTBC 줄 skip 으로 noise.
+    { host: /^news\.jtbc\.co\.kr$/, sel: '[id="ijam_content"]', judge: true },
     // 네이버 카페 PC(#80, 11-26 서현 "옆에 쓸데없는 메뉴가 본문처럼 나와 · 본문 글자가 안 잡힘"): 글 화면 = 바깥 페이지
     //   (왼쪽 메뉴 · 카페 정보 · 게시판 목록) 안에 본문 창 iframe#cafe_main(cafe.naver.com/ca-fe/cafes/…/articles/…).
     //   본문 창은 위 .se-main-container 줄로 본문을 잘 찾는데(jsdom: 유닛 2 · 240자 = 본문 전부), 바깥 메뉴가 유닛이 더 많아
@@ -704,6 +708,11 @@
     //   PC(www.newsis.com)는 SITE_ROOTS 지정 루트(판정 없음, 전부 본문)라 이 줄과 상관없다 — 모바일 주소만.
     { host: /^mobile\.newsis\.com$/, name: '뉴시스 모바일',
       sel: '[id="cont"] > article > .summury, [id="cont"] > article > .thum, [id="cont"] > article > div.article' },
+    // JTBC 뉴스 기사(#86, news.jtbc.co.kr/article/…): 기사 문단이 <p> 가 아니라 <span> 이라 Readability 가 본문 칸을 못 찾고
+    //   아래 저작권 · 회사 정보 쪽을 골랐다(11-27 서현, 속보처럼 짧은 기사에서 눈에 띔). 본문 칸 div#ijam_content(사진 설명 · 문단)만
+    //   상자로 — 앱 브라우저로 기사 2개 확인(같은 이름). 칸 안 광고 자리(div.set_contents_image_ad "ADVERTISEMENT")는 뺀다.
+    //   루트도 이 칸(SITE_ROOTS JTBC 줄, 11-27 서현 승인) — 칸 밖은 기록 안 됨. 저장본이 없어 jsdom 은 못 함(화면은 스크립트가 그림) → 서현 실측.
+    { host: /^news\.jtbc\.co\.kr$/, name: 'JTBC', sel: '[id="ijam_content"]', skip: '.set_contents_image_ad' },
     // 다음 뉴스 기사(#86, v.daum.net/v/…): Readability 가 기사 바깥 큰 칸(div.main-content)을 골라 제목 · 기자 · 날짜 · 도구 줄
     //   (요약보기 · 음성 · 번역 · 글자 크기) · Copyright 줄 · 감정 표시 · "○○에서 직접 확인하세요" 관련 기사 목록까지 본문이었다
     //   (11-26 서현). 기사 칸 div.news_view 안 요약(strong.summary_view — 서현 "이대로") · 본문 칸(div.article_view)만 상자로.
