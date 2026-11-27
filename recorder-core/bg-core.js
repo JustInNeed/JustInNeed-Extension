@@ -134,11 +134,6 @@ const NO_RECORD_SITES = [
   { url: 'accounts.firefox.com', why: 'login' },      // MDN 로그인이 넘어가는 모질라 계정(11-27 서현 실측 — 주소 경로가 /oauth 라 단어로 안 걸림)
   { url: 'developer.mozilla.org/users', why: 'login' }, // MDN 계정 주소(/users/fxa/login 등) — MDN 이 위 예외라 따로
   { url: 'namu.wiki/member', why: 'login' },          // 나무위키 문서는 /w/ — /member/ 는 로그인 · 가입 · 내 정보
-  // 금융 화면(11-27 서현 "확장 규칙으로, 이유는 금융 화면"): 계좌 · 잔액이 보이는 은행 사이트는 통째로 —
-  //   뱅킹 화면과 공지 글이 같은 /quics?page= 모양이라 경로로 못 가름. otalk.kbstar.com(KB정보광장 공지 · 새소식)만 빼고,
-  //   그 안에서도 글(bbsMode=view)만 기록, 메뉴 · 목록은 list(11-27 앱 브라우저로 주소 모양 확인).
-  { url: 'kbstar.com', why: 'finance', except: '^otalk\\.kbstar\\.com$' },
-  { url: 'otalk.kbstar.com', why: 'list', exactHost: true, article: '[?&]bbsMode=view(&|$)' },
   // 디스코드(11-27 서현 "문서 화면 말고는 막기"): 대화 화면(/channels · /app)은 chat, 그 밖의 discord.com 은 문서 모양이 아니면 list
   //   (/servers 서버 찾기 · 서버 소개 · 제품 소개 · 블로그 목록 /blog · /category/…). 문서 = 블로그 글 /blog/<글> · 안전 센터 글
   //   /safety/<번호-글> · 개발 문서 /developers/docs/… · 약관 /terms · /privacy · /guidelines(11-27 앱 브라우저로 링크 모양 확인).
@@ -259,7 +254,6 @@ const NO_RECORD_SITES = [
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   login: { label: '로그인 · 회원가입 화면', head: '로그인 · 회원가입 화면은 기록하지 않아요', note: '개인정보가 보일 수 있는 로그인 · 회원가입 화면은 기록하지 않아요. 다른 화면으로 가면 다시 기록돼요', quiet: true },
-  finance: { label: '금융 화면', head: '금융 화면은 기록하지 않아요', note: '계좌 · 거래 정보가 보일 수 있는 은행 화면은 기록하지 않아요. 다른 사이트로 가면 다시 기록돼요', quiet: true },
   chat: { label: '대화 화면', head: '대화 화면은 기록하지 않아요', note: '다른 사람과 주고받는 메시지가 보이는 화면은 기록하지 않아요. 다른 화면으로 가면 다시 기록돼요', quiet: true },
   video: { label: '영상 화면', head: '영상 화면은 기록하지 않아요', note: '본문 글이 없는 동영상 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 글 목록 화면(게시판 · 기사 목록)은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
