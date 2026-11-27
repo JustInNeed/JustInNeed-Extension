@@ -195,7 +195,11 @@
   const AD_WIDGETS = '.gliaplayer-container, [data-area-name="플로팅추천영역"], [id^="svcad_"], .sharedaddy, #jp-relatedposts, ' +
     '.cite-accessibility-label, sc-shared-material-rich-tooltip, .hidden2, [id^="ps-video-slot-"], ' +
     'div:has(> a[href="/RecentChanges"]):has(a[href^="/w/"]), ul:has(> li > a[href^="/Go?q="]), ' +
-    'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2';
+    'article div.linkNews, p.imgsell, [id^="adpnut_"], .article_body > .article_ad, .article_body > .article_ad2, ' +
+    '[data-section-log="콘텐츠 QR 배너"]';
+  // 토스뱅크(#86, 11-27 서현 "QR 띠도 빼 줘"): [data-section-log="콘텐츠 QR 배너"] = 화면 아래 떠 있는(position:fixed) "토스 앱에서
+  //   자세히 알아보기 · 휴대전화로 QR 코드를 스캔하면 …" 띠. 스크롤해도 늘 같은 자리라 매 틱 vis 에 들어가고 본문 끝 유닛이 됐다
+  //   (서현 패널, 앱 브라우저로 이름 확인). css-… 클래스는 뒤섞인 글자라 사이트가 붙인 기록용 이름으로 잡는다.
   // 뉴시스(#80, 11-23 서현 "이 시간 핫뉴스 같은 걸 못 걸러서 아쉬움"): 페이지가 열린 뒤 스크립트가 끼워 넣는 칸 셋.
   //   article div.linkNews = 모바일(mobile.newsis.com) "이시간 핫뉴스" 목록(기사 5개 + 광고 iframe). 기사 글 칸 div.article
   //     한가운데에 끼어 본문 문단 사이 유닛이 됐다. 기사 칸 밖의 관련기사 목록(모바일 div.linkNews.newStyle2 · PC ul.linkNews)은 안 걸림.
