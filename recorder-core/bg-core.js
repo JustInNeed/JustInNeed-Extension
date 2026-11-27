@@ -119,6 +119,19 @@ const NO_RECORD_SITES = [
   // 위키백과 · 위키미디어 안의 로그인 · 계정 만들기 특수 문서(문서 '로그인'은 기록)
   { url: 'wikipedia.org', why: 'login', path: '^/wiki/(특수|Special):(로그인|UserLogin|계정만들기|CreateAccount)(/|$)' },
   { url: 'wikimedia.org', why: 'login', path: '^/wiki/(특수|Special):(로그인|UserLogin|계정만들기|CreateAccount)(/|$)' },
+  // 위 예외 사이트의 진짜 로그인 · 가입 화면만 주소로 콕 집어(11-27 서현 "github.com/login 도") — 그 아래 주소까지.
+  { url: 'github.com/login', why: 'login' },          // github 은 login · signup · logout 을 사람 이름으로 못 씀(예약)
+  { url: 'github.com/signup', why: 'login' },
+  { url: 'github.com/logout', why: 'login' },
+  { url: 'github.com/session', why: 'login' },
+  { url: 'gitlab.com/users/sign_in', why: 'login' },
+  { url: 'gitlab.com/users/sign_up', why: 'login' },
+  { url: 'npmjs.com/login', why: 'login' },
+  { url: 'npmjs.com/signup', why: 'login' },
+  { url: 'pypi.org/account', why: 'login' },          // /account/login · /account/register · 비밀번호 찾기
+  { url: 'stackoverflow.com/users/login', why: 'login' },
+  { url: 'stackoverflow.com/users/signup', why: 'login' },
+  { url: 'namu.wiki/member', why: 'login' },          // 나무위키 문서는 /w/ — /member/ 는 로그인 · 가입 · 내 정보
   { url: 'google.com/search', why: 'search' },
   { url: 'google.co.kr/search', why: 'search' },
   { url: 'search.naver.com', why: 'search' },
