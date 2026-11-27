@@ -243,6 +243,11 @@
     //   css-… 이름은 바뀔 수 있어 li 클래스(closed-toggle · open-toggle)와 제목 칸(.title)이 아닌 형제로 잡는다.
     { host: /(^|\.)tossbank\.com$/, sel: 'li.closed-toggle > div:not(.title), li.open-toggle > div:not(.title)',
       name: '토스뱅크 접힌 안내 칸' },
+    // ChatGPT(#86, 11-27 서현 패널 — 답변 위에 앞쪽 유닛 상자가 세로로 길게): 긴 질문 말풍선은 19줄만 보이고 나머지를 접는다
+    //   (.bg-user-message 안 .overflow-hidden 칸에 style max-height: 19lh, "더 보기"로 펼침 — 서현 저장본 "이상한 박스 채팅" 8184자 질문).
+    //   접힌 뒷부분(코드 블록 · 문단)이 말풍선 아래 답변 자리로 이어져 vis 에 겹쳤다. 짧은 질문엔 이 style 이 없어(저장본 4개) 안 걸림.
+    //   펼치면 칸이 커져 그대로 나온다(예상). 글 자체(스트림 · 유닛)는 그대로 — 접힌 질문도 기록됨.
+    { host: /(^|\.)chatgpt\.com$/, sel: '.bg-user-message .overflow-hidden[style*="max-height"]', name: 'ChatGPT 접힌 긴 질문' },
   ];
   // 노드를 자르는 칸 (그 사이트에 지정이 없거나 칸 밖이면 null)
   function visClipOf(node) {
