@@ -168,6 +168,12 @@ const NO_RECORD_SITES = [
   { url: 'dt.co.kr', why: 'list', exactHost: true, article: '^/article/\\d+' },   // 디지털타임스
   { url: 'techm.kr', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 테크M(블로터와 같은 뉴스 프로그램, 예상)
   { url: 'boannews.com', why: 'list', exactHost: true, article: 'articleView\\.html\\?idxno=' },   // 보안뉴스
+  { url: 'munhwa.com', why: 'list', exactHost: true, article: '/article/\\d+' },   // 문화일보 /article/<번호>(11-26 서현 확인 — /society · /video 가 기록되던 것)
+  // 네이버 블로그 섹션(section.blog.naver.com): 블로그 홈 · 주제별 글 · 검색 = 전부 글 목록(11-26 서현 "네이버 블로그 본문만").
+  //   글은 blog.naver.com · m.blog.naver.com 이라 안 걸림. 검색 화면은 위 search 줄이 먼저 걸려 "검색 결과 화면"으로 보인다.
+  { url: 'section.blog.naver.com', why: 'list', exactHost: true },
+  // JTBC 영상 플레이어(vod.jtbc.co.kr/player/clip/…): 본문 글 없는 동영상 화면, 본문 추출도 안 됨(11-26 서현).
+  { url: 'vod.jtbc.co.kr', why: 'video', exactHost: true },
   { url: 'news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 섹션 · 랭킹(기사는 n.news.naver.com, 앱 브라우저가 못 엶 = 예상)
   { url: 'n.news.naver.com', why: 'list', exactHost: true, article: '/article/' },   // 네이버 뉴스 기사 /article/ · /mnews/article/(예상)
   { url: 'm.news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 모바일(예상)
@@ -190,6 +196,7 @@ const NO_RECORD_SITES = [
 //   quiet = 화면 아래 알림을 안 띄움(아이콘 회색 · 팝업 · 패널은 그대로). 검색은 하루에 수십 번이라 매번 뜨면 방해(#80).
 const SKIP_TEXT = {
   search: { label: '검색 결과 화면', head: '검색 결과 화면은 기록하지 않아요', note: '본문이 없는 검색 결과 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
+  video: { label: '영상 화면', head: '영상 화면은 기록하지 않아요', note: '본문 글이 없는 동영상 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   list: { label: '글 목록 화면', head: '글 목록 화면은 기록하지 않아요', note: '본문이 없는 글 목록 화면(게시판 · 기사 목록)은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   home: { label: '포털 첫 화면', head: '첫 화면은 기록하지 않아요', note: '본문이 없는 첫 화면은 기록하지 않아요. 글을 열면 다시 기록돼요', quiet: true },
   infinite: { label: '무한 스크롤 사이트', head: '이 사이트는 기록할 수 없어요', note: '읽는 동안 다음 글이 끝없이 이어 붙는 사이트예요' },
