@@ -176,6 +176,11 @@ const NO_RECORD_SITES = [
   { url: 'section.blog.naver.com', why: 'list', exactHost: true },
   // JTBC 영상 플레이어(vod.jtbc.co.kr/player/clip/…): 본문 글 없는 동영상 화면, 본문 추출도 안 됨(11-26 서현).
   { url: 'vod.jtbc.co.kr', why: 'video', exactHost: true },
+  // 네이버 언론사 홈(media.naver.com/press/<번호>?sid=…): 언론사별 기사 목록 + 무한 스크롤(11-27 서현). 기사는 n.news.naver.com 이라
+  //   보통 안 걸림. 혹시 이 도메인에 기사 주소가 있어도 기록되게 /article/ 은 기사 모양으로 둔다(예상 — 앱 브라우저가 네이버를 못 엶).
+  { url: 'media.naver.com', why: 'list', exactHost: true, article: '/article/' },
+  // 네이버 쇼츠(m.naver.com/shorts/?seedMediaId=…): 짧은 영상 화면(11-27 서현). 그 아래 주소까지. m.naver.com 의 다른 화면은 그대로.
+  { url: 'm.naver.com/shorts', why: 'video' },
   { url: 'news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 섹션 · 랭킹(기사는 n.news.naver.com, 앱 브라우저가 못 엶 = 예상)
   { url: 'n.news.naver.com', why: 'list', exactHost: true, article: '/article/' },   // 네이버 뉴스 기사 /article/ · /mnews/article/(예상)
   { url: 'm.news.naver.com', why: 'list', exactHost: true, article: 'read\\.naver|/article/' },   // 네이버 뉴스 모바일(예상)
